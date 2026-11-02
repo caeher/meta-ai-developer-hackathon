@@ -291,6 +291,48 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
     expect(denied.status).toBe(404);
   });
 
+  it("comprueba la cookie particionada y admite el canje de primer nivel sin poner el grant en la URL", async () => {
+    const preflight = await request(gatewayPort, "/__session", {
+      host: hostA,
+      origin: appOrigin,
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type",
+    }, "OPTIONS");
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers["access-control-allow-origin"]).toBe(appOrigin);
+    expect(preflight.headers["access-control-allow-methods"]).toContain("GET");
+    expect(preflight.headers["access-control-allow-methods"]).not.toContain("*");
+
+    const anonymousHealth = await request(gatewayPort, "/__session", { host: hostA, origin: appOrigin }, "GET");
+    expect(anonymousHealth.status).toBe(404);
+    expect(anonymousHealth.headers["access-control-allow-origin"]).toBe(appOrigin);
+
+    const jsonSession = await exchange();
+    const cookie = String(jsonSession.headers["set-cookie"]).split(";")[0] ?? "";
+    const health = await request(gatewayPort, "/__session", { host: hostA, origin: appOrigin, cookie }, "GET");
+    expect(health.status).toBe(204);
+    expect(health.headers["cache-control"]).toBe("private, no-store");
+
+    const token = grant(keyRing);
+    const formBody = new URLSearchParams({ grant: token }).toString();
+    const firstPartySession = await request(gatewayPort, "/__session", {
+      host: hostA,
+      origin: appOrigin,
+      "content-type": "application/x-www-form-urlencoded",
+      "content-length": String(Buffer.byteLength(formBody)),
+    }, "POST", formBody);
+    expect(firstPartySession.status).toBe(303);
+    expect(firstPartySession.headers.location).toBe("/");
+    expect(firstPartySession.body).toBe("");
+    expect(firstPartySession.headers["set-cookie"]).toEqual(expect.arrayContaining([
+      expect.stringContaining("Secure; HttpOnly; SameSite=None; Partitioned"),
+    ]));
+    expect(firstPartySession.body).not.toContain(token);
+
+    const queryGrant = await request(gatewayPort, `/__session?grant=${encodeURIComponent(grant(keyRing))}`, { host: hostA, origin: appOrigin }, "GET");
+    expect(queryGrant.status).toBe(400);
+  });
+
   it("rechaza firma alterada, grant expirado y epoch anterior; conserva claves previas durante rotación", async () => {
     const valid = grant(keyRing);
     const validParts = valid.split(".");
@@ -350,6 +392,10 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
     expect(page.headers["set-cookie"]).toBeUndefined();
     expect(page.headers["content-security-policy"]).toContain(`frame-ancestors ${appOrigin}`);
     expect(page.headers["content-security-policy"]).not.toContain("default-src *");
+    expect(page.headers["content-security-policy"]).toContain(`connect-src 'self' wss://${hostA}`);
+    expect(page.headers["permissions-policy"]).toContain("camera=()");
+    expect(page.headers["permissions-policy"]).toContain("microphone=()");
+    expect(page.headers["x-content-type-options"]).toBe("nosniff");
     expect(backendRequests.at(-1)).toMatchObject({ path: "/__preview/index.html", previewOrigin: `https://${hostA}` });
     expect(backendRequests.at(-1)?.cookie).toBeUndefined();
     expect(backendRequests.at(-1)?.authorization).toBeUndefined();

@@ -94,7 +94,7 @@ describe("editor interactivo", () => {
     expect((screen.getByRole("button", { name: "Avanzar en la vista previa" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Recargar vista previa" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Abrir vista previa en otra pestaña" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("combobox", { name: "Versión del proyecto. Solo Latest está disponible." }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("combobox", { name: "Versión de la vista previa" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("guarda el prompt en el endpoint privado sin iniciar una ejecución", async () => {
