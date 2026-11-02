@@ -1,6 +1,6 @@
 # Runs, cola y presupuesto
 
-Issue #11 separa la recepción de runs del request de Next. `POST /api/projects/[projectId]/runs` y `DELETE /api/projects/[projectId]/runs/[runId]` requieren Clerk, owner del proyecto y mismo origen en las mutaciones. `GET` en la ruta individual devuelve únicamente el estado del run del mismo proyecto. Las respuestas privadas usan `no-store`; no se aceptan owner IDs ni mensajes/prompts desde el payload de la cola.
+Issue #11 separa la recepción de runs del request de Next. `POST /api/projects/[projectId]/runs` y `DELETE /api/projects/[projectId]/runs/[runId]` requieren Clerk, owner del proyecto y mismo origen en las mutaciones. `GET /api/projects/[projectId]/runs` recupera el último run y `GET` en la ruta individual devuelve únicamente el estado del run del mismo proyecto. `/api/runs/[runId]/events` transmite el progreso SSE privado. Las respuestas privadas usan `no-store`; no se aceptan owner IDs ni mensajes/prompts desde el payload de la cola.
 
 ## Flujo durable
 
@@ -14,7 +14,7 @@ Las cuotas diarias se computan en UTC sobre cargos netos del ledger más reserva
 
 ## Estado de capacidad
 
-`RUNS_ENABLED=false` por defecto. Mientras está apagada, POST devuelve `503 orchestrator_pending` y no crea una reserva. Cuando se activa, la API exige `messageRequestId` de un mensaje de usuario previamente guardado y `contributorConsent: true`; la transacción liga ese mensaje al run y guarda el consentimiento. El worker también exige consentimiento persistido, configuración Meta válida y `SANDBOX_DRIVER=rootless`. Los jobs Redis contienen únicamente `runId`, `idempotencyKey` y `generation`; nunca incluyen prompt, credenciales, tokens de sesión, URL o destino de runtime. El chat aún no llama a este endpoint: #17 añadirá el aviso/confirmación visible, el envío y la transmisión de progreso.
+`RUNS_ENABLED=false` por defecto. Mientras está apagada, POST devuelve `503 orchestrator_pending` y no crea una reserva. Cuando se activa, la API exige `messageRequestId` de un mensaje de usuario previamente guardado y `contributorConsent: true`; la transacción liga ese mensaje al run y guarda el consentimiento. El worker también exige consentimiento persistido, configuración Meta válida y `SANDBOX_DRIVER=rootless`. Los jobs Redis contienen únicamente `runId`, `idempotencyKey` y `generation`; nunca incluyen prompt, credenciales, tokens de sesión, URL o destino de runtime. El editor guarda el mensaje y encola el run con una clave estable; un intento nuevo puede asociarse al mismo mensaje con otra clave idempotente.
 
 ## Desarrollo y verificación
 

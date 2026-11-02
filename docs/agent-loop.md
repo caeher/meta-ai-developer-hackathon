@@ -15,7 +15,7 @@
 
 El modo permanece cerrado con `RUNS_ENABLED=false`. Activarlo requiere `META_API_KEY` y los modelos configurados, `SANDBOX_DRIVER=rootless`, `SANDBOX_CONTROLLER_URL` y `SANDBOX_CONTROLLER_TOKEN`, además de migrar PostgreSQL. El controlador real requiere el host Linux rootless dedicado validado por #12/#13. No se debe activar sobre Windows/Docker Desktop ni con `SANDBOX_DRIVER=disabled`.
 
-La confirmación del servidor no reemplaza una explicación visible. #17 debe mostrar que Contributor permite uso de contenido para entrenamiento y solicitar confirmación de mayoría de edad antes de crear un run. Los detectores son heurísticos; no se deben enviar datos personales o confidenciales.
+La confirmación del servidor no reemplaza una explicación visible. El editor #17 informa que Contributor puede usar entradas para entrenamiento y pide confirmación de mayoría de edad antes de crear un run. Los detectores son heurísticos; no se deben enviar datos personales o confidenciales.
 
 ## Reintentos y límites
 
@@ -33,4 +33,4 @@ npm run lint
 npm run typecheck
 ```
 
-Los tests de orquestación usan Meta y sandbox falsos. No sustituyen `npm run meta:smoke` opt-in ni las pruebas de aislamiento en el host Linux dedicado. La UI y SSE quedan para #17, plantilla Phaser para #18 y assets de imagen para #19.
+Los tests de orquestación usan Meta y sandbox falsos. No sustituyen `npm run meta:smoke` opt-in ni las pruebas de aislamiento en el host Linux dedicado. La conexión del editor y SSE están documentadas en [eventos de runs](run-events.md); la plantilla Phaser corresponde a #18 y los assets de imagen a #19.
