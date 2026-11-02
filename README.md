@@ -1,6 +1,6 @@
 # Forja — plataforma de juegos 2D
 
-Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, identidad y autorización Clerk, persistencia Drizzle y storage privado S3. La generación, ejecución aislada, previews privadas y publicación siguen pendientes.
+Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, identidad Clerk, persistencia Drizzle y storage privado S3. El controlador de sandbox rootless está implementado con ejecución deshabilitada hasta validar un host Linux dedicado; generación, previews privadas y publicación siguen pendientes.
 
 Los proyectos privados abren un editor de dos paneles en `/projects/[projectId]`: chat persistido y opciones rápidas a la izquierda; preview vacía con navegación, Latest y Publish/Share deshabilitados a la derecha. Guardar un mensaje solo lo persiste; no inicia una llamada a Meta ni una ejecución.
 
@@ -49,6 +49,12 @@ La issue #10 añade `@meta-game/skills`: un subconjunto vendorizado en un SHA fi
 
 `apps/worker` ejecuta BullMQ aparte de Next. El outbox Postgres garantiza entrega recuperable a Redis; el presupuesto, consumo, eventos y leases con fencing quedan en la base. La API privada de runs se mantiene cerrada mientras `RUNS_ENABLED=false`; sin el orquestador, el worker devuelve el estado visible `orchestrator_pending`. Comandos y operación en [docs/runs-and-queue.md](docs/runs-and-queue.md) y decisiones en [ADR 0003](docs/adr/0003-cola-durable-y-cuotas-atomicas.md).
 
+## Controlador rootless (issue #12)
+
+`apps/sandbox-controller` es un servicio privado separado del worker. Resuelve el proyecto y su owner desde PostgreSQL, autentica servicios con Bearer y usa la API local Docker por socket Unix rootless. Cada proyecto recibe UID, contenedor y volumen distintos, red desactivada, rootfs de solo lectura y cuotas de CPU/RAM/PIDs/filesystem. El controlador escucha en loopback; un proxy TLS limitado a la red privada de workers es necesario para acceso entre hosts. No montes el socket runtime en Compose, web, worker o juegos.
+
+La feature queda cerrada con `SANDBOX_DRIVER=disabled`. Antes de habilitarla en un host Linux dedicado, publica una imagen sandbox fijada por digest, configura Docker rootless con cgroups v2/systemd y ejecuta `npm run sandbox:host-check`. El workspace usa un volumen `tmpfs` con capacidad fija, así que es efímero y RAM-backed; persistencia y snapshots corresponden a #21. En Windows/Docker Desktop no es aislamiento rootless de producción. Operación y pendientes en [docs/sandbox-controller.md](docs/sandbox-controller.md) y [ADR 0004](docs/adr/0004-sandbox-rootless.md).
+
 ## Capturas del tema Tokyo Night
 
 Para repetir la revisión visual a 390 y 1440 px, inicia `npm run dev` y en otra terminal ejecuta `npx playwright install chromium` (solo la primera vez) y `npm run screenshots:theme`. El script verifica contraste, desbordamiento, foco por teclado, diálogo e hidratación del navegador y guarda las capturas en `docs/screenshots/`. Puedes indicar otra URL local con `THEME_SCREENSHOT_BASE_URL`.
@@ -71,6 +77,8 @@ npm run typecheck
 npm test
 npm run build
 npm run build:worker
+npm run build:controller
+npm run sandbox:host-check
 npm run start
 npm run check:node
 npm run screenshots:theme
@@ -101,9 +109,11 @@ El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y ve
 
 ## Estructura
 
+- `apps/sandbox-controller`: servicio privado rootless, separado de Next y el worker.
 - `apps/web`: Next.js App Router, Clerk, React, Radix Themes y TypeScript estricto.
 - `apps/web/components/ui`: wrappers Radix reutilizables y galería local del tema.
 - `packages/config`: validación de URLs públicas y configuración de infraestructura local.
+- `packages/sandbox`: driver rootless, API privada y cliente autenticado para el worker.
 - `packages/contracts`: schemas Zod de liveness, errores HTTP, proyectos, progreso del editor y contratos Meta.
 - `packages/meta`: `MetaClient`, transporte server-side acotado, replay stateless y smoke opt-in de Meta.
 - `packages/skills`: catálogo y router de skills consultivas con hashes upstream fijados y carga por tarea.

@@ -18,6 +18,8 @@ Estado local de issue #9 (2 de noviembre de 2026): `MetaClient` valida el plan J
 
 Estado local de issue #10 (2 de noviembre de 2026): el subconjunto upstream está fijado al commit `19d93f97c9c1ea0f8b306e77aa81e0d3e352d3e9`, con licencias, NOTICE y manifiesto SHA-256. `packages/skills` ofrece selección metadata-first, carga por tarea/referencia, presupuesto 8.000, fingerprint y registro de selección sin persistencia durable. Phaser 3.90 usa adaptaciones locales porque las skills Phaser upstream apuntan a 4.2. La entrega no conecta aún el editor ni Meta.
 
+Estado local de issue #12 (2 de noviembre de 2026): `packages/sandbox` y `apps/sandbox-controller` implementan API privada con token, owner/proyecto resueltos en PostgreSQL, driver Docker rootless, UID interno único, volumen aislado, red none, rootfs read-only, cgroups y TTL reclamable. `npm run sandbox:host-check` prueba límites reales en contenedores desechables. `SANDBOX_DRIVER=disabled` por defecto. Windows/Docker Desktop no valida aislamiento Linux; falta host rootless dedicado, imagen/token/configuración reales y ejecutar ese host check. El workspace usa tmpfs con capacidad acotada, así que no es disco persistente; documentado como límite en ADR 0004.
+
 | Orden | Issue | Fase | Dependencia |
 | --- | --- | --- | --- |
 | 01 | [#1 [01] Inicializar el monorepo Next.js y fijar Node 24](https://github.com/caeher/meta-ai-developer-hackathon/issues/1) | Fundaciones | Ninguna |

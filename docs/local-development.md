@@ -6,7 +6,7 @@
 - Docker Engine y el plugin Docker Compose v2. En Windows se admite Docker Desktop con integración WSL2 habilitada para la distribución usada.
 - Puertos locales disponibles: `3000`, `5432`, `6379`, `9000` y `9001`. Se pueden cambiar los puertos de infraestructura en `infra/.env`.
 
-Compose es solo para servicios de control y desarrollo. No ejecuta juegos generados, no ofrece un sandbox y no monta el socket Docker. El controlador rootless futuro correrá en un host Linux dedicado fuera de los contenedores de la app y el worker.
+Compose es solo para servicios de control y desarrollo. No ejecuta juegos, no monta el socket Docker y no incluye el controlador rootless. apps/sandbox-controller corre nativamente en un host Linux dedicado, fuera de web y worker. Docker Desktop con WSL2 no sustituye ese host.
 
 ## Configuración e inicio
 
@@ -26,7 +26,7 @@ El perfil `web` utiliza la entrada Next.js ya existente y recibe solo `APP_ORIGI
 npm run infra:up -- --web
 ```
 
-Worker y gateway no tienen perfiles Compose porque todavía no existen sus entrypoints. No se reportan como servicios saludables.
+El worker tiene perfil Compose desde #11; recibe solo URL y token placeholder del controlador, nunca el socket Docker. El gateway de preview sigue pendiente.
 
 La configuración Compose directa también se puede revisar con:
 
