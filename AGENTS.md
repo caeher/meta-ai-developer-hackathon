@@ -4,7 +4,7 @@
 
 ### Estado actual (2 de noviembre de 2026)
 
-La issue #4 añade Clerk al frontend, `proxy.ts`, las rutas `/sign-in`, `/sign-up` y `/editor`, guards de identidad verificada y `GET`/`PATCH /api/projects/[projectId]` con ownership y protección de origen. Sin claves Clerk reales, la app mantiene las rutas privadas cerradas. La issue sigue abierta hasta comprobar sign-in, expiración y acceso cruzado con una instancia Clerk de prueba y dos cuentas; consulta [docs/authentication.md](docs/authentication.md).
+La issue #4 añade Clerk al frontend, `proxy.ts`, las rutas `/sign-in`, `/sign-up` y `/editor`, guards de identidad verificada y `GET`/`PATCH /api/projects/[projectId]` con ownership y protección de origen. Sin claves Clerk reales, la app mantiene las rutas privadas cerradas. La issue sigue abierta hasta comprobar sign-in, expiración y acceso cruzado con una instancia Clerk de prueba y dos cuentas; consulta [docs/authentication.md](docs/authentication.md). La issue #6 añade CRUD privado paginado, rutas `/projects` y `/projects/[projectId]`, transcript persistente con `requestId` idempotente y eliminación lógica reconciliable. No hay worker de limpieza ni generación real todavía.
 
 Lee primero [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md). Construimos una plataforma tipo v0 para crear y modificar juegos web 2D mediante chat: plan visible, herramientas, archivos cambiados, verificaciones y preview privada en vivo. El editor tiene chat a la izquierda, preview a la derecha y header con proyecto, avatar, versiones y Publish/Share. Incluye opciones rápidas para género, arte, controles, niveles, enemigos, assets y sonido.
 

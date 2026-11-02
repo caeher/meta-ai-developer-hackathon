@@ -1,12 +1,14 @@
 # Orden de implementación
 
-Estado local en `main`: la base del monorepo, web mínima, contratos, CI y servicios locales de Postgres, Redis y storage S3 compatible están implementados. La issue #2 está cerrada; el código de la issue #3 incorpora persistencia Drizzle, repositorios con owner y storage privado, pero #3 sigue abierta hasta revisión. Las issues #4–#28 siguen pendientes y no se declaran operativas. El storage local usa Silo, fork compatible con MinIO, porque la distribución comunitaria de MinIO dejó de estar disponible.
+Estado local en `main`: la base del monorepo, servicios locales de Postgres/Redis/S3, persistencia multiusuario y tema Radix están implementados. El storage local usa Silo, fork compatible con MinIO, porque la distribución comunitaria de MinIO dejó de estar disponible. Las integraciones externas y capacidades futuras se declaran operativas solo tras su verificación.
 
 Plan creado a partir de [PROJECT_BRIEF.md](PROJECT_BRIEF.md). Leer [AGENTS.md](../AGENTS.md) antes de tomar una issue. Cada issue depende de la anterior; sus cuerpos en GitHub contienen tareas, archivos, variables, aceptación, pruebas y seguridad. El estado actual está indicado en la fila de cada issue; no declarar capacidades posteriores disponibles sin implementarlas y verificarlas.
 
 Estado de issue #4 actualizado el 2 de noviembre de 2026: la integración de Clerk, las rutas privadas, el contexto de owner y los fixtures de autorización ya están implementados. La issue sigue abierta hasta verificar sign-in, expiración y acceso cruzado con una instancia y dos usuarios Clerk de prueba; no hay credenciales de esa instancia configuradas en este entorno.
 
-Estado de issue #5 actualizado el 2 de noviembre de 2026: tokens Tokyo Night, overrides de Radix, variables de Clerk, wrappers accesibles y galería local están implementados. La galería se revisó con Playwright Chromium en 390 y 1440 px; se guardaron capturas de la página y del diálogo en `docs/screenshots/`. El script `npm run screenshots:theme` comprueba contraste AA de tokens de texto, desbordamiento, foco de teclado, diálogo e hidratación. La validación real de Clerk sigue pendiente en #4 y no bloquea este alcance visual; #5 permanece abierta.
+Estado de issue #5 actualizado el 2 de noviembre de 2026: tokens Tokyo Night, overrides de Radix, variables de Clerk, wrappers accesibles y galería local están implementados. La galería se revisó con Playwright Chromium en 390 y 1440 px; se guardaron capturas de la página y del diálogo en `docs/screenshots/`. El script `npm run screenshots:theme` comprueba contraste AA de tokens de texto, desbordamiento, foco de teclado, diálogo e hidratación. GitHub marca #5 como cerrada; la validación real de Clerk sigue pendiente en #4 y no bloquea el alcance visual.
+
+Estado de issue #6: implementados CRUD paginado con ownership, transcript persistente e idempotente, dashboard, mensajes en texto plano y eliminación lógica con tarea durable de limpieza. La migración hace backfill ordenado de mensajes preexistentes. Los contratos e integración local son verificables con fixtures y PostgreSQL; la UI protegida requiere la instancia Clerk real, pendiente de la issue #4. No hay worker de limpieza, generación ni preview; quedan fuera de esta issue.
 
 | Orden | Issue | Fase | Dependencia |
 | --- | --- | --- | --- |

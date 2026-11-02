@@ -26,3 +26,10 @@ Los proyectos, mensajes, runs, eventos, sandboxes, assets, versiones, publicacio
 - La paginación usa cursores estables con límite máximo; los eventos usan secuencia asignada bajo lock del run.
 - Los tests integrados crean una base y un bucket privados temporales locales, verifican la lectura anónima y eliminan ambos al terminar.
 - La conexión real a un bucket de producción sigue pendiente; se validará selección del proveedor, bloqueo de acceso público, IAM y cifrado antes del despliegue.
+
+## Proyectos privados y chat (issue #6)
+
+- `projects.deleted_at` es una marca lógica. Todas las lecturas/listas/creaciones/mutaciones de proyecto y transcript filtran proyectos activos y responden `404` al dueño o a otra cuenta cuando el registro fue eliminado.
+- `messages.sequence` se asigna bajo lock de fila del proyecto para ordenar de forma estable; `request_id` es único por owner/proyecto. Un reintento idéntico devuelve el mensaje original y una clave reutilizada con otro contenido genera conflicto.
+- La eliminación bloquea el proyecto y, en una transacción, cancela runs activos, marca sandbox/asset/snapshot para limpieza, revoca publicaciones y agrega un registro `project_cleanup_tasks`. La app web no destruye volúmenes ni objetos S3; un worker futuro reconciliará esa cola. El borrado lógico no purga contenido ni equivale a la política de retención final.
+- `0002_lying_brother_voodoo_down.sql` elimina las columnas/tarea añadidas. PostgreSQL no quita valores de enums; el script reconstruye `version_status` y fallará si una fila conserva `delete_requested`. Exportar/resguardar datos antes de un rollback y no ejecutarlo directamente en producción.

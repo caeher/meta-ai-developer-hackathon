@@ -67,9 +67,13 @@ npm run screenshots:theme
 
 ## Persistencia y autorización
 
-La issue #3 incorpora el esquema Drizzle, migración inicial, seed sintético y adaptador S3 privado. La issue #4 añade Clerk, `proxy.ts`, guards de sesión/owner y `GET`/`PATCH /api/projects/[projectId]`. Los handlers derivan la identidad de `auth()` y las consultas del repositorio filtran por dueño. No existe todavía una ruta de creación de proyectos; llegará en la issue #6.
+La issue #3 incorpora el esquema Drizzle, migraciones y adaptador S3 privado. La issue #4 añade Clerk, `proxy.ts` y guards de sesión/owner. La issue #6 añade CRUD privado paginado en `/api/projects`, mensajes en `/api/projects/[projectId]/messages` y las vistas `/projects` y `/projects/[projectId]`. Las rutas derivan la identidad de `auth()`; body, query y cabeceras nunca eligen el owner.
 
-Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQL de Drizzle y se puede repetir. `npm run db:seed` inserta dos usuarios, proyectos y actividad sintéticos; solo acepta PostgreSQL en loopback y es idempotente. `npm run test:integration` crea recursos temporales y verifica ownership, claves foráneas, paginación, idempotencia, ledger, sandboxes y storage.
+Cada mensaje tiene `requestId` idempotente y secuencia por proyecto. Si un reintento repite la clave con el mismo rol/contenido, se devuelve el registro existente; si cambia el contenido, la API responde `409 idempotency_conflict`. Los transcript se sirven en orden de secuencia con cursor y texto plano, sin HTML activo.
+
+Eliminar un proyecto establece `deleted_at` en una transacción, oculta el proyecto y sus recursos, cancela runs activos, marca sandbox/assets/snapshots para limpieza, revoca publicaciones y crea una tarea `project_cleanup_tasks` en estado `queued`. Todavía no existe un worker de reconciliación; los objetos S3 y volúmenes no se destruyen desde la petición web. La generación del agente y la preview siguen deshabilitadas. Esta entrega no agrega variables de entorno: reutiliza Clerk, `DATABASE_URL` y el bucket privado existente.
+
+Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQL de Drizzle y se puede repetir. `npm run db:seed` inserta dos usuarios, proyectos y actividad sintéticos; solo acepta PostgreSQL en loopback y es idempotente. `npm run test:integration` crea recursos temporales y verifica ownership, claves foráneas, paginación, idempotencia, ledger, sandboxes, almacenamiento y eliminación reconciliable de proyectos.
 
 El adaptador de storage usa solo `S3_BUCKET_PRIVATE`, genera claves en servidor, admite objetos de hasta 25 MiB y valida SHA-256 al escribir y leer. El bucket privado de Silo no permite lectura anónima. Las migraciones no se revierten automáticamente; consulta [desarrollo local](docs/local-development.md) antes de ejecutar una reversión destructiva.
 
