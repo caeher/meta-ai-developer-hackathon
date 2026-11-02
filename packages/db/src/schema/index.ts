@@ -59,6 +59,7 @@ export const reservationStatus = pgEnum("reservation_status", [
 ]);
 export const usageKind = pgEnum("usage_kind", ["charge", "refund", "adjustment"]);
 export const cleanupStatus = pgEnum("cleanup_status", ["queued", "running", "succeeded", "failed"]);
+export const outboxStatus = pgEnum("outbox_status", ["pending", "dispatching", "dispatched"]);
 
 export const users = pgTable(
   "users",
@@ -125,6 +126,7 @@ export const runs = pgTable(
     status: runStatus("status").notNull().default("queued"),
     plan: jsonb("plan").$type<Record<string, unknown> | null>(),
     errorCode: varchar("error_code", { length: 100 }),
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -143,6 +145,65 @@ export const runs = pgTable(
       table.id,
     ),
     index("runs_owner_status_created_idx").on(table.ownerUserId, table.status, table.createdAt),
+  ],
+);
+
+export const projectRunLocks = pgTable(
+  "project_run_locks",
+  {
+    ownerUserId: uuid("owner_user_id").notNull(),
+    projectId: uuid("project_id").notNull(),
+    runId: uuid("run_id"),
+    fencingToken: bigint("fencing_token", { mode: "number" }).notNull().default(0),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    unique("project_run_locks_owner_project_unique").on(table.ownerUserId, table.projectId),
+    foreignKey({
+      name: "project_run_locks_owner_project_fk",
+      columns: [table.ownerUserId, table.projectId],
+      foreignColumns: [projects.ownerUserId, projects.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "project_run_locks_owner_project_run_fk",
+      columns: [table.ownerUserId, table.projectId, table.runId],
+      foreignColumns: [runs.ownerUserId, runs.projectId, runs.id],
+    }).onDelete("cascade"),
+    index("project_run_locks_lease_idx").on(table.leaseExpiresAt),
+    check("project_run_locks_fencing_nonnegative_check", sql`${table.fencingToken} >= 0`),
+  ],
+);
+
+export const runOutbox = pgTable(
+  "run_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerUserId: uuid("owner_user_id").notNull(),
+    projectId: uuid("project_id").notNull(),
+    runId: uuid("run_id").notNull().unique(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    generation: integer("generation").notNull().default(0),
+    status: outboxStatus("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    lastErrorCode: varchar("last_error_code", { length: 100 }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    foreignKey({
+      name: "run_outbox_owner_project_run_fk",
+      columns: [table.ownerUserId, table.projectId, table.runId],
+      foreignColumns: [runs.ownerUserId, runs.projectId, runs.id],
+    }).onDelete("cascade"),
+    index("run_outbox_status_created_idx").on(table.status, table.createdAt),
+    check("run_outbox_generation_nonnegative_check", sql`${table.generation} >= 0`),
+    check("run_outbox_attempts_nonnegative_check", sql`${table.attempts} >= 0`),
   ],
 );
 
@@ -340,6 +401,7 @@ export const usageReservations = pgTable(
     ownerUserId: uuid("owner_user_id").notNull(),
     projectId: uuid("project_id").notNull(),
     idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    runId: uuid("run_id"),
     reservedTokens: integer("reserved_tokens").notNull().default(0),
     reservedImages: integer("reserved_images").notNull().default(0),
     reservedStorageBytes: bigint("reserved_storage_bytes", { mode: "number" })
@@ -356,6 +418,11 @@ export const usageReservations = pgTable(
       columns: [table.ownerUserId, table.projectId],
       foreignColumns: [projects.ownerUserId, projects.id],
     }).onDelete("cascade"),
+    foreignKey({
+      name: "usage_reservations_owner_project_run_fk",
+      columns: [table.ownerUserId, table.projectId, table.runId],
+      foreignColumns: [runs.ownerUserId, runs.projectId, runs.id],
+    }).onDelete("cascade"),
     unique("usage_reservations_owner_project_id_unique").on(
       table.ownerUserId,
       table.projectId,
@@ -365,6 +432,7 @@ export const usageReservations = pgTable(
       table.ownerUserId,
       table.idempotencyKey,
     ),
+    unique("usage_reservations_run_id_unique").on(table.runId),
     index("usage_reservations_owner_status_expires_idx").on(
       table.ownerUserId,
       table.status,

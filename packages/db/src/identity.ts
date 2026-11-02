@@ -40,3 +40,24 @@ export class IdempotencyConflictError extends Error {
     this.name = "IdempotencyConflictError";
   }
 }
+
+export class UsageLimitExceededError extends Error {
+  constructor(public readonly limit: "tokens" | "images" | "concurrency") {
+    super(`Se superó el límite de uso: ${limit}`);
+    this.name = "UsageLimitExceededError";
+  }
+}
+
+export class ProjectRunBusyError extends Error {
+  constructor() {
+    super("El proyecto ya tiene un run activo");
+    this.name = "ProjectRunBusyError";
+  }
+}
+
+export class StaleRunWorkerError extends Error {
+  constructor() {
+    super("El worker perdió el lease y no puede modificar este run");
+    this.name = "StaleRunWorkerError";
+  }
+}

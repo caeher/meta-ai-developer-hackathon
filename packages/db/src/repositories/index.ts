@@ -6,8 +6,10 @@ import {
   assertVerifiedIdentityContext,
   IdempotencyConflictError,
   OwnedResourceNotFoundError,
+  ProjectRunBusyError,
   type VerifiedIdentityContext,
 } from "../identity";
+import { assertRunQuotaAvailable, RunQuotaPolicySchema, utcDayStart, type RunQuotaPolicy } from "../usage";
 import {
   assets,
   messages,
@@ -15,6 +17,7 @@ import {
   publications,
   projectCleanupTasks,
   runEvents,
+  runOutbox,
   runs,
   sandboxes,
   usageLedger,
@@ -76,6 +79,12 @@ const messageInputSchema = z.object({
 const runInputSchema = z.object({
   projectId: uuidSchema,
   idempotencyKey: z.string().min(8).max(128),
+});
+const enqueueRunInputSchema = z.object({
+  projectId: uuidSchema,
+  idempotencyKey: z.string().min(8).max(128),
+  reservedImages: z.number().int().nonnegative().max(100_000).default(0),
+  policy: RunQuotaPolicySchema,
 });
 const runEventInputSchema = z.object({
   type: z.string().trim().min(1).max(100),
@@ -350,6 +359,170 @@ export function createRepositories(db: GameDatabase) {
     },
 
     runs: {
+      async enqueueRun(identity: VerifiedIdentityContext, input: z.input<typeof enqueueRunInputSchema>) {
+        const parsed = enqueueRunInputSchema.parse(input);
+        const policy: RunQuotaPolicy = RunQuotaPolicySchema.parse(parsed.policy);
+        const ownerUserId = await resolveOwnerId(db, identity);
+        return db.transaction(async (tx) => {
+          const [owner] = await tx.select({ id: users.id }).from(users)
+            .where(eq(users.id, ownerUserId)).for("update").limit(1);
+          if (!owner) throw new OwnedResourceNotFoundError();
+          const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
+            eq(projects.ownerUserId, ownerUserId),
+            eq(projects.id, parsed.projectId),
+            isNull(projects.deletedAt),
+          )).for("update").limit(1);
+          if (!project) throw new OwnedResourceNotFoundError();
+
+          const [existing] = await tx.select().from(runs).where(and(
+            eq(runs.ownerUserId, ownerUserId),
+            eq(runs.idempotencyKey, parsed.idempotencyKey),
+          )).limit(1);
+          if (existing) {
+            if (existing.projectId !== parsed.projectId) throw new IdempotencyConflictError();
+            return { run: existing, created: false };
+          }
+
+          const [projectActive] = await tx.select({ count: sql<number>`count(*)` }).from(runs).where(and(
+            eq(runs.ownerUserId, ownerUserId),
+            eq(runs.projectId, parsed.projectId),
+            sql`${runs.status} in ('queued', 'planning', 'running', 'verifying')`,
+          ));
+          if (Number(projectActive?.count ?? 0) > 0) throw new ProjectRunBusyError();
+
+          const [activeRuns] = await tx.select({ count: sql<number>`count(*)` }).from(runs).where(and(
+            eq(runs.ownerUserId, ownerUserId),
+            sql`${runs.status} in ('queued', 'planning', 'running', 'verifying')`,
+          ));
+          const dayStart = utcDayStart(new Date());
+          const [consumed] = await tx.select({
+            tokens: sql<number>`coalesce(sum(case when ${usageLedger.kind} = 'refund' then -${usageLedger.tokens} else ${usageLedger.tokens} end), 0)`,
+            images: sql<number>`coalesce(sum(case when ${usageLedger.kind} = 'refund' then -${usageLedger.images} else ${usageLedger.images} end), 0)`,
+          }).from(usageLedger).where(and(
+            eq(usageLedger.ownerUserId, ownerUserId),
+            sql`${usageLedger.createdAt} >= ${dayStart}`,
+          ));
+          const [held] = await tx.select({
+            tokens: sql<number>`coalesce(sum(${usageReservations.reservedTokens}), 0)`,
+            images: sql<number>`coalesce(sum(${usageReservations.reservedImages}), 0)`,
+          }).from(usageReservations).where(and(
+            eq(usageReservations.ownerUserId, ownerUserId),
+            eq(usageReservations.status, "reserved"),
+          ));
+          assertRunQuotaAvailable({
+            activeRuns: Number(activeRuns?.count ?? 0),
+            heldTokens: Number(held?.tokens ?? 0),
+            heldImages: Number(held?.images ?? 0),
+            consumedTokensToday: Number(consumed?.tokens ?? 0),
+            consumedImagesToday: Number(consumed?.images ?? 0),
+            reserveTokens: policy.runMaxTokens,
+            reserveImages: parsed.reservedImages,
+            policy,
+          });
+
+          const [run] = await tx.insert(runs).values({
+            ownerUserId,
+            projectId: parsed.projectId,
+            idempotencyKey: parsed.idempotencyKey,
+          }).returning();
+          if (!run) throw new Error("No se pudo crear el run");
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+          const [reservation] = await tx.insert(usageReservations).values({
+            ownerUserId,
+            projectId: parsed.projectId,
+            runId: run.id,
+            idempotencyKey: parsed.idempotencyKey,
+            reservedTokens: policy.runMaxTokens,
+            reservedImages: parsed.reservedImages,
+            expiresAt,
+          }).returning({ id: usageReservations.id });
+          if (!reservation) throw new Error("No se pudo reservar el presupuesto del run");
+          await tx.insert(runOutbox).values({
+            ownerUserId,
+            projectId: parsed.projectId,
+            runId: run.id,
+            idempotencyKey: parsed.idempotencyKey,
+          });
+          await tx.insert(runEvents).values({
+            ownerUserId,
+            projectId: parsed.projectId,
+            runId: run.id,
+            sequence: 1,
+            type: "run.queued",
+            payload: { reservationId: reservation.id, outboxGeneration: 0 },
+          });
+          return { run, created: true };
+        });
+      },
+
+      async cancelRun(identity: VerifiedIdentityContext, runId: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedRunId = uuidSchema.parse(runId);
+        return db.transaction(async (tx) => {
+          const [candidate] = await tx.select({ projectId: runs.projectId }).from(runs).where(and(
+            eq(runs.ownerUserId, ownerUserId), eq(runs.id, parsedRunId),
+          )).limit(1);
+          if (!candidate) throw new OwnedResourceNotFoundError();
+          const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
+            eq(projects.ownerUserId, ownerUserId),
+            eq(projects.id, candidate.projectId),
+            isNull(projects.deletedAt),
+          )).for("update").limit(1);
+          if (!project) throw new OwnedResourceNotFoundError();
+          const [run] = await tx.select().from(runs).where(and(
+            eq(runs.ownerUserId, ownerUserId),
+            eq(runs.projectId, candidate.projectId),
+            eq(runs.id, parsedRunId),
+          )).for("update").limit(1);
+          if (!run) throw new OwnedResourceNotFoundError();
+          if (run.status === "queued") {
+            const now = new Date();
+            const [cancelled] = await tx.update(runs).set({ status: "cancelled", updatedAt: now }).where(eq(runs.id, run.id)).returning();
+            if (!cancelled) throw new OwnedResourceNotFoundError();
+            await tx.update(usageReservations).set({ status: "released", updatedAt: now }).where(and(
+              eq(usageReservations.ownerUserId, ownerUserId),
+              eq(usageReservations.runId, run.id),
+              eq(usageReservations.status, "reserved"),
+            ));
+            await tx.update(runOutbox).set({ status: "dispatched", leaseToken: null, leaseExpiresAt: null, dispatchedAt: now, updatedAt: now }).where(and(
+              eq(runOutbox.runId, run.id),
+              sql`${runOutbox.status} in ('pending', 'dispatching')`,
+            ));
+            const [sequence] = await tx.select({ value: sql<number>`coalesce(max(${runEvents.sequence}), 0) + 1` })
+              .from(runEvents).where(and(eq(runEvents.ownerUserId, ownerUserId), eq(runEvents.runId, run.id)));
+            await tx.insert(runEvents).values({
+              ownerUserId,
+              projectId: run.projectId,
+              runId: run.id,
+              sequence: sequence?.value ?? 1,
+              type: "run.cancelled",
+              payload: { reservationReleased: true },
+            });
+            return cancelled;
+          }
+          if (run.status === "planning" || run.status === "running" || run.status === "verifying") {
+            const now = new Date();
+            const [requested] = await tx.update(runs).set({ cancelRequestedAt: run.cancelRequestedAt ?? now, updatedAt: now })
+              .where(and(eq(runs.ownerUserId, ownerUserId), eq(runs.id, run.id))).returning();
+            if (!requested) throw new OwnedResourceNotFoundError();
+            if (!run.cancelRequestedAt) {
+              const [sequence] = await tx.select({ value: sql<number>`coalesce(max(${runEvents.sequence}), 0) + 1` })
+                .from(runEvents).where(and(eq(runEvents.ownerUserId, ownerUserId), eq(runEvents.runId, run.id)));
+              await tx.insert(runEvents).values({
+                ownerUserId,
+                projectId: run.projectId,
+                runId: run.id,
+                sequence: sequence?.value ?? 1,
+                type: "run.cancel_requested",
+                payload: {},
+              });
+            }
+            return requested;
+          }
+          return run;
+        });
+      },
+
       async create(identity: VerifiedIdentityContext, input: z.input<typeof runInputSchema>) {
         const parsed = runInputSchema.parse(input);
         const ownerUserId = await resolveOwnerId(db, identity);

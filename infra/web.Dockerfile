@@ -4,9 +4,12 @@ WORKDIR /workspace
 
 COPY package.json package-lock.json .npmrc ./
 COPY apps/web/package.json apps/web/package.json
+COPY apps/worker/package.json apps/worker/package.json
 COPY packages/config/package.json packages/config/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json
+COPY packages/meta/package.json packages/meta/package.json
+COPY packages/skills/package.json packages/skills/package.json
 COPY packages/storage/package.json packages/storage/package.json
 COPY scripts/check-node-version.mjs scripts/check-node-version.mjs
 

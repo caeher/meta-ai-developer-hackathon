@@ -1,4 +1,9 @@
-import { IdempotencyConflictError, OwnedResourceNotFoundError } from "@meta-game/db";
+import {
+  IdempotencyConflictError,
+  OwnedResourceNotFoundError,
+  ProjectRunBusyError,
+  UsageLimitExceededError,
+} from "@meta-game/db";
 import { ZodError } from "zod";
 import { AuthenticationRequiredError } from "./guards";
 
@@ -61,6 +66,12 @@ export function apiErrorResponse(error: unknown): Response {
   } else if (error instanceof IdempotencyConflictError) {
     status = 409;
     code = "idempotency_conflict";
+  } else if (error instanceof ProjectRunBusyError) {
+    status = 409;
+    code = "project_run_busy";
+  } else if (error instanceof UsageLimitExceededError) {
+    status = 429;
+    code = `usage_limit_${error.limit}`;
   } else if (error instanceof OriginValidationError) {
     status = 403;
     code = "origin_not_allowed";

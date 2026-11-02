@@ -36,6 +36,8 @@ services:
       - redis-server
       - --appendonly
       - "yes"
+      - --maxmemory-policy
+      - noeviction
     ports:
       - name: redis-loopback
         target: 6379
@@ -143,6 +145,35 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    networks:
+      - control
+
+  worker:
+    profiles: [worker]
+    build:
+      context: ..
+      dockerfile: infra/worker.Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}
+      REDIS_URL: redis://redis:6379
+      RUNS_ENABLED: ${RUNS_ENABLED:-false}
+      USER_MAX_CONCURRENT_JOBS: ${USER_MAX_CONCURRENT_JOBS:-1}
+      PROJECT_MAX_RUN_STEPS: ${PROJECT_MAX_RUN_STEPS:-20}
+      RUN_MAX_TOKENS: ${RUN_MAX_TOKENS:-16000}
+      USER_DAILY_TOKEN_LIMIT: ${USER_DAILY_TOKEN_LIMIT:-100000}
+      USER_DAILY_IMAGE_LIMIT: ${USER_DAILY_IMAGE_LIMIT:-10}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
     networks:
       - control
 

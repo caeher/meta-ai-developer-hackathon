@@ -1,0 +1,28 @@
+{
+  "name": "@meta-game/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "node ../../scripts/check-node-version.mjs && tsx watch src/index.ts",
+    "build": "node ../../scripts/check-node-version.mjs && tsc --noEmit -p tsconfig.json",
+    "start": "node ../../scripts/check-node-version.mjs && tsx src/index.ts"
+  },
+  "dependencies": {
+    "@meta-game/config": "0.1.0",
+    "@meta-game/contracts": "0.1.0",
+    "@meta-game/db": "0.1.0",
+    "bullmq": "5.81.5",
+    "dotenv": "18.0.9",
+    "ioredis": "5.11.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

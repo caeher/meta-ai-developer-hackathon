@@ -7,10 +7,11 @@ import {
 } from "./infra-common.mjs";
 
 function parseOptions(arguments_) {
-  const options = { web: false };
+  const options = { web: false, worker: false };
 
   for (const argument of arguments_) {
     if (argument === "--web") options.web = true;
+    else if (argument === "--worker") options.worker = true;
     else throw new Error(`Opción desconocida para infra:up: ${argument}`);
   }
 
@@ -58,11 +59,15 @@ try {
   const options = parseOptions(process.argv.slice(2));
   ensureLocalEnvironmentFile();
   const environment = readLocalEnvironment();
-  const profiles = options.web ? ["--profile", "web"] : [];
+  const profiles = [
+    ...(options.web ? ["--profile", "web"] : []),
+    ...(options.worker ? ["--profile", "worker"] : []),
+  ];
   runDocker(composeArguments([...profiles, "up", "--detach", "--wait"]));
   initializeStorageBuckets(environment);
   console.log("Postgres, Redis y S3 local están disponibles; los buckets siguen siendo privados.");
   if (options.web) console.log("La aplicación web está disponible en http://localhost:3000.");
+  if (options.worker) console.log("El worker está activo; los runs terminan con orchestrator_pending hasta integrar el orquestador.");
 } catch (error) {
   reportInfrastructureError(error);
 }

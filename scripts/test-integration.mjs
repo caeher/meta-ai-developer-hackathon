@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import pg from "pg";
-import { composeArguments, runDocker } from "./infra-common.mjs";
+import { composeArguments, readLocalEnvironment, runDocker } from "./infra-common.mjs";
 import {
   loadDatabaseEnvironment,
   loadLocalStorageEnvironment,
@@ -78,6 +78,8 @@ let bucketCreated = false;
 
 try {
   loadDatabaseEnvironment();
+  const localEnvironment = readLocalEnvironment();
+  process.env.REDIS_URL ??= `redis://127.0.0.1:${localEnvironment.REDIS_PORT}`;
   loadLocalStorageEnvironment();
   temporaryBucket = `meta-game-itest-${randomUUID().replaceAll("-", "").slice(0, 20)}`;
   createPrivateTestBucket(temporaryBucket);
