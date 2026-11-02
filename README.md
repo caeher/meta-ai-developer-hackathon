@@ -43,7 +43,11 @@ El endpoint `GET /api/health` solo comprueba que la app web responde. Devuelve `
 
 Las issues #8 y #9 añaden configuración de servidor, `npm run meta:smoke` y el adaptador interno `MetaClient` para planes estructurados, streaming de código/tool calls y generación de imágenes. Los contratos offline validan respuestas y fixtures; ningún mensaje del chat se envía todavía a Meta ni se ejecutan herramientas. El smoke carga `.env.local` (ignorado por Git) o variables del proceso, comprueba los tres modelos y envía un prompt sintético; sin `META_API_KEY` falla antes de hacer solicitudes. `--tools` añade solicitudes con uso de tokens y `--image` genera una imagen con cobro separado; revisa los precios vigentes antes de esas opciones. Consulta [docs/meta-api.md](docs/meta-api.md).
 
-La issue #10 añade `@meta-game/skills`: un subconjunto vendorizado en un SHA fijo, catálogo de metadata, router por tarea con presupuesto de 8.000 tokens, guías locales para Phaser 3.90/shooter cenital/testing y verificación de hashes con `npm run skills:verify`. No se añaden variables de entorno. El editor todavía no consume este paquete; el futuro worker podrá persistir el registro por run mediante el callback `recordSelection`. Consulta [docs/skills.md](docs/skills.md).
+La issue #10 añade `@meta-game/skills`: un subconjunto vendorizado en un SHA fijo, catálogo de metadata, router por tarea con presupuesto de 8.000 tokens, guías locales para Phaser 3.90/shooter cenital/testing y verificación de hashes con `npm run skills:verify`. El editor todavía no consume este paquete; #11 ya aporta worker y persistencia durable, pero el registro `recordSelection` se conecta en #16. Consulta [docs/skills.md](docs/skills.md).
+
+## Cola durable y runs (issue #11)
+
+`apps/worker` ejecuta BullMQ aparte de Next. El outbox Postgres garantiza entrega recuperable a Redis; el presupuesto, consumo, eventos y leases con fencing quedan en la base. La API privada de runs se mantiene cerrada mientras `RUNS_ENABLED=false`; sin el orquestador, el worker devuelve el estado visible `orchestrator_pending`. Comandos y operación en [docs/runs-and-queue.md](docs/runs-and-queue.md) y decisiones en [ADR 0003](docs/adr/0003-cola-durable-y-cuotas-atomicas.md).
 
 ## Capturas del tema Tokyo Night
 
@@ -56,6 +60,7 @@ npm run dev
 npm run infra:config
 npm run infra:up
 npm run infra:up -- --web
+npm run infra:up -- --worker
 npm run infra:down
 npm run db:migrate
 npm run db:seed
@@ -65,6 +70,7 @@ npm run lint
 npm run typecheck
 npm test
 npm run build
+npm run build:worker
 npm run start
 npm run check:node
 npm run screenshots:theme
@@ -91,7 +97,7 @@ El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y ve
 
 ## Capacidades planificadas
 
-Todavía no existen `dev:worker`, `dev:gateway`, generación desde el chat, ejecución de juegos, aislamiento de runtime, preview ni publicación. El E2E actual cubre el shell del editor con una API de prueba; aún falta un recorrido E2E autenticado con dos cuentas Clerk reales. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue. El acceso real a Meta se informa por separado del resultado de los tests con fixtures.
+`dev:worker` ya existe; generación desde el chat, ejecución de juegos, aislamiento de runtime, preview y publicación siguen pendientes. El E2E actual cubre el shell del editor con una API de prueba; aún falta un recorrido E2E autenticado con dos cuentas Clerk reales. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue. El acceso real a Meta se informa por separado del resultado de los tests con fixtures.
 
 ## Estructura
 

@@ -4,7 +4,7 @@
 
 ### Estado actual (2 de noviembre de 2026)
 
-La issue #4 añade Clerk al frontend, `proxy.ts`, las rutas `/sign-in`, `/sign-up` y `/editor`, guards de identidad verificada y `GET`/`PATCH /api/projects/[projectId]` con ownership y protección de origen. Sin claves Clerk reales, la app mantiene las rutas privadas cerradas. La issue sigue abierta hasta comprobar sign-in, expiración y acceso cruzado con una instancia Clerk de prueba y dos cuentas; consulta [docs/authentication.md](docs/authentication.md). La issue #6 añade CRUD privado paginado, rutas `/projects` y `/projects/[projectId]`, transcript persistente con `requestId` idempotente y eliminación lógica reconciliable. La issue #7 presenta el editor de dos paneles, renombrado y opciones rápidas; el envío conserva el transcript sin iniciar IA. No hay worker de limpieza, generación real ni preview todavía.
+La issue #4 añade Clerk al frontend, `proxy.ts`, las rutas `/sign-in`, `/sign-up` y `/editor`, guards de identidad verificada y `GET`/`PATCH /api/projects/[projectId]` con ownership y protección de origen. Sin claves Clerk reales, la app mantiene las rutas privadas cerradas. La issue sigue abierta hasta comprobar sign-in, expiración y acceso cruzado con una instancia Clerk de prueba y dos cuentas; consulta [docs/authentication.md](docs/authentication.md). La issue #6 añade CRUD privado paginado, rutas `/projects` y `/projects/[projectId]`, transcript persistente con `requestId` idempotente y eliminación lógica reconciliable. La issue #7 presenta el editor de dos paneles, renombrado y opciones rápidas; el envío conserva el transcript sin iniciar IA. No hay worker de limpieza, generación real ni preview todavía. La issue #11 añade cola durable y worker para runs; su handler de producto queda pendiente de #16.
 
 Lee primero [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md). Construimos una plataforma tipo v0 para crear y modificar juegos web 2D mediante chat: plan visible, herramientas, archivos cambiados, verificaciones y preview privada en vivo. El editor tiene chat a la izquierda, preview a la derecha y header con proyecto, avatar, versiones y Publish/Share. Incluye opciones rápidas para género, arte, controles, niveles, enemigos, assets y sonido.
 
@@ -74,7 +74,7 @@ Solo claves públicas Clerk y URLs públicas llevan `NEXT_PUBLIC_`. No pasar un 
 
 Fuente: [gamedev-skills/awesome-gamedev-agent-skills](https://github.com/gamedev-skills/awesome-gamedev-agent-skills), commit revisado `19d93f97c9c1ea0f8b306e77aa81e0d3e352d3e9` (Apache-2.0). La integración posterior importa un subconjunto auditado conservando `LICENSE`, `NOTICE`, atribuciones, rutas originales y un manifiesto con SHA/hash de cada archivo; no descargar `main` en runtime ni ejecutar scripts de instalación externos automáticamente.
 
-Estado local de issue #10 (2 de noviembre de 2026): ese subconjunto y su router están implementados en `vendor/gamedev-skills/` y `packages/skills/`; `npm run skills:verify` comprueba commit, archivos, referencias y hashes. El router lee primero metadata, selecciona un género como máximo y carga cuerpos/referencias permitidos hasta 8.000 tokens estimados. La fuente Phaser upstream apunta a 4.2, así que el baseline 3.90 usa las adaptaciones locales de `packages/skills/local/`. La selección genera registros por run y un callback de persistencia; aún no existe el worker/ledger durable de la issue #11.
+Estado local de issue #10 (2 de noviembre de 2026): ese subconjunto y su router están implementados en `vendor/gamedev-skills/` y `packages/skills/`; `npm run skills:verify` comprueba commit, archivos, referencias y hashes. El router lee primero metadata, selecciona un género como máximo y carga cuerpos/referencias permitidos hasta 8.000 tokens estimados. La fuente Phaser upstream apunta a 4.2, así que el baseline 3.90 usa las adaptaciones locales de `packages/skills/local/`. La selección genera registros por run y un callback de persistencia; el worker/ledger durable existe desde #11; la conexión del router pertenece a #16.
 
 Catálogo base (las rutas son relativas al upstream):
 
@@ -123,13 +123,15 @@ Comandos objetivo desde raíz, introducidos por la issue correspondiente:
 ```sh
 node --version                 # v24.x
 npm ci
-npm run dev                    # web; worker/gateway se añaden por etapas
+npm run dev                    # web; el worker corre separado; gateway se añade después
 npm run dev:worker
+npm run build:worker
 npm run dev:gateway
 docker compose -f infra/compose.yml up -d
 npm run infra:config
 npm run infra:up                 # Postgres, Redis y storage S3 local
 npm run infra:up -- --web        # agrega el perfil web existente
+npm run infra:up -- --worker     # agrega el perfil del worker existente
 npm run infra:down               # conserva volúmenes
 npm run db:migrate
 npm run db:seed                 # datos sintéticos, nunca prod
@@ -144,7 +146,7 @@ npm run meta:smoke              # clave configurada por operador; coste explíci
 npm run skills:verify
 ```
 
-La issue #2 implementa Compose para Postgres, Redis y Silo, además del perfil web. No hay perfiles worker/gateway hasta que existan esos entrypoints. Las imágenes se fijan por digest en `infra/compose.yml` y `infra/images.lock.json`; el storage local sigue siendo únicamente de desarrollo y no es aislamiento de juegos. `infra:down` conserva los datos. El borrado de volúmenes requiere el comando de reset explícito de `docs/local-development.md`.
+La issue #2 implementa Compose para Postgres, Redis y Silo, además del perfil web. El perfil worker existe desde #11; gateway espera su entrypoint. Las imágenes se fijan por digest en `infra/compose.yml` y `infra/images.lock.json`; el storage local sigue siendo únicamente de desarrollo y no es aislamiento de juegos. `infra:down` conserva los datos. El borrado de volúmenes requiere el comando de reset explícito de `docs/local-development.md`.
 
 No ejecutar las pruebas hostiles en una máquina personal o producción. CI normal usa fixtures y servicios efímeros; el aislamiento se valida además en runner Linux dedicado sin secretos de producción. Las llamadas reales a Meta son opt-in y con presupuesto acotado. Crear tests de comportamiento para autorización, contratos, estado, idempotencia y seguridad; no tests que solo copien la implementación.
 

@@ -20,7 +20,7 @@ Los géneros admitidos incluyen plataformas, puzzle, RPG y shooter 2D cenital lo
 
 El presupuesto versionado es 8.000 tokens, con estimación conservadora de `ceil(UTF-8 bytes / 3)`. El texto de política consultiva también se cuenta. Si un cuerpo o referencia no cabe, se difiere completo y se reporta su ID; no se truncan reglas o cuerpos. Referencias sugeridas salen como metadata y solo se leen mediante `loadReferencesForRun` con un ID que pertenezca a una skill seleccionada. No se aceptan rutas o URLs del prompt, no se hacen fetches externos y se rechazan traversal y symlinks.
 
-Cada `SkillSelection` incluye `runId`, fingerprint del prompt (sin guardar el prompt), IDs y hashes de fuente/contenido, consumo estimado, presupuesto, versión de Phaser, proveedor `meta`, referencias y elementos diferidos. `getRunRecord(runId)` consulta el registro en memoria y `recordSelection` permite que un consumidor lo persista. El presupuesto se fija en la primera selección del run; si la tarea no cambia, una nueva llamada devuelve la misma selección. Hasta que la issue #11 implemente runs y almacenamiento durable, el registro se pierde al terminar el proceso.
+Cada `SkillSelection` incluye `runId`, fingerprint del prompt (sin guardar el prompt), IDs y hashes de fuente/contenido, consumo estimado, presupuesto, versión de Phaser, proveedor `meta`, referencias y elementos diferidos. `getRunRecord(runId)` consulta el registro en memoria y `recordSelection` permite que un consumidor lo persista. El presupuesto se fija en la primera selección del run; si la tarea no cambia, una nueva llamada devuelve la misma selección. La issue #11 implementa runs y almacenamiento durable; el router todavía no persiste su registro hasta integrarlo en #16.
 
 ## Compatibilidad Phaser
 
@@ -28,4 +28,4 @@ La fuente upstream de `phaser-core` y `phaser-arcade-physics` apunta a Phaser 4.
 
 Las guías locales `phaser-testing.md` y `shooter-2d.md` cubren huecos del catálogo revisado. El contenido upstream es material consultivo no confiable: no concede permisos, no cambia ownership, cuotas, egress, herramientas o proveedor Meta, y sus scripts no se ejecutan.
 
-Por ahora el editor no carga skills ni conecta el chat a Meta. El paquete y su hook de registro preparan ese contrato; el worker y la persistencia de runs pertenecen a issues posteriores.
+Por ahora el editor no carga skills ni conecta el chat a Meta. El paquete y su hook de registro preparan ese contrato; el worker y la persistencia de runs existen desde #11; la conexión con skills pertenece a #16.
