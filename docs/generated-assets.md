@@ -17,7 +17,7 @@ Antes del `POST`, el worker reserva una imagen bajo lock de owner y persiste `ag
 
 ## Ownership y juego
 
-El PNG y su hoja de contacto se escriben en el bucket S3 privado mediante el repositorio que comprueba Clerk owner y proyecto. El metadata conserva modelo, prompt saneado por filtros, timestamp, hashes, dimensiones, alpha, grilla, ediciones, hoja de contacto y estado de revisión. Los objetos tienen checksum y el estado de upload se verifica antes de usarse. La clave de S3 no se expone.
+El PNG y su hoja de contacto se escriben en el bucket S3 privado mediante el repositorio que comprueba autenticación propia owner y proyecto. El metadata conserva modelo, prompt saneado por filtros, timestamp, hashes, dimensiones, alpha, grilla, ediciones, hoja de contacto y estado de revisión. Los objetos tienen checksum y el estado de upload se verifica antes de usarse. La clave de S3 no se expone.
 
 El worker copia el PNG normalizado a `public/assets/generated/<uuid>.png` mediante `write-binary-file`, que solo acepta esa ruta y hasta 8 MiB. La herramienta escribe el manifest runtime con ID, ruta relativa, tipo, frames y dimensiones. Phaser valida el manifest estricto, carga los PNGs en su cache y los registra como `generated-<uuid>`; el modelo puede usar esa clave desde las escenas del proyecto. `file.changed` publica solo la ruta y bytes escritos. No expone prompt, modelo, hash, IDs privados ni contenido del archivo. El servidor Vite actualiza la preview tras el health check.
 
@@ -35,7 +35,7 @@ npm run typecheck
 npm run lint
 ```
 
-Los tests generan PNG/JPEG/WebP sintéticos e incluyen corrupción, MIME falso, alpha opaco, límites, frames, repetición 3×3, cuota, ownership pasado por identidad verificada, registro Phaser y proyección SSE con payload privado omitido. No sustituyen una generación real, una captura artística en juego ni una prueba de almacenamiento cruzado con dos cuentas reales. Esas comprobaciones requieren autorización del operador para el coste de Meta, la instancia Clerk, S3 desplegado y el host Linux dedicado con Docker rootless.
+Los tests generan PNG/JPEG/WebP sintéticos e incluyen corrupción, MIME falso, alpha opaco, límites, frames, repetición 3×3, cuota, ownership pasado por identidad verificada, registro Phaser y proyección SSE con payload privado omitido. No sustituyen una generación real, una captura artística en juego ni una prueba de almacenamiento cruzado con dos cuentas reales. Esas comprobaciones requieren autorización del operador para el coste de Meta, un recorrido E2E con dos cuentas reales, S3 desplegado y el host Linux dedicado con Docker rootless.
 
 ## Verificación real local (2 de noviembre de 2026)
 
@@ -43,6 +43,6 @@ Una llamada real a `MetaClient.generateImage` con muse-image-1.0 produjo un PNG 
 
 El PNG normalizado se sirvió desde el template Phaser mediante un manifest local: el navegador recibió HTTP 200, Phaser reportó `assetsReady=true` y registró generated-afe01e20-8b72-4cf2-b077-4510e5ef0f7e sin errores. Se inspeccionó el fondo detrás del nivel mediante una capa temporal de QA; el código y assets temporales se retiraron del repo. La captura queda en `%TEMP%\meta-issue19-5HDmpK\phaser-preview.png`.
 
-Esta prueba acredita una respuesta real de Meta, el decodificador/normalizador, la carga Phaser del manifest y una revisión visual local. No pasó por la reserva facturable del worker ni persistió ese resultado en el bucket privado o en un proyecto con sesión Clerk. `visualReview` permanece `pending-in-live-preview` para los assets de producto hasta observar una generación real desde la preview privada. Las pruebas de integración locales sí ejercitan S3 privado y rechazan lectura con otra identidad fixture; no sustituyen dos cuentas Clerk reales ni el host Linux rootless.
+Esta prueba acredita una respuesta real de Meta, el decodificador/normalizador, la carga Phaser del manifest y una revisión visual local. No pasó por la reserva facturable del worker ni persistió ese resultado en el bucket privado o en un proyecto con sesión autenticación propia. `visualReview` permanece `pending-in-live-preview` para los assets de producto hasta observar una generación real desde la preview privada. Las pruebas de integración locales sí ejercitan S3 privado y rechazan lectura con otra identidad fixture; no sustituyen un recorrido E2E con dos cuentas reales ni el host Linux rootless.
 
 Validación en Node 24.22.1: `npm test` pasó 184 pruebas y omitió 24 de integración; `npm run test:integration` pasó 30 y omitió una comprobación opcional de Redis preview; `npm run test:e2e:game-templates` pasó 18 pruebas en Chromium, Firefox y WebKit. `npm run lint`, `npm run typecheck`, `npm run build`, `npm run build:worker` y `npm run build:game-template` también pasaron. Las pruebas locales no habilitan `RUNS_ENABLED` ni acreditan la preview privada real.

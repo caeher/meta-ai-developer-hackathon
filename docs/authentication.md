@@ -1,49 +1,35 @@
-# Autenticación y ownership
+﻿# Autenticación propia
 
-## Configuración
+Forja autentica cuentas con correo y contraseña sin un servicio de identidad externo. La API y las páginas privadas validan la sesión contra PostgreSQL; `userId` se obtiene de la fila asociada a la sesión y nunca del body, la query, el prompt ni una cabecera del cliente.
 
-La app usa `@clerk/nextjs` 7.9.23, fijado con versión exacta y compatible con Next.js 16.4.3. El SDK solo se activa cuando el servidor recibe una clave publicable con prefijo Clerk reconocido y una clave secreta correspondiente. Los valores `placeholder` de `.env.example` no lo activan.
+## Flujos
 
-Para una instancia de desarrollo local, configura manualmente `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `APP_ORIGIN`, `NEXT_PUBLIC_APP_URL` y `CLERK_AUTHORIZED_PARTIES` en el entorno del proceso web. Los authorized parties son una lista de orígenes exactos separados por comas; se admite HTTP solo para loopback local. No copies la plantilla sobre un `.env.local` existente ni agregues claves a Git.
+- `/sign-up` crea una cuenta con correo normalizado y contraseña de al menos 12 caracteres. El acceso requiere verificar el correo.
+- `/verify-email?token=...` envía el token por `POST /api/auth/verify-email`; no consume tokens durante un `GET` o prefetch.
+- `/sign-in` inicia sesión y rota el token de sesión anterior.
+- `/forgot-password` siempre responde con el mismo mensaje para que no revele si existe el correo. `/reset-password?token=...` consume un token de un solo uso y revoca todas las sesiones al cambiar la contraseña.
+- El menú del header muestra iniciales y permite cerrar la sesión actual o todas las sesiones.
 
-Sin credenciales Clerk reales, la página de inicio y `/api/health` siguen disponibles, `/sign-in` y `/sign-up` muestran que falta configuración, las páginas privadas redirigen al acceso y las APIs privadas responden `503 authentication_not_configured`. El modo sin credenciales no crea una sesión fixture ni simula el servicio.
+## Contratos y persistencia
 
-## Sesiones, rutas y datos
+- `hashPassword` usa scrypt con `N=32768`, `r=8`, `p=1`, salt aleatorio de 16 bytes y salida de 64 bytes. Se elige la implementación criptográfica nativa de Node para evitar módulos nativos incompatibles en Node 24/Windows.
+- Los tokens de sesión, verificación y recuperación contienen 256 bits aleatorios. PostgreSQL guarda únicamente SHA-256; no se guarda el token enviado al navegador o al correo.
+- `auth_sessions` guarda `created_at`, `last_seen_at`, expiración deslizante y expiración absoluta. Por defecto, la sesión dura siete días desde su último uso y nunca supera 30 días desde el inicio. La cookie `forja_session` es `HttpOnly`, `SameSite=Lax`, host-only y `Secure` en producción.
+- `auth_tokens` guarda propósito, digest, vencimiento y consumo. Los tokens de verificación y recuperación vencen en 30 minutos; emitir uno nuevo invalida los anteriores del mismo propósito.
+- `auth_rate_limits` guarda solo un HMAC-SHA-256 del correo normalizado y fallos. `AUTH_SECRET` protege los buckets contra búsquedas de correos; producción requiere un valor aleatorio de al menos 32 caracteres. Tras 5, 8 y 10 fallos aplica esperas progresivas de 1, 5 y 30 minutos; el contador se reinicia al pasar 15 minutos sin actividad. No se confía en `X-Forwarded-For` para identificar al cliente.
+- Las mutaciones requieren `Origin` exacto de `AUTH_ALLOWED_ORIGINS` (o `APP_ORIGIN`) y rechazan `Sec-Fetch-Site` incompatible.
+- La migración 0009 agrega las tablas propias y reemplaza la identidad externa. Las filas de usuarios y las relaciones internas por UUID se conservan; las cuentas anteriores sin correo/contraseña quedan sin iniciar sesión y requieren un procedimiento de reasignación si deben recuperarse.
 
-- `apps/web/proxy.ts` integra `clerkMiddleware()` y usa `authorizedParties`. Solo `/`, `/api/health`, `/sign-in` y `/sign-up` son públicas. Páginas privadas requieren sesión; APIs privadas responden `401` si no hay sesión.
-- Los flujos de Clerk usan rutas catch-all `/sign-in` y `/sign-up` y fuerzan el retorno a `/editor`, una ruta relativa fija que no acepta un destino arbitrario del cliente.
-- `requireUser()` obtiene `userId` exclusivamente de `auth()` en el servidor y lo convierte al contexto de identidad verificada que esperan los repositorios. No se acepta `userId` en body, query o cabeceras.
-- `requireProjectOwner()` usa `projects.get`, que filtra por el owner derivado del contexto y por el ID del recurso. El API devuelve `404` uniforme para un proyecto ausente o de otro usuario. `GET` omite los campos internos de ownership y usa `Cache-Control: private, no-store`.
-- `/api/projects` expone `GET` paginado y `POST`; `POST` comprueba el origen, limita el JSON a 16 KiB y solo acepta `name` validado con Zod.
-- `/api/projects/[projectId]` expone `GET`, `PATCH` y `DELETE`. `PATCH` comprueba el origen, limita el JSON a 16 KiB y solo acepta `name`. Campos de owner enviados por el cliente se descartan. `DELETE` aplica eliminación lógica y registra la tarea de limpieza en la misma transacción.
-- `/api/projects/[projectId]/messages` expone transcript paginado y creación de mensajes de usuario. El contenido se limita a 100.000 caracteres y a un body de 320 KiB; se trata como texto plano. `requestId` evita duplicados al reintentar y detecta la reutilización conflictiva con `409`.
-- Todos los endpoints vuelven a comprobar ownership en los repositorios. Proyectos eliminados se ocultan como ausentes para lecturas y mutaciones, incluso de mensajes/runs.
-- Los módulos que acceden a Clerk, claves o DB están marcados como `server-only`. No se solicita ni almacena PII de perfil; el repositorio persiste solo el identificador opaco de Clerk cuando crea el primer recurso.
+## Correo
+
+`Mailer` separa el envío del flujo de autenticación. `ConsoleMailer` está habilitado en `NODE_ENV=development` y muestra el enlace de un solo uso como cuerpo del correo local. En producción, registro y recuperación responden `503 email_delivery_unavailable` hasta configurar una implementación de entrega; no se marca una cuenta como verificada ni se simula un envío.
+
+## Entorno local
+
+`APP_ORIGIN`, `AUTH_ALLOWED_ORIGINS`, `AUTH_SECRET`, `SESSION_TTL_SECONDS` y `SESSION_ABSOLUTE_TTL_SECONDS` se documentan en `.env.example`. `AUTH_SECRET` solo protege los buckets de rate limit; las sesiones no son JWT, sino tokens aleatorios opacos validados por su hash en la base de datos. En desarrollo el valor placeholder activa una clave local fija para que los flujos funcionen sin configuración adicional.
+
+Inicia los servicios locales, aplica `npm run db:migrate` y ejecuta `npm run dev`. Regístrate, copia del log local el enlace de verificación, verifica el correo e inicia sesión. La recuperación sigue el mismo flujo con el enlace que emite el mailer local.
 
 ## Verificación
 
-`npm test` ejecuta fixtures sintéticos para sesión ausente, identities A/B, lectura y mutación cruzadas, campos `userId` falsificados, CSRF/origen y errores sin detalles sensibles. `npm run test:integration` además prueba el filtro de owner de PostgreSQL cuando Postgres/S3 locales están arriba.
-
-La comprobación de sign-in real, expiración de sesión y dos cuentas en una instancia Clerk requiere credenciales y usuarios de prueba del operador. No hay claves Clerk en este entorno, así que esa evidencia queda pendiente; no se cuentan los fixtures como prueba de la integración externa.
-
-## Verificación de proyectos y chat (#6)
-
-En Node 24 se ejecutaron `npm test` (31 pruebas pasaron; 8 de integración se omiten en este comando), `npm run test:integration` (8 pasaron con PostgreSQL y S3 locales), `npm run lint`, `npm run typecheck` y `npm run build`; todos terminaron correctamente. Los tests de API usan identidades sintéticas y la integración cubre CRUD A/B, cursores, mensajes concurrentes con el mismo `requestId`, conflicto de idempotencia y la carrera entre guardado y eliminación.
-
-No se pudo ejecutar el recorrido de navegador con Clerk real porque no hay una instancia ni cuentas de prueba configuradas. Las rutas protegidas se mantienen cerradas sin credenciales. La suite sintética verifica los contratos, pero no sustituye la comprobación de Clerk pendiente de #4.
-
-## Registro de verificación local (2 de noviembre de 2026)
-
-En Node 24.22.1 se ejecutaron `npm test` (28 pasaron; 5 pruebas de integración omitidas por la suite unitaria), `npm run test:integration` (5 pasaron), `npm run lint`, `npm run typecheck` y `npm run build`; todos terminaron correctamente. La suite de integración creó y eliminó su base PostgreSQL y bucket S3 temporales.
-
-El smoke de producción devolvió `200` para `/api/health` y `/sign-in`, `307` para `/editor` sin sesión, y `503 authentication_not_configured` para la API privada sin credenciales Clerk. La revisión de los chunks JavaScript no encontró valores con formato de clave secreta Clerk (`sk_test_`/`sk_live_`).
-
-Esto verifica el comportamiento local fail-closed y los contratos con identidades sintéticas. Sigue pendiente usar una instancia Clerk real para validar sign-in/sign-out, expiración de sesión y lecturas/escrituras cruzadas entre dos cuentas; no se considera completada esa prueba externa.
-
-## Continuación de la verificación (#4)
-
-El 2 de noviembre de 2026 se volvió a comprobar la disponibilidad de la configuración sin leer ni registrar sus valores. El proceso no tiene las claves Clerk requeridas ni credenciales configuradas para dos cuentas de prueba. Por ello no se pudo ejecutar el recorrido E2E contra Clerk ni verificar la expiración y el acceso cruzado con sesiones reales. La issue permanece abierta; los fixtures locales no sustituyen esa evidencia.
-
-## Verificación de continuación de #6 (2 de noviembre de 2026)
-
-En Node 24.22.1 volvieron a pasar `npm test` (31 pruebas; 8 de integración omitidas en esta suite), `npm run test:integration` (8 pruebas con PostgreSQL y S3 locales), `npm run lint`, `npm run typecheck` y `npm run build`. La comprobación de `.env.local` revisó solo presencia y formato de las variables Clerk necesarias, sin imprimir ni guardar sus valores; no encontró una configuración utilizable. Sin una instancia Clerk y dos cuentas de prueba no se puede completar el E2E de crear proyecto, persistir el chat, recargar, renombrar, eliminar y comprobar el aislamiento entre usuarios. #6 permanece abierta hasta obtener esa evidencia real; los tests con fixtures no la sustituyen.
+Las pruebas unitarias cubren scrypt, tokens, rotación, vencimiento deslizante/absoluto, revocación, política de cookies, bloqueo progresivo, CSRF y acceso cruzado. Las pruebas de integración verifican ownership con PostgreSQL y los recursos privados; E2E usa fixtures de navegador. Los flujos locales de correo no acreditan un proveedor de correo de producción.

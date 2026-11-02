@@ -36,7 +36,7 @@ La imagen infra/sandbox/Dockerfile compila workspace-fs estatico y anade el prox
 
 ## Entorno de operación
 
-El host debe ser Linux dedicado con Docker Engine rootless, cgroups v2 gestionados por systemd y controladores `cpu`, `memory` y `pids` delegados al usuario rootless. Consulta la [guía oficial de Docker rootless](https://docs.docker.com/engine/security/rootless/tips/) para los requisitos del daemon. El proceso del controlador no debe tener credenciales de Meta, S3 o Clerk.
+El host debe ser Linux dedicado con Docker Engine rootless, cgroups v2 gestionados por systemd y controladores `cpu`, `memory` y `pids` delegados al usuario rootless. Consulta la [guía oficial de Docker rootless](https://docs.docker.com/engine/security/rootless/tips/) para los requisitos del daemon. El proceso del controlador no debe tener credenciales de Meta, S3 o autenticación propia.
 
 Secuencia de instalación:
 
@@ -49,7 +49,7 @@ Secuencia de instalación:
 7. Configurar `infra/sandbox/Caddyfile.example` con TLS interno, bind a la IP privada y firewall limitado a los workers.
 8. Ejecutar npm run sandbox:host-check; exige Linux dedicado, Docker Engine 28+, IPv4/IPv6 aislados y completa probes de tools/egress antes de indicar sandbox_host_ready.
 
-El controlador requiere `DATABASE_URL`. En producción usa un rol DB restringido a leer `projects` y administrar únicamente `sandboxes`; evita reutilizar credenciales de Meta, S3 o Clerk. El secreto Bearer solo se provisiona en el controlador y worker, nunca web, juego, `.env.local`, fixtures o logs. El token se compara en tiempo constante; no hay CORS ni redirecciones de cliente.
+El controlador requiere `DATABASE_URL`. En producción usa un rol DB restringido a leer `projects` y administrar únicamente `sandboxes`; evita reutilizar credenciales de Meta, S3 o autenticación propia. El secreto Bearer solo se provisiona en el controlador y worker, nunca web, juego, `.env.local`, fixtures o logs. El token se compara en tiempo constante; no hay CORS ni redirecciones de cliente.
 
 ## Prueba reproducible
 

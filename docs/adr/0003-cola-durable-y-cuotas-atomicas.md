@@ -12,7 +12,7 @@
 - La reserva serializa por fila de usuario en PostgreSQL. Los runs activos, retenciones abiertas y cargos netos UTC del día se comparan antes de crear el run; una clave repetida devuelve el run original sin reservar de nuevo. Los errores de cuota son 429 y un run distinto para un proyecto ocupado es 409.
 - La reserva queda activa durante retries/reconciliación. Cancelar en cola libera inmediatamente; cancelar un run activo registra una petición, que el worker observa con heartbeat y debe atender mediante `AbortSignal`. Consumo real se registra con una clave de ledger idempotente; el saldo no usado se libera al finalizar.
 - BullMQ reintenta fallos transitorios tres veces con backoff exponencial. Una excepción terminal deja `failed` y un `errorCode` acotado. Al expirar un lease, el reconciliador reencola el run con una generación nueva; los resultados con fencing viejo se rechazan.
-- La API `POST /api/projects/[projectId]/runs` verifica Clerk, owner y origen. `RUNS_ENABLED=false` por defecto devuelve `503 orchestrator_pending`. Con la bandera activa exige `messageRequestId` de un mensaje user guardado y `contributorConsent: true`; #16 persiste el vínculo y consentimiento antes de encolar. El handler de éxito inyectable solo se usa en pruebas.
+- La API `POST /api/projects/[projectId]/runs` verifica autenticación propia, owner y origen. `RUNS_ENABLED=false` por defecto devuelve `503 orchestrator_pending`. Con la bandera activa exige `messageRequestId` de un mensaje user guardado y `contributorConsent: true`; #16 persiste el vínculo y consentimiento antes de encolar. El handler de éxito inyectable solo se usa en pruebas.
 - Redis usa AOF en Compose y `noeviction` debe mantenerse en producción. El outbox permite recuperar el envío cuando Redis pierde un job; Redis no reemplaza el ledger o el estado durable de PostgreSQL.
 
 ## Migración y rollback
@@ -23,4 +23,4 @@
 
 - #16 conecta Meta, skills y herramientas del sandbox con plan previo y eventos durables. La bandera permanece apagada mientras no se validen el consentimiento visible del chat (#17), la clave Meta y el host Linux rootless dedicado.
 - El fencing bloquea escrituras tardías en PostgreSQL. No vuelve idempotentes solicitudes externas cuyo proveedor no ofrezca idempotency keys; el futuro orquestador debe persistir antes de cada efecto y reconciliar resultados ambiguos.
-- La integración actual prueba DB/Redis locales y expiración de lease; Clerk real continúa sujeto a las credenciales y cuentas de prueba existentes en #4.
+- La integración prueba DB/Redis locales y expiración de lease. La identidad de la aplicación se resuelve desde las sesiones propias de #29; la entrega de correo productivo sigue requiriendo un proveedor configurado.

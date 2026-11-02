@@ -1,6 +1,6 @@
 # Forja — plataforma de juegos 2D
 
-Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, identidad Clerk, persistencia Drizzle y storage privado S3. El editor conecta el chat con runs y transmite progreso durable por SSE. La ejecución y la preview siguen apagadas por defecto hasta configurar Meta, dominio/TLS y un host Linux dedicado; la generación jugable completa y la publicación siguen pendientes.
+Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, autenticación propia, persistencia Drizzle y storage privado S3. El editor conecta el chat con runs y transmite progreso durable por SSE. La ejecución y la preview siguen apagadas por defecto hasta configurar Meta, dominio/TLS y un host Linux dedicado; la generación jugable completa y la publicación siguen pendientes.
 
 Los proyectos privados abren un editor de dos paneles en `/projects/[projectId]`: chat persistido, consentimiento de Meta Contributor y opciones rápidas a la izquierda; iframe privado con navegación a la derecha cuando el gateway está habilitado. Enviar un mensaje lo guarda y encola un run cuando `RUNS_ENABLED=true`. Publish/Share siguen deshabilitados.
 
@@ -22,13 +22,13 @@ npm ci
 npm run dev
 ```
 
-La versión de Node debe mostrar `v24.x`. Abre <http://localhost:3000>. Sin claves Clerk reales, el sitio público y `/api/health` funcionan, el estado de autenticación se indica en pantalla y las rutas privadas permanecen cerradas.
+La versión de Node debe mostrar `v24.x`. Abre <http://localhost:3000>. El registro, las sesiones y la protección de rutas usan PostgreSQL; sin una sesión válida las rutas privadas permanecen cerradas.
 
-Para habilitar Clerk, configura manualmente en un entorno local las variables Clerk de `.env.example` con claves de una instancia de desarrollo del operador. Configura `APP_ORIGIN` y `CLERK_AUTHORIZED_PARTIES` con los orígenes exactos de la app; no uses dominios recibidos desde una petición. Los flujos sign-in/sign-up redirigen de forma fija a `/editor`. Nunca compartas ni guardes `CLERK_SECRET_KEY` en Git, issues, logs o respuestas HTTP.
+La autenticación propia no necesita claves de proveedor: inicia Postgres, configura `APP_ORIGIN`, `AUTH_ALLOWED_ORIGINS` y los TTL de sesión de `.env.example`. En desarrollo, el mailer de consola muestra los enlaces de verificación y recuperación. Nunca copies un `.env.local` a Git.
 
-El tema Tokyo Night usa tokens semánticos compartidos por Radix Themes y Clerk. En desarrollo local, `/design-system` muestra una galería con controles, portales y estados accesibles; esa ruta devuelve 404 fuera del modo de desarrollo y usa solo contenido sintético.
+El tema Tokyo Night usa tokens semánticos compartidos por Radix Themes y las vistas propias de autenticación. En desarrollo local, `/design-system` muestra una galería con controles, portales y estados accesibles; esa ruta devuelve 404 fuera del modo de desarrollo y usa solo contenido sintético.
 
-Consulta [docs/authentication.md](docs/authentication.md) para límites locales, comportamiento de las APIs y validación con dos usuarios. Las pruebas actuales usan sesiones y proyectos sintéticos; la comprobación E2E con una instancia Clerk real requiere claves y usuarios de prueba del operador.
+Consulta [docs/authentication.md](docs/authentication.md) para los flujos de alta, verificación, sesiones, recuperación y sus límites. Las pruebas cubren sesiones y ownership con identidades sintéticas; los flujos E2E locales usan el mailer de consola.
 
 Para levantar las dependencias locales:
 
@@ -91,7 +91,7 @@ npm run meta:smoke -- --image
 
 ## Persistencia y autorización
 
-La issue #3 incorpora el esquema Drizzle, migraciones y adaptador S3 privado. La issue #4 añade Clerk, `proxy.ts` y guards de sesión/owner. La issue #6 añade CRUD privado paginado en `/api/projects`, mensajes en `/api/projects/[projectId]/messages` y las vistas `/projects` y `/projects/[projectId]`. La issue #7 construye el editor de dos paneles, edición del nombre, opciones rápidas y vistas vacías de progreso. Las rutas derivan la identidad de `auth()`; body, query y cabeceras nunca eligen el owner.
+La issue #3 incorpora el esquema Drizzle, migraciones y adaptador S3 privado. La issue #29 implementa autenticación propia, `proxy.ts`, sesiones persistentes y guards de owner. La issue #6 añade CRUD privado paginado en `/api/projects`, mensajes en `/api/projects/[projectId]/messages` y las vistas `/projects` y `/projects/[projectId]`. La issue #7 construye el editor de dos paneles, edición del nombre, opciones rápidas y vistas vacías de progreso. Las rutas derivan la identidad de la sesión verificada en servidor; body, query y cabeceras nunca eligen el owner.
 
 Cada mensaje tiene `requestId` idempotente y secuencia por proyecto. Si un reintento repite la clave con el mismo rol/contenido, se devuelve el registro existente; si cambia el contenido, la API responde `409 idempotency_conflict`. Los transcript se sirven en orden de secuencia con cursor y texto plano, sin HTML activo.
 
@@ -101,7 +101,7 @@ Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQ
 
 El adaptador de storage usa solo `S3_BUCKET_PRIVATE`, genera claves en servidor, admite objetos de hasta 25 MiB y valida SHA-256 al escribir y leer. El bucket privado de Silo no permite lectura anónima. Las migraciones no se revierten automáticamente; consulta [desarrollo local](docs/local-development.md) antes de ejecutar una reversión destructiva.
 
-El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y verificación, y `packages/contracts/src/events.ts` define los eventos SSE públicos versionados. El editor reconstruye plan, pasos, archivos y verificaciones desde el stream durable; permite reconectar, detener y reintentar. `npm test` cubre contratos, proyección de eventos, ownership y las interacciones principales sin Clerk real ni clave Meta. `npm run test:e2e` comprueba los recorridos de editor con fixtures en Chromium, Firefox y WebKit; no acredita Clerk real, dominio/TLS ni el host Linux dedicado.
+El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y verificación, y `packages/contracts/src/events.ts` define los eventos SSE públicos versionados. El editor reconstruye plan, pasos, archivos y verificaciones desde el stream durable; permite reconectar, detener y reintentar. `npm test` cubre contratos, proyección de eventos, ownership e interacciones principales sin servicios externos. `npm run test:e2e` comprueba los recorridos de editor con fixtures en Chromium, Firefox y WebKit; no acredita dominio/TLS ni el host Linux dedicado.
 
 ## Plantillas Phaser
 
@@ -129,12 +129,12 @@ El worker normaliza preferencias a `GameSpec`, conserva la especificación del �
 La imagen del sandbox incluye el runner Chromium fijado a Playwright 1.64.1; se construyó localmente para `linux/amd64` y la sonda Chromium pasó en Docker Desktop sin red. Falta publicarla con digest y ejecutar el preflight rootless en el host Linux dedicado; `RUNS_ENABLED=false` hasta completar esa validación externa. `npm run meta:smoke` pasó con texto sintético, pero la suite local y el smoke no acreditan una generación real con Meta dentro de un sandbox rootless.
 ## Capacidades planificadas
 
-`dev:gateway` y `build:gateway` ya existen. El gateway resuelve únicamente sandboxes listos desde PostgreSQL, consume grants de un uso en Redis y autoriza cada HTTP/WebSocket; `npm run infra:up -- --preview` activa el perfil solo con claves válidas. El editor monta un iframe con sandbox mínimo, renovación de sesión, navegación por rutas comunicadas y fallback de primer nivel por formulario sin grant en URL. Las versiones verificadas se guardan en S3 privado y pueden restaurarse como una nueva versión; la revisión muestra cambios y verificaciones. La preview jugable de snapshots históricos sin tocar el workspace sigue pendiente. Los E2E de navegador usan fixtures; aún faltan dominio wildcard con TLS, cookies del dominio real, host Linux dedicado y un recorrido autenticado con dos cuentas Clerk. Consulta [docs/versions.md](docs/versions.md) y [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue. El acceso real a Meta se informa por separado del resultado de los tests con fixtures.
+`dev:gateway` y `build:gateway` ya existen. El gateway resuelve únicamente sandboxes listos desde PostgreSQL, consume grants de un uso en Redis y autoriza cada HTTP/WebSocket; `npm run infra:up -- --preview` activa el perfil solo con claves válidas. El editor monta un iframe con sandbox mínimo, renovación de sesión, navegación por rutas comunicadas y fallback de primer nivel por formulario sin grant en URL. Las versiones verificadas se guardan en S3 privado y pueden restaurarse como una nueva versión; la revisión muestra cambios y verificaciones. La preview jugable de snapshots históricos sin tocar el workspace sigue pendiente. Aún faltan dominio wildcard con TLS, cookies del dominio real y host Linux dedicado. Consulta [docs/versions.md](docs/versions.md) y [docs/ROADMAP.md](docs/ROADMAP.md). El acceso real a Meta se informa por separado de los tests con fixtures.
 
 ## Estructura
 
 - `apps/sandbox-controller`: servicio privado rootless, separado de Next y el worker.
-- `apps/web`: Next.js App Router, Clerk, React, Radix Themes y TypeScript estricto.
+- `apps/web`: Next.js App Router, autenticación propia, React, Radix Themes y TypeScript estricto.
 - `apps/web/components/ui`: wrappers Radix reutilizables y galería local del tema.
 - `packages/config`: validación de URLs públicas y configuración de infraestructura local.
 - `packages/sandbox`: driver rootless, API privada y cliente autenticado para el worker.

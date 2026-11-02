@@ -46,7 +46,7 @@ npm run db:seed
 
 `db:migrate` usa `DATABASE_URL` del entorno si está definido. Si falta, arma la URL de loopback con las variables de `infra/.env`; nunca lee `.env.local`. Drizzle registra cada migración aplicada, por lo que volver a ejecutar el comando no repite ni altera una migración anterior.
 
-`db:seed` requiere PostgreSQL local en loopback y rechaza `NODE_ENV=production`. Inserta dos identidades Clerk sintéticas, proyectos, mensajes, runs, eventos, sandboxes y registros de uso con IDs reservados. Repetir el comando no duplica fixtures. No genera datos personales ni pretende autenticar a esas identidades.
+`db:seed` requiere PostgreSQL local en loopback y rechaza `NODE_ENV=production`. Inserta dos identidades autenticación propia sintéticas, proyectos, mensajes, runs, eventos, sandboxes y registros de uso con IDs reservados. Repetir el comando no duplica fixtures. No genera datos personales ni pretende autenticar a esas identidades.
 
 Las pruebas integradas usan una base y un bucket privados temporales:
 
@@ -68,7 +68,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/db/migrations/0000_normal_ch
 
 El archivo elimina todas las tablas y tipos de esta migración, incluidos sus datos. No lo ejecutes en staging ni producción. `0001_dazzling_red_skull_down.sql` cambia los UUID del ledger a una secuencia nueva; los IDs/cursors externos no se conservan, así que usa un backup si los necesitas. No hay rollback automático de migraciones futuras; cada cambio posterior debe ser aditivo y tener un plan explícito.
 
-Los servicios publicados en el host enlazan `127.0.0.1`. La red bridge de desarrollo permite egress de los contenedores de control; no ejecuta código de juegos ni constituye la política de egress del sandbox. Los puertos de datos no se publican en perfiles de despliegue. Web no recibe claves de Clerk, Meta o del controlador.
+Los servicios publicados en el host enlazan `127.0.0.1`. La red bridge de desarrollo permite egress de los contenedores de control; no ejecuta código de juegos ni constituye la política de egress del sandbox. Los puertos de datos no se publican en perfiles de despliegue. Web no recibe claves de autenticación propia, Meta o del controlador.
 
 ## Servicios e imágenes
 

@@ -1,6 +1,6 @@
 # Runs, cola y presupuesto
 
-Issue #11 separa la recepción de runs del request de Next. `POST /api/projects/[projectId]/runs` y `DELETE /api/projects/[projectId]/runs/[runId]` requieren Clerk, owner del proyecto y mismo origen en las mutaciones. `GET /api/projects/[projectId]/runs` recupera el último run y `GET` en la ruta individual devuelve únicamente el estado del run del mismo proyecto. `/api/runs/[runId]/events` transmite el progreso SSE privado. Las respuestas privadas usan `no-store`; no se aceptan owner IDs ni mensajes/prompts desde el payload de la cola.
+Issue #11 separa la recepción de runs del request de Next. `POST /api/projects/[projectId]/runs` y `DELETE /api/projects/[projectId]/runs/[runId]` requieren autenticación propia, owner del proyecto y mismo origen en las mutaciones. `GET /api/projects/[projectId]/runs` recupera el último run y `GET` en la ruta individual devuelve únicamente el estado del run del mismo proyecto. `/api/runs/[runId]/events` transmite el progreso SSE privado. Las respuestas privadas usan `no-store`; no se aceptan owner IDs ni mensajes/prompts desde el payload de la cola.
 
 ## Flujo durable
 

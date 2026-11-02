@@ -2,7 +2,7 @@
 
 ## Flujo
 
-1. La API valida sesión Clerk, origen y ownership. El cliente debe guardar primero el mensaje de usuario y luego enviar su `requestId` como `messageRequestId`, además de `contributorConsent: true`. Una transacción liga el mensaje al run, crea la reserva, outbox y evento inicial. Un mensaje no se puede asociar a otro run.
+1. La API valida sesión autenticación propia, origen y ownership. El cliente debe guardar primero el mensaje de usuario y luego enviar su `requestId` como `messageRequestId`, además de `contributorConsent: true`. Una transacción liga el mensaje al run, crea la reserva, outbox y evento inicial. Un mensaje no se puede asociar a otro run.
 2. BullMQ transporta solo `runId`, `idempotencyKey` y `generation`. El worker reclama un lease de proyecto con fencing y carga el mensaje ligado desde PostgreSQL. Vuelve a validar el consentimiento guardado, el proyecto activo, el owner y el lease antes de leer el contenido o persistir un evento.
 3. El worker bloquea patrones detectables de email, teléfono, tarjetas y credenciales. Selecciona skills por tarea con Phaser 3.90, presupuesto máximo de 8.000 tokens, y persiste el record de IDs/hashes sin el prompt ni cuerpos consultivos.
 4. `MetaClient.plan` produce un JSON Schema estricto con objetivo, pasos, archivos relativos y verificaciones. El worker guarda `runs.plan`, `agent.meta_response_completed` y `agent.plan` antes de preparar el sandbox. Si el plan no valida, contiene una ruta fuera del workspace o excede el presupuesto, no se ejecutan herramientas.
