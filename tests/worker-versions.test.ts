@@ -75,14 +75,16 @@ function makeSandbox() {
 
 function makeService(sandbox: ReturnType<typeof makeSandbox>) {
   const objects = new Map<string, Uint8Array>();
+  let failNextHead = false;
   const client: PrivateObjectClient = {
     async put({ key, body, ifAbsent }) {
       if (ifAbsent && objects.has(key)) throw new Error("precondition failed");
       objects.set(key, Uint8Array.from(body));
     },
     async head(key) {
+      if (failNextHead) { failNextHead = false; throw new Error("fixture_storage_unavailable"); }
       const body = objects.get(key);
-      if (!body) throw Object.assign(new Error("missing"), { name: "NotFound" });
+      if (!body) return {};
       return { sizeBytes: body.byteLength, sha256: createHash("sha256").update(body).digest("hex") };
     },
     async get(key) {
@@ -94,6 +96,7 @@ function makeService(sandbox: ReturnType<typeof makeSandbox>) {
   };
   type FakeVersionRow = {
     id: string;
+    ownerUserId: string;
     projectId: string;
     versionNumber: number;
     status: "creating" | "ready" | "failed";
@@ -101,42 +104,61 @@ function makeService(sandbox: ReturnType<typeof makeSandbox>) {
     snapshotKey: string;
     runId?: string | null;
     parentVersionId?: string | null;
-    sha256?: string;
-    sizeBytes?: number;
+    sha256: string;
+    sizeBytes: number;
     manifest?: { files: Array<{ path: string; sha256: string }> };
   };
   const rows = new Map<string, FakeVersionRow>();
   let nextNumber = 0;
   let restoreLocked = false;
   let failCreateRestored = false;
+  let failRestoredReady = false;
   const versions = {
     async ownerId() { return ownerUserId; },
     async latest() { return [...rows.values()].filter((row) => row.status === "ready").sort((a, b) => b.versionNumber - a.versionNumber)[0]; },
-    async reserveForRun(_identity: unknown, claim: { runId: string }, input: Omit<FakeVersionRow, "id" | "projectId" | "versionNumber" | "status" | "createdAt" | "snapshotKey">) {
-      if (!objects.has(`private/${ownerUserId}/projects/${projectId}/versions/${claim.runId}`)) throw new Error("snapshot_must_exist_before_row");
+    async reserveForRun(_identity: unknown, claim: { runId: string }, input: Omit<FakeVersionRow, "id" | "ownerUserId" | "projectId" | "versionNumber" | "status" | "createdAt" | "snapshotKey">) {
       const existing = rows.get(claim.runId);
-      if (existing) return existing;
-      const row: FakeVersionRow = { ...input, id: claim.runId, projectId, versionNumber: ++nextNumber, status: "creating", createdAt: new Date(), snapshotKey: "private-hidden" };
+      if (existing) {
+        if (existing.sha256 !== input.sha256 || existing.sizeBytes !== input.sizeBytes) throw new Error("snapshot_reservation_conflict");
+        return existing;
+      }
+      if (objects.has(`private/${ownerUserId}/projects/${projectId}/versions/${claim.runId}`)) throw new Error("snapshot_written_before_reservation");
+      const row: FakeVersionRow = { ...input, id: claim.runId, ownerUserId, projectId, versionNumber: ++nextNumber, status: "creating", createdAt: new Date(), snapshotKey: "private-hidden" };
       rows.set(row.id, row);
       return row;
     },
     async markRunSnapshotReady(_identity: unknown, _claim: unknown, id: string) { const row = rows.get(id)!; row.status = "ready"; return row; },
     async markRunSnapshotFailed(_identity: unknown, _claim: unknown, id: string) { const row = rows.get(id)!; row.status = "failed"; return row; },
     async get(_identity: unknown, _projectId: string, id: string) { const row = rows.get(id); return row?.status === "ready" ? row : undefined; },
+    async getSnapshotCandidate(_identity: unknown, _projectId: string, id: string) { return rows.get(id); },
+    async listSnapshotReconciliationCandidates(cutoff: Date, limit: number) {
+      return [...rows.values()].filter((row) => row.status === "creating" && row.createdAt < cutoff).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).slice(0, limit);
+    },
+    async reconcileSnapshotCandidate(input: { id: string; ownerUserId: string; projectId: string; sha256: string; sizeBytes: number; createdAt: Date; cutoff: Date; status: "ready" | "failed" }) {
+      const row = rows.get(input.id);
+      if (!row || row.ownerUserId !== input.ownerUserId || row.projectId !== input.projectId || row.sha256 !== input.sha256 || row.sizeBytes !== input.sizeBytes || row.createdAt.getTime() !== input.createdAt.getTime() || row.createdAt >= input.cutoff || row.status !== "creating") return false;
+      row.status = input.status;
+      return true;
+    },
     async acquireRestoreLock() { if (restoreLocked) throw new Error("ProjectRunBusyError"); restoreLocked = true; return { ownerUserId, projectId, fencingToken: 1, leaseMs: 120_000 }; },
     async renewRestoreLock() { if (!restoreLocked) throw new Error("lock lost"); },
     async releaseRestoreLock() { restoreLocked = false; },
     async create(_identity: unknown, input: { versionId: string; parentVersionId: string | null; manifest: FakeVersionRow["manifest"]; sha256: string; sizeBytes: number }) {
-      const row: FakeVersionRow = { ...input, id: input.versionId, projectId, versionNumber: ++nextNumber, status: "creating", createdAt: new Date(), snapshotKey: "private-hidden" };
+      const row: FakeVersionRow = { ...input, id: input.versionId, ownerUserId, projectId, versionNumber: ++nextNumber, status: "creating", createdAt: new Date(), snapshotKey: "private-hidden" };
       rows.set(row.id, row); return row;
     },
     async createRestored(_identity: unknown, _lock: unknown, input: { versionId: string; parentVersionId: string | null; manifest: FakeVersionRow["manifest"]; sha256: string; sizeBytes: number }) {
-      if (!objects.has(`private/${ownerUserId}/projects/${projectId}/versions/${input.versionId}`)) throw new Error("snapshot_must_exist_before_row");
+      if (objects.has(`private/${ownerUserId}/projects/${projectId}/versions/${input.versionId}`)) throw new Error("snapshot_written_before_reservation");
       if (failCreateRestored) { failCreateRestored = false; throw new Error("fixture_commit_failure"); }
-      const row: FakeVersionRow = { ...input, id: input.versionId, projectId, versionNumber: ++nextNumber, status: "ready", createdAt: new Date(), snapshotKey: "private-hidden" };
+      const row: FakeVersionRow = { ...input, id: input.versionId, ownerUserId, projectId, versionNumber: ++nextNumber, status: "creating", createdAt: new Date(), snapshotKey: "private-hidden" };
       rows.set(row.id, row); return row;
     },
+    async markRestoredSnapshotReady(_identity: unknown, _lock: unknown, id: string) {
+      if (failRestoredReady) { failRestoredReady = false; throw new Error("fixture_ready_commit_ambiguous"); }
+      const row = rows.get(id)!; row.status = "ready"; return row;
+    },
     failNextCreateRestored() { failCreateRestored = true; },
+    failNextRestoredReady() { failRestoredReady = true; },
     async setStatus(_identity: unknown, id: string, status: FakeVersionRow["status"]) { const row = rows.get(id)!; row.status = status; return row; },
   };
   const service = createVersionService({
@@ -144,7 +166,7 @@ function makeService(sandbox: ReturnType<typeof makeSandbox>) {
     storage: createPrivateSnapshotStorage(client),
     sandbox,
   });
-  return { service, rows, objects, versions };
+  return { service, rows, objects, versions, failNextHead() { failNextHead = true; } };
 }
 
 function claim(runId = randomUUID()) {
@@ -184,6 +206,44 @@ describe("snapshots y restauración de versiones", () => {
     expect(prior?.snapshot.files.find((file) => file.path === "src/main.ts")?.content).toBe("export const level = 1;\n");
   });
 
+  it("recupera tras una caída la versión cuyo objeto y reserva quedaron persistidos", async () => {
+    const { service, rows } = makeService(makeSandbox());
+    const run = claim();
+    await service.captureVerifiedRun({ identity, claim: run, gameSpec: spec, checks: [{ check: "build", status: "passed", summary: "Build correcto" }], signal: new AbortController().signal });
+    const pending = rows.get(run.runId)!;
+    pending.status = "creating";
+    pending.createdAt = new Date(Date.now() - 31 * 60_000);
+
+    await expect(service.reconcilePendingSnapshots()).resolves.toMatchObject({ scanned: 1, recovered: 1, failed: 0, deferred: 0 });
+    expect(pending.status).toBe("ready");
+  });
+
+  it("marca fallida una reserva antigua si el objeto S3 no existe", async () => {
+    const { service, rows, objects } = makeService(makeSandbox());
+    const run = claim();
+    await service.captureVerifiedRun({ identity, claim: run, gameSpec: spec, checks: [{ check: "build", status: "passed", summary: "Build correcto" }], signal: new AbortController().signal });
+    const pending = rows.get(run.runId)!;
+    pending.status = "creating";
+    pending.createdAt = new Date(Date.now() - 31 * 60_000);
+    objects.delete(`private/${ownerUserId}/projects/${projectId}/versions/${run.runId}`);
+
+    await expect(service.reconcilePendingSnapshots()).resolves.toMatchObject({ scanned: 1, recovered: 0, failed: 1, deferred: 0 });
+    expect(pending.status).toBe("failed");
+  });
+
+  it("deja pendiente la reserva si S3 falla temporalmente", async () => {
+    const { service, rows, failNextHead } = makeService(makeSandbox());
+    const run = claim();
+    await service.captureVerifiedRun({ identity, claim: run, gameSpec: spec, checks: [{ check: "build", status: "passed", summary: "Build correcto" }], signal: new AbortController().signal });
+    const pending = rows.get(run.runId)!;
+    pending.status = "creating";
+    pending.createdAt = new Date(Date.now() - 31 * 60_000);
+    failNextHead();
+
+    await expect(service.reconcilePendingSnapshots()).resolves.toMatchObject({ scanned: 1, recovered: 0, failed: 0, deferred: 1 });
+    expect(pending.status).toBe("creating");
+  });
+
   it("recupera el workspace previo si falla una escritura de restauración", async () => {
     const sandbox = makeSandbox();
     const { service, rows } = makeService(sandbox);
@@ -213,5 +273,22 @@ describe("snapshots y restauración de versiones", () => {
     expect(sandbox.text.get("src/main.ts")).toBe("export const level = 2;\n");
     expect([...rows.values()].filter((row) => row.status === "ready")).toHaveLength(2);
     expect(objects.size).toBe(2);
+  });
+
+  it("resuelve una confirmación SQL ambigua del snapshot restaurado sin descartar el objeto", async () => {
+    const sandbox = makeSandbox();
+    const { service, rows, objects, versions } = makeService(sandbox);
+    const first = claim();
+    await service.captureVerifiedRun({ identity, claim: first, gameSpec: spec, checks: [{ check: "build", status: "passed", summary: "Build correcto" }], signal: new AbortController().signal });
+    sandbox.text.set("src/main.ts", "export const level = 2;\n");
+    const second = claim();
+    await service.captureVerifiedRun({ identity, claim: second, gameSpec: spec, checks: [{ check: "build", status: "passed", summary: "Build correcto" }], signal: new AbortController().signal });
+    versions.failNextRestoredReady();
+
+    const restored = await service.restore(identity, projectId, first.runId);
+    expect(restored).toMatchObject({ versionNumber: 3 });
+    expect(sandbox.text.get("src/main.ts")).toBe("export const level = 1;\n");
+    expect(rows.get(restored!.versionId)?.status).toBe("ready");
+    expect(objects.size).toBe(3);
   });
 });

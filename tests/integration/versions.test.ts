@@ -85,7 +85,22 @@ describe.skipIf(!integrationEnabled)("versiones privadas y restauración seriali
       versionId: randomUUID(), projectId: project.id, sha256: "b".repeat(64), sizeBytes: 120,
       parentVersionId: source.id, manifest: { files: [{ path: "src/main.ts", sha256: "2".repeat(64) }] },
     });
-    expect(restored).toMatchObject({ status: "ready", versionNumber: 2, parentVersionId: source.id, runId: null });
+    expect(restored).toMatchObject({ status: "creating", versionNumber: 2, parentVersionId: source.id, runId: null });
+    const ready = await repositories.versions.markRestoredSnapshotReady(identityA, lock, restored.id);
+    expect(ready.status).toBe("ready");
+    const pending = await repositories.versions.create(identityA, {
+      projectId: project.id, sha256: "d".repeat(64), sizeBytes: 120,
+      parentVersionId: source.id,
+    });
+    const cutoff = new Date(Date.now() + 1_000);
+    const candidate = (await repositories.versions.listSnapshotReconciliationCandidates(cutoff, 250)).find((row) => row.id === pending.id);
+    expect(candidate?.id).toBe(pending.id);
+    expect(await repositories.versions.reconcileSnapshotCandidate({
+      id: pending.id, ownerUserId: pending.ownerUserId, projectId: pending.projectId,
+      sha256: pending.sha256, sizeBytes: pending.sizeBytes, createdAt: pending.createdAt,
+      cutoff, status: "failed",
+    })).toBe(true);
+    expect((await repositories.versions.list(identityA, project.id)).items.map((version) => version.id)).not.toContain(pending.id);
     await repositories.versions.releaseRestoreLock(identityA, lock);
     await expect(repositories.versions.createRestored(identityA, lock, {
       versionId: randomUUID(), projectId: project.id, sha256: "c".repeat(64), sizeBytes: 120,
