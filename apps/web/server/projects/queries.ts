@@ -17,9 +17,11 @@ export async function loadProjectConversation(identity: VerifiedIdentityContext,
     const project = await repositories.projects.get(identity, projectId);
     if (!project) return null;
     const transcript = await repositories.messages.list(identity, projectId, { limit: 50 });
+    const versions = await repositories.versions.list(identity, projectId, { limit: 50 });
     return {
       project: { id: project.id, name: project.name, createdAt: project.createdAt, updatedAt: project.updatedAt },
       transcript,
+      versions: versions.items,
     };
   } finally {
     await database.close();

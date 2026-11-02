@@ -4,6 +4,7 @@ import { EditorShell } from "../../../components/editor/EditorShell";
 import { AuthControls } from "../../../components/auth/AuthControls";
 import { requireUser } from "../../../server/auth/auth";
 import { getClerkConfiguration } from "../../../server/auth/config";
+import { getPreviewClientConfiguration } from "../../../server/preview";
 import { loadProjectConversation } from "../../../server/projects/queries";
 import styles from "./page.module.css";
 
@@ -15,6 +16,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
   const conversation = await loadProjectConversation(identity, projectId);
   if (!conversation) notFound();
   const configuration = getClerkConfiguration();
+  const previewConfiguration = getPreviewClientConfiguration();
 
   return (
     <main className={styles.page}>
@@ -30,6 +32,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
         projectName={conversation.project.name}
         initialMessages={conversation.transcript.items}
         initialCursor={conversation.transcript.nextCursor}
+        previewBaseDomain={previewConfiguration.baseDomain}
+        versions={conversation.versions}
       />
     </main>
   );

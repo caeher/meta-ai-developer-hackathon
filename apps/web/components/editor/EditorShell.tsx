@@ -2,10 +2,12 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Badge, Button, Card, Dialog, Heading, Select as RadixSelect, Tabs, Text, TextField } from "@radix-ui/themes";
+import { Badge, Button, Dialog, Heading, Tabs, Text, TextField } from "@radix-ui/themes";
 import type { EditorProgress, EditorRunStatus, EditorStepStatus } from "@meta-game/contracts";
 import { TextArea } from "../ui/text-area";
 import { appendPromptText, MAX_PROMPT_LENGTH } from "./prompt";
+import { PreviewFrame } from "./preview-frame";
+import type { PreviewVersion } from "./preview-toolbar";
 import styles from "./EditorShell.module.css";
 
 export interface PersistedMessage {
@@ -144,12 +146,16 @@ export function EditorShell({
   initialMessages,
   initialCursor,
   progress,
+  previewBaseDomain,
+  versions = [],
 }: {
   projectId: string;
   projectName: string;
   initialMessages: PersistedMessage[];
   initialCursor: string | null;
   progress?: EditorProgress;
+  previewBaseDomain?: string;
+  versions?: readonly PreviewVersion[];
 }) {
   const [projectName, setProjectName] = useState(initialProjectName);
   const [messages, setMessages] = useState<DisplayMessage[]>(initialMessages);
@@ -306,10 +312,6 @@ export function EditorShell({
           </Dialog.Root>
         </div>
         <div className={styles.projectActions}>
-          <RadixSelect.Root value="latest" disabled>
-            <RadixSelect.Trigger aria-label="Versión del proyecto. Solo Latest está disponible." />
-            <RadixSelect.Content><RadixSelect.Item value="latest">Latest</RadixSelect.Item></RadixSelect.Content>
-          </RadixSelect.Root>
           <Button variant="soft" disabled title="Publicar estará disponible cuando exista una build verificada." aria-describedby="editor-pending-note">Publish</Button>
           <Button variant="soft" disabled title="Compartir estará disponible cuando exista una publicación." aria-describedby="editor-pending-note">Share</Button>
         </div>
@@ -427,22 +429,7 @@ export function EditorShell({
         </section>
 
         <section className={styles.previewPane} aria-label="Vista previa privada del juego">
-          <div className={styles.previewToolbar}>
-            <div className={styles.previewControls} aria-label="Controles de vista previa">
-              <Button variant="ghost" size="1" disabled aria-label="Volver en la vista previa">←</Button>
-              <Button variant="ghost" size="1" disabled aria-label="Avanzar en la vista previa">→</Button>
-              <Button variant="ghost" size="1" disabled aria-label="Recargar vista previa">↻</Button>
-              <Button variant="ghost" size="1" disabled aria-label="Abrir vista previa en otra pestaña">↗</Button>
-            </div>
-            <Badge color="gray" variant="soft">Latest</Badge>
-          </div>
-          <Card className={styles.previewEmpty}>
-            <div className={styles.previewMark} aria-hidden="true">▶</div>
-            <Heading as="h2" size="4">Tu juego aparecerá aquí</Heading>
-            <Text as="p" color="gray">La preview privada estará disponible cuando se implemente el entorno de ejecución.</Text>
-            <Text as="p" size="1" color="gray">Los controles de navegación y publicación están deshabilitados mientras no exista una preview.</Text>
-          </Card>
-          <p className={styles.status} aria-live="off">{status}</p>
+          <PreviewFrame projectId={projectId} baseDomain={previewBaseDomain} versions={versions} />
         </section>
       </div>
     </section>

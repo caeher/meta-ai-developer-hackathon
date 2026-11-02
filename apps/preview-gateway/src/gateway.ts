@@ -109,8 +109,9 @@ function rateKey(scope: string, value: string): string {
   return createHash("sha256").update(`${scope}\0${value}`).digest("hex");
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
-  if (request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json") throw new Error("invalid_content_type");
+async function readExchangeBody(request: IncomingMessage): Promise<{ input: unknown; form: boolean }> {
+  const contentType = request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json" && contentType !== "application/x-www-form-urlencoded") throw new Error("invalid_content_type");
   const length = Number(request.headers["content-length"] ?? 0);
   if (Number.isFinite(length) && length > maxExchangeBytes) throw new Error("body_too_large");
   const chunks: Buffer[] = [];
@@ -121,7 +122,12 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
     if (total > maxExchangeBytes) throw new Error("body_too_large");
     chunks.push(chunk);
   }
-  return JSON.parse(Buffer.concat(chunks, total).toString("utf8")) as unknown;
+  const body = Buffer.concat(chunks, total).toString("utf8");
+  if (contentType === "application/json") return { input: JSON.parse(body) as unknown, form: false };
+  const form = new URLSearchParams(body);
+  const grants = form.getAll("grant");
+  if (grants.length !== 1 || [...form.keys()].some((key) => key !== "grant")) throw new Error("invalid_form");
+  return { input: { grant: grants[0] }, form: true };
 }
 
 function allowedOrigin(request: IncomingMessage, expected: string): boolean {
@@ -132,7 +138,7 @@ function corsHeaders(appOrigin: string): Record<string, string> {
   return {
     "access-control-allow-origin": appOrigin,
     "access-control-allow-credentials": "true",
-    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": "content-type",
     vary: "Origin",
   };
@@ -244,8 +250,21 @@ export function createPreviewGateway(options: {
       response.writeHead(204, headers).end();
       return;
     }
-    if (request.method !== "POST" || !allowedOrigin(request, options.appOrigin)) {
+    if (!allowedOrigin(request, options.appOrigin)) {
       response.writeHead(403, headers).end(JSON.stringify({ error: "forbidden" }));
+      return;
+    }
+    if (request.method === "GET") {
+      const authorization = await resolveAuthorization(request, projectId);
+      if (!authorization) {
+        response.writeHead(404, headers).end(JSON.stringify({ error: "preview_unavailable" }));
+        return;
+      }
+      response.writeHead(204, headers).end();
+      return;
+    }
+    if (request.method !== "POST") {
+      response.writeHead(405, headers).end(JSON.stringify({ error: "method_not_allowed" }));
       return;
     }
     const allowed = await options.store.allowRateLimit(rateKey(`exchange:${projectId}`, clientIp(request)), 60, 60);
@@ -253,8 +272,13 @@ export function createPreviewGateway(options: {
       response.writeHead(429, headers).end(JSON.stringify({ error: "rate_limited" }));
       return;
     }
-    let input;
-    try { input = PreviewExchangeInputSchema.parse(await readJsonBody(request)); }
+    let input: ReturnType<typeof PreviewExchangeInputSchema.parse>;
+    let formExchange = false;
+    try {
+      const body = await readExchangeBody(request);
+      input = PreviewExchangeInputSchema.parse(body.input);
+      formExchange = body.form;
+    }
     catch {
       response.writeHead(400, headers).end(JSON.stringify({ error: "invalid_request" }));
       return;
@@ -301,11 +325,12 @@ export function createPreviewGateway(options: {
       response.writeHead(404, headers).end(JSON.stringify({ error: "preview_unavailable" }));
       return;
     }
-    response.writeHead(200, {
+    response.writeHead(formExchange ? 303 : 200, {
       ...headers,
       "set-cookie": `${PREVIEW_SESSION_COOKIE}=${sessionId}; Path=/; Max-Age=${options.sessionTtlSeconds}; Secure; HttpOnly; SameSite=None; Partitioned`,
+      ...(formExchange ? { location: "/" } : {}),
     });
-    response.end(JSON.stringify({ ok: true, expiresAt: new Date(session.expiresAt * 1000).toISOString() }));
+    response.end(formExchange ? undefined : JSON.stringify({ ok: true, expiresAt: new Date(session.expiresAt * 1000).toISOString() }));
   }
 
   function proxyAddress(target: GatewayPreviewTarget): ProxyAddress {
@@ -335,6 +360,7 @@ export function createPreviewGateway(options: {
     const parsedTarget = parseRequestTarget(request.url);
     if (!parsedTarget) { denial(response, host, options.appOrigin); return; }
     if (parsedTarget.path === "/__session") {
+      if (parsedTarget.query) { denial(response, route.hostname, options.appOrigin, 400); return; }
       void exchangeSession(request, response, route.projectId, route.hostname).catch(() => {
         if (!response.headersSent) denial(response, route.hostname, options.appOrigin, 503);
         else response.destroy();

@@ -1,0 +1,16 @@
+.handoff {
+  min-height: 100svh;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px;
+  color: var(--app-text);
+  text-align: center;
+}
+
+.handoff h1,
+.handoff p { margin: 0; }
+.handoff p { max-width: 420px; color: var(--app-text-muted); line-height: 1.6; }
+.projectName { color: var(--app-cyan) !important; font-size: 13px; }
+.handoff a { color: var(--app-blue); }
