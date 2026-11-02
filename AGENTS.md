@@ -4,7 +4,7 @@
 
 ### Estado actual (2 de noviembre de 2026)
 
-La issue #4 añade Clerk al frontend, `proxy.ts`, las rutas `/sign-in`, `/sign-up` y `/editor`, guards de identidad verificada y `GET`/`PATCH /api/projects/[projectId]` con ownership y protección de origen. Sin claves Clerk reales, la app mantiene las rutas privadas cerradas. La issue sigue abierta hasta comprobar sign-in, expiración y acceso cruzado con una instancia Clerk de prueba y dos cuentas; consulta [docs/authentication.md](docs/authentication.md). La issue #6 añade CRUD privado paginado, rutas `/projects` y `/projects/[projectId]`, transcript persistente con `requestId` idempotente y eliminación lógica reconciliable. No hay worker de limpieza ni generación real todavía.
+La issue #4 añade Clerk al frontend, `proxy.ts`, las rutas `/sign-in`, `/sign-up` y `/editor`, guards de identidad verificada y `GET`/`PATCH /api/projects/[projectId]` con ownership y protección de origen. Sin claves Clerk reales, la app mantiene las rutas privadas cerradas. La issue sigue abierta hasta comprobar sign-in, expiración y acceso cruzado con una instancia Clerk de prueba y dos cuentas; consulta [docs/authentication.md](docs/authentication.md). La issue #6 añade CRUD privado paginado, rutas `/projects` y `/projects/[projectId]`, transcript persistente con `requestId` idempotente y eliminación lógica reconciliable. La issue #7 presenta el editor de dos paneles, renombrado y opciones rápidas; el envío conserva el transcript sin iniciar IA. No hay worker de limpieza, generación real ni preview todavía.
 
 Lee primero [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md). Construimos una plataforma tipo v0 para crear y modificar juegos web 2D mediante chat: plan visible, herramientas, archivos cambiados, verificaciones y preview privada en vivo. El editor tiene chat a la izquierda, preview a la derecha y header con proyecto, avatar, versiones y Publish/Share. Incluye opciones rápidas para género, arte, controles, niveles, enemigos, assets y sonido.
 
@@ -132,7 +132,7 @@ npm run typecheck
 npm test                       # unitarias/contratos sin red ni cobros
 npm run build
 npm run test:integration        # Postgres/Redis/S3 de pruebas
-npm run test:e2e                # Playwright y dos identidades de prueba
+npm run test:e2e                # Playwright para el editor; E2E Clerk con dos identidades sigue pendiente
 npm run test:security           # host Linux desechable con runtime real
 npm run meta:smoke              # clave configurada por operador; coste explícito
 npm run skills:verify

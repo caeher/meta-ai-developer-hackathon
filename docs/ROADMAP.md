@@ -10,6 +10,8 @@ Estado de issue #5 actualizado el 2 de noviembre de 2026: tokens Tokyo Night, ov
 
 Estado de issue #6: implementados CRUD paginado con ownership, transcript persistente e idempotente, dashboard, mensajes en texto plano y eliminación lógica con tarea durable de limpieza. La migración hace backfill ordenado de mensajes preexistentes. Los contratos e integración local son verificables con fixtures y PostgreSQL; la UI protegida requiere la instancia Clerk real, pendiente de la issue #4. No hay worker de limpieza, generación ni preview; quedan fuera de esta issue.
 
+Estado local de issue #7 actualizado el 2 de noviembre de 2026: `/projects/[projectId]` usa el guard de sesión y la consulta con ownership ya implementados; presenta el editor responsive, permite renombrar, inserta opciones rápidas editables y guarda mensajes mediante el endpoint existente. Los contratos y vistas de plan/pasos/archivos/verificación están listos, sin datos de ejecución simulados. Preview, navegación, versiones, Publish y Share permanecen deshabilitados. `npm test` cubre las interacciones; `npm run test:integration` verifica la persistencia local. La issue #6 permanece abierta en GitHub aunque su alcance se describe implementado aquí; la autenticación real Clerk sigue pendiente en #4.
+
 | Orden | Issue | Fase | Dependencia |
 | --- | --- | --- | --- |
 | 01 | [#1 [01] Inicializar el monorepo Next.js y fijar Node 24](https://github.com/caeher/meta-ai-developer-hackathon/issues/1) | Fundaciones | Ninguna |

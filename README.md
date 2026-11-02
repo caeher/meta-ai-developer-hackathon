@@ -2,6 +2,8 @@
 
 Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, identidad y autorización Clerk, persistencia Drizzle y storage privado S3. La generación, ejecución aislada, previews privadas y publicación siguen pendientes.
 
+Los proyectos privados abren un editor de dos paneles en `/projects/[projectId]`: chat persistido y opciones rápidas a la izquierda; preview vacía con navegación, Latest y Publish/Share deshabilitados a la derecha. Guardar un mensaje solo lo persiste; no inicia una llamada a Meta ni una ejecución.
+
 ## Requisitos
 
 - Node.js `24.x` (`.nvmrc` y `engines.node` fijan `>=24 <25`).
@@ -54,6 +56,7 @@ npm run infra:down
 npm run db:migrate
 npm run db:seed
 npm run test:integration
+npm run test:e2e
 npm run lint
 npm run typecheck
 npm test
@@ -67,7 +70,7 @@ npm run screenshots:theme
 
 ## Persistencia y autorización
 
-La issue #3 incorpora el esquema Drizzle, migraciones y adaptador S3 privado. La issue #4 añade Clerk, `proxy.ts` y guards de sesión/owner. La issue #6 añade CRUD privado paginado en `/api/projects`, mensajes en `/api/projects/[projectId]/messages` y las vistas `/projects` y `/projects/[projectId]`. Las rutas derivan la identidad de `auth()`; body, query y cabeceras nunca eligen el owner.
+La issue #3 incorpora el esquema Drizzle, migraciones y adaptador S3 privado. La issue #4 añade Clerk, `proxy.ts` y guards de sesión/owner. La issue #6 añade CRUD privado paginado en `/api/projects`, mensajes en `/api/projects/[projectId]/messages` y las vistas `/projects` y `/projects/[projectId]`. La issue #7 construye el editor de dos paneles, edición del nombre, opciones rápidas y vistas vacías de progreso. Las rutas derivan la identidad de `auth()`; body, query y cabeceras nunca eligen el owner.
 
 Cada mensaje tiene `requestId` idempotente y secuencia por proyecto. Si un reintento repite la clave con el mismo rol/contenido, se devuelve el registro existente; si cambia el contenido, la API responde `409 idempotency_conflict`. Los transcript se sirven en orden de secuencia con cursor y texto plano, sin HTML activo.
 
@@ -77,20 +80,22 @@ Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQ
 
 El adaptador de storage usa solo `S3_BUCKET_PRIVATE`, genera claves en servidor, admite objetos de hasta 25 MiB y valida SHA-256 al escribir y leer. El bucket privado de Silo no permite lectura anónima. Las migraciones no se revierten automáticamente; consulta [desarrollo local](docs/local-development.md) antes de ejecutar una reversión destructiva.
 
+El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y verificación. El editor no recibe estados de ejecución hasta que el orquestador exista; plan, pasos, archivos y verificación muestran estados vacíos honestos. `npm test` cubre inserción del prompt, persistencia del mensaje mediante el endpoint privado y renombrado; no necesita una sesión Clerk ni una clave Meta. `npm run test:e2e` prueba el layout a 390/768/1440 px y la recarga del transcript contra una API de sesión temporal definida únicamente bajo `tests/e2e`; requiere Chromium de Playwright, pero no Clerk ni servicios locales.
+
 ## Capacidades planificadas
 
-Todavía no existen `dev:worker`, `dev:gateway`, smoke de Meta, pruebas E2E, ejecución de juegos, aislamiento de runtime, preview ni publicación. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue.
+Todavía no existen `dev:worker`, `dev:gateway`, smoke de Meta, ejecución de juegos, aislamiento de runtime, preview ni publicación. El E2E actual cubre el shell del editor con una API de prueba; aún falta un recorrido E2E autenticado con dos cuentas Clerk reales. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue.
 
 ## Estructura
 
 - `apps/web`: Next.js App Router, Clerk, React, Radix Themes y TypeScript estricto.
 - `apps/web/components/ui`: wrappers Radix reutilizables y galería local del tema.
 - `packages/config`: validación de URLs públicas y configuración de infraestructura local.
-- `packages/contracts`: schemas Zod de liveness y errores HTTP.
+- `packages/contracts`: schemas Zod de liveness, errores HTTP, proyectos y progreso del editor.
 - `packages/db`: modelo PostgreSQL/Drizzle y repositorios que requieren identidad verificada.
 - `packages/storage`: adaptador S3 privado con claves de servidor, checksum y estados de reconciliación.
 - `infra`: Docker Compose, perfiles de desarrollo, ejemplos locales y digest de imágenes.
-- `tests`: contratos, persistencia y autorización sintética.
+- `tests`: contratos, interacciones del editor, persistencia y autorización sintética.
 - `.github/workflows/ci.yml`: verificación en Node 24, sin secretos.
 
 Phaser será el motor predeterminado para juegos generados según la arquitectura definida en [AGENTS.md](AGENTS.md); los procesos de juego no se ejecutan dentro de Next.
