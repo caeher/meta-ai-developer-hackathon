@@ -14,7 +14,7 @@ Las cuotas diarias se computan en UTC sobre cargos netos del ledger más reserva
 
 ## Estado de capacidad
 
-`RUNS_ENABLED=false` por defecto. Al faltar el orquestador, POST devuelve `503 orchestrator_pending` y no crea una reserva. Si un operador activa la bandera antes de implementar #16, el worker conserva el contrato de cola, pero su handler de producto termina el run como `failed/orchestrator_pending` y libera la reserva. Solo las pruebas inyectan un handler sintético de éxito. Los jobs Redis contienen `runId`, `idempotencyKey` y `generation`; nunca incluyen prompt, credenciales, tokens de sesión, URL o destino de runtime.
+`RUNS_ENABLED=false` por defecto. Mientras está apagada, POST devuelve `503 orchestrator_pending` y no crea una reserva. Cuando se activa, la API exige `messageRequestId` de un mensaje de usuario previamente guardado y `contributorConsent: true`; la transacción liga ese mensaje al run y guarda el consentimiento. El worker también exige consentimiento persistido, configuración Meta válida y `SANDBOX_DRIVER=rootless`. Los jobs Redis contienen únicamente `runId`, `idempotencyKey` y `generation`; nunca incluyen prompt, credenciales, tokens de sesión, URL o destino de runtime. El chat aún no llama a este endpoint: #17 añadirá el aviso/confirmación visible, el envío y la transmisión de progreso.
 
 ## Desarrollo y verificación
 
