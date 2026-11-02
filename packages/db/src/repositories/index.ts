@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
-import type { GameDatabase } from "../database.js";
+import type { GameDatabase } from "../database";
 import {
   assertVerifiedIdentityContext,
   IdempotencyConflictError,
   OwnedResourceNotFoundError,
   type VerifiedIdentityContext,
-} from "../identity.js";
+} from "../identity";
 import {
   assets,
   messages,
@@ -20,7 +20,7 @@ import {
   usageReservations,
   users,
   versions,
-} from "../schema/index.js";
+} from "../schema/index";
 
 const uuidSchema = z.string().uuid();
 const projectNameSchema = z.string().trim().min(1).max(120);

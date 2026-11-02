@@ -1,10 +1,11 @@
-export { createDatabase, createDatabaseFromEnvironment } from "./database.js";
-export type { GameDatabase } from "./database.js";
+export { createDatabase, createDatabaseFromEnvironment } from "./database";
+export type { GameDatabase } from "./database";
 export {
+  assertVerifiedIdentityContext,
   IdempotencyConflictError,
   identityFromAuthenticatedSession,
   OwnedResourceNotFoundError,
-} from "./identity.js";
-export type { VerifiedIdentityContext } from "./identity.js";
-export { createRepositories } from "./repositories/index.js";
-export * from "./schema/index.js";
+} from "./identity";
+export type { VerifiedIdentityContext } from "./identity";
+export { createRepositories } from "./repositories/index";
+export * from "./schema/index";

@@ -1,31 +1,42 @@
 import type { Metadata } from "next";
 import { Theme } from "@radix-ui/themes";
+import { AuthProvider } from "../components/auth/AuthProvider";
+import { getClerkConfiguration } from "../server/auth/config";
 import "@radix-ui/themes/styles.css";
 import "../styles/tokens.css";
 import "../styles/globals.css";
 
 export const metadata: Metadata = {
   title: "Forja — juegos 2D",
-  description: "Plataforma en construcción para crear juegos web 2D con ayuda de IA.",
+  description: "Plataforma para crear juegos web 2D con ayuda de IA.",
 };
+
+export const dynamic = "force-dynamic";
 
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const clerkConfiguration = getClerkConfiguration();
+
   return (
     <html lang="es">
       <body>
-        <Theme
-          appearance="dark"
-          accentColor="blue"
-          grayColor="slate"
-          hasBackground={false}
-          panelBackground="solid"
+        <AuthProvider
+          configured={clerkConfiguration.configured}
+          publishableKey={process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
         >
-          {children}
-        </Theme>
+          <Theme
+            appearance="dark"
+            accentColor="blue"
+            grayColor="slate"
+            hasBackground={false}
+            panelBackground="solid"
+          >
+            {children}
+          </Theme>
+        </AuthProvider>
       </body>
     </html>
   );

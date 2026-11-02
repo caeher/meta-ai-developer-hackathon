@@ -2,6 +2,10 @@
 
 ## Visión y alcance
 
+### Estado actual (2 de noviembre de 2026)
+
+La issue #4 añade Clerk al frontend, `proxy.ts`, las rutas `/sign-in`, `/sign-up` y `/editor`, guards de identidad verificada y `GET`/`PATCH /api/projects/[projectId]` con ownership y protección de origen. Sin claves Clerk reales, la app mantiene las rutas privadas cerradas. La issue sigue abierta hasta comprobar sign-in, expiración y acceso cruzado con una instancia Clerk de prueba y dos cuentas; consulta [docs/authentication.md](docs/authentication.md).
+
 Lee primero [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md). Construimos una plataforma tipo v0 para crear y modificar juegos web 2D mediante chat: plan visible, herramientas, archivos cambiados, verificaciones y preview privada en vivo. El editor tiene chat a la izquierda, preview a la derecha y header con proyecto, avatar, versiones y Publish/Share. Incluye opciones rápidas para género, arte, controles, niveles, enemigos, assets y sonido.
 
 El commit inicial contenía planificación. `main` ya incluye el monorepo, los servicios locales Postgres/Redis/S3 y la persistencia Drizzle con repositorios de owner y storage privado de la issue #3. Las capacidades posteriores siguen siendo objetivos hasta implementarlas y comprobarlas. Mantén ejecutable lo que ya exista y no declares disponible un comando o integración sin verificarlo. El orden está en [docs/ROADMAP.md](docs/ROADMAP.md) y en las issues de `caeher/meta-ai-developer-hackathon`.

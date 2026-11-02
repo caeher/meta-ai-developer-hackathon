@@ -1,7 +1,7 @@
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool, type PoolConfig } from "pg";
 import { z } from "zod";
-import * as schema from "./schema/index.js";
+import * as schema from "./schema/index";
 
 const databaseUrlSchema = z.string().url().refine((value) => {
   const protocol = new URL(value).protocol;

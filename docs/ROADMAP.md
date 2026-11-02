@@ -4,6 +4,8 @@ Estado local en `main`: la base del monorepo, web mínima, contratos, CI y servi
 
 Plan creado a partir de [PROJECT_BRIEF.md](PROJECT_BRIEF.md). Leer [AGENTS.md](../AGENTS.md) antes de tomar una issue. Cada issue depende de la anterior; sus cuerpos en GitHub contienen tareas, archivos, variables, aceptación, pruebas y seguridad. El estado actual está indicado en la fila de cada issue; no declarar capacidades posteriores disponibles sin implementarlas y verificarlas.
 
+Estado de issue #4 actualizado el 2 de noviembre de 2026: la integración de Clerk, las rutas privadas, el contexto de owner y los fixtures de autorización ya están implementados. La issue sigue abierta hasta verificar sign-in, expiración y acceso cruzado con una instancia y dos usuarios Clerk de prueba; no hay credenciales de esa instancia configuradas en este entorno.
+
 | Orden | Issue | Fase | Dependencia |
 | --- | --- | --- | --- |
 | 01 | [#1 [01] Inicializar el monorepo Next.js y fijar Node 24](https://github.com/caeher/meta-ai-developer-hackathon/issues/1) | Fundaciones | Ninguna |

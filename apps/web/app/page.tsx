@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { Badge, Card, Heading, Text } from "@radix-ui/themes";
+import { AuthControls } from "../components/auth/AuthControls";
+import { getClerkConfiguration } from "../server/auth/config";
 
 export default function HomePage() {
+  const clerkConfiguration = getClerkConfiguration();
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -9,10 +13,7 @@ export default function HomePage() {
           <span className="brand-mark" aria-hidden="true">F</span>
           <span>Forja</span>
         </Link>
-        <Text as="span" className="status-label">
-          <span className="status-dot" aria-hidden="true" />
-          Fundaciones
-        </Text>
+        <AuthControls configured={clerkConfiguration.configured} />
       </header>
 
       <section className="intro" aria-labelledby="welcome-title">
@@ -22,8 +23,8 @@ export default function HomePage() {
         </Heading>
         <Text as="p" className="intro-copy">
           Estamos preparando un espacio para diseñar, construir y probar juegos
-          web. Esta primera entrega establece la aplicación y sus contratos
-          básicos; la generación y la vista previa aún no están habilitadas.
+          web. La autenticación ya está integrada; la generación y la vista previa
+          aún no están habilitadas.
         </Text>
         <Link className="health-link" href="/api/health">
           Consultar estado del servicio
@@ -39,7 +40,7 @@ export default function HomePage() {
               El taller de juegos
             </Heading>
           </div>
-          <span className="phase-count">01 / 28</span>
+          <span className="phase-count">04 / 28</span>
         </div>
         <div className="capability-grid">
           <article>
@@ -70,8 +71,8 @@ export default function HomePage() {
       </section>
 
       <footer className="footer">
-        <Text as="span">Aplicación mínima · Node.js 24</Text>
-        <Text as="span">Sin autenticación, generación ni ejecución de juegos todavía</Text>
+        <Text as="span">Node.js 24 · sesiones protegidas por Clerk</Text>
+        <Text as="span">Generación y ejecución de juegos pendientes</Text>
       </footer>
     </main>
   );

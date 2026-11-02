@@ -11,12 +11,15 @@
     "start": "node ../../scripts/check-node-version.mjs && next start"
   },
   "dependencies": {
+    "@clerk/nextjs": "7.9.23",
     "@meta-game/config": "0.1.0",
     "@meta-game/contracts": "0.1.0",
+    "@meta-game/db": "0.1.0",
     "@radix-ui/themes": "3.3.0",
     "next": "16.4.3",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "server-only": "0.0.1"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

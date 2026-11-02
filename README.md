@@ -1,6 +1,6 @@
 # Forja — plataforma de juegos 2D
 
-Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye una página inicial, un endpoint de liveness y servicios locales para desarrollar las siguientes entregas. Todavía no permite iniciar sesión, generar código o imágenes, ejecutar juegos, abrir previews privadas ni publicar.
+Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, identidad y autorización Clerk, persistencia Drizzle y storage privado S3. La generación, ejecución aislada, previews privadas y publicación siguen pendientes.
 
 ## Requisitos
 
@@ -8,7 +8,7 @@ Forja es una plataforma en construcción para crear juegos web 2D mediante chat.
 - npm incluido con Node.js. El lockfile está versionado y las dependencias directas usan versiones exactas.
 - Docker Engine con Docker Compose v2 para los servicios locales.
 
-La aplicación mínima no necesita credenciales ni servicios externos para instalarse, arrancar o compilar. No copies `.env.example` sobre un `.env.local` existente: sus valores son placeholders. Docker Compose usa `infra/.env`, generado desde `infra/env.example`; ese archivo está excluido de Git.
+La instalación, los tests unitarios y el build no necesitan credenciales externas. No copies `.env.example` sobre un `.env.local` existente: todos sus valores son placeholders. Docker Compose usa `infra/.env`, generado desde `infra/env.example`; ese archivo está excluido de Git.
 
 ## Inicio local
 
@@ -20,7 +20,11 @@ npm ci
 npm run dev
 ```
 
-La versión de Node debe mostrar `v24.x`. Abre <http://localhost:3000>. Detén el servidor con `Ctrl+C`.
+La versión de Node debe mostrar `v24.x`. Abre <http://localhost:3000>. Sin claves Clerk reales, el sitio público y `/api/health` funcionan, el estado de autenticación se indica en pantalla y las rutas privadas permanecen cerradas.
+
+Para habilitar Clerk, configura manualmente en un entorno local las variables Clerk de `.env.example` con claves de una instancia de desarrollo del operador. Configura `APP_ORIGIN` y `CLERK_AUTHORIZED_PARTIES` con los orígenes exactos de la app; no uses dominios recibidos desde una petición. Los flujos sign-in/sign-up redirigen de forma fija a `/editor`. Nunca compartas ni guardes `CLERK_SECRET_KEY` en Git, issues, logs o respuestas HTTP.
+
+Consulta [docs/authentication.md](docs/authentication.md) para límites locales, comportamiento de las APIs y validación con dos usuarios. Las pruebas actuales usan sesiones y proyectos sintéticos; la comprobación E2E con una instancia Clerk real requiere claves y usuarios de prueba del operador.
 
 Para levantar las dependencias locales:
 
@@ -54,31 +58,27 @@ npm run check:node
 
 `npm ci` aplica `engine-strict`; también hay una comprobación explícita de Node 24 en la instalación y en los comandos de raíz. CI usa Node 24 y ejecuta instalación, lint, typecheck, tests y build sin claves.
 
-## Persistencia y storage privado
+## Persistencia y autorización
 
-La issue #3 incorpora el esquema Drizzle, migración inicial, seed sintético y adaptador S3 privado. Todavía no se habilitan Clerk, Meta, sandbox, gateway ni preview. `.env.example` contiene placeholders; no copies esos valores sobre un `.env.local` existente.
+La issue #3 incorpora el esquema Drizzle, migración inicial, seed sintético y adaptador S3 privado. La issue #4 añade Clerk, `proxy.ts`, guards de sesión/owner y `GET`/`PATCH /api/projects/[projectId]`. Los handlers derivan la identidad de `auth()` y las consultas del repositorio filtran por dueño. No existe todavía una ruta de creación de proyectos; llegará en la issue #6.
 
-Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQL de Drizzle y se puede repetir. El comando toma `DATABASE_URL` del entorno o deriva la conexión local desde `infra/.env`; no carga `.env.local`. `npm run db:seed` inserta dos usuarios, proyectos y actividad sintéticos; solo acepta PostgreSQL en loopback y es idempotente. No crea objetos S3 ficticios.
+Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQL de Drizzle y se puede repetir. `npm run db:seed` inserta dos usuarios, proyectos y actividad sintéticos; solo acepta PostgreSQL en loopback y es idempotente. `npm run test:integration` crea recursos temporales y verifica ownership, claves foráneas, paginación, idempotencia, ledger, sandboxes y storage.
 
-`npm run test:integration` crea una base temporal en PostgreSQL local y un bucket S3 privado temporal, aplica migraciones y verifica ownership, claves foráneas, paginación, idempotencia, ledger, sandboxes y storage. Requiere `npm run infra:up` y permiso local para crear/eliminar ambos recursos. Los elimina al finalizar.
-
-El adaptador usa solo `S3_BUCKET_PRIVATE`, genera claves en servidor, admite objetos de hasta 25 MiB y valida SHA-256 al escribir y leer. El bucket privado de Silo no permite lectura anónima. El adaptador no emite URLs firmadas ni cambia ACLs a públicas. El proveedor de producción debe configurar bloqueo/política de acceso público antes de usarse.
-
-Las migraciones no se revierten automáticamente. El archivo `0000_normal_chameleon_down.sql` es una operación destructiva manual; consulta [desarrollo local](docs/local-development.md) antes de ejecutarla. Las siguientes migraciones deben ser aditivas.
+El adaptador de storage usa solo `S3_BUCKET_PRIVATE`, genera claves en servidor, admite objetos de hasta 25 MiB y valida SHA-256 al escribir y leer. El bucket privado de Silo no permite lectura anónima. Las migraciones no se revierten automáticamente; consulta [desarrollo local](docs/local-development.md) antes de ejecutar una reversión destructiva.
 
 ## Capacidades planificadas
 
-Todavía no existen `dev:worker`, `dev:gateway`, smoke de Meta, pruebas E2E/seguridad, publicación o despliegue. Sus issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). Clerk, Meta, sandbox rootless, gateway y preview privada se incorporarán en fases posteriores. No hay proveedor de IA ni ejecución de juegos habilitados.
+Todavía no existen `dev:worker`, `dev:gateway`, smoke de Meta, pruebas E2E, ejecución de juegos, aislamiento de runtime, preview ni publicación. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue.
 
-## Estructura inicial
+## Estructura
 
-- `apps/web`: Next.js App Router, React, Radix Themes y TypeScript estricto.
+- `apps/web`: Next.js App Router, Clerk, React, Radix Themes y TypeScript estricto.
 - `packages/config`: validación de URLs públicas y configuración de infraestructura local.
 - `packages/contracts`: schemas Zod de liveness y errores HTTP.
 - `packages/db`: modelo PostgreSQL/Drizzle y repositorios que requieren identidad verificada.
 - `packages/storage`: adaptador S3 privado con claves de servidor, checksum y estados de reconciliación.
 - `infra`: Docker Compose, perfiles de desarrollo, ejemplos locales y digest de imágenes.
-- `tests`: contratos y comportamiento de liveness con fixtures locales.
+- `tests`: contratos, persistencia y autorización sintética.
 - `.github/workflows/ci.yml`: verificación en Node 24, sin secretos.
 
-Phaser será el motor predeterminado para juegos generados según la arquitectura definida en [AGENTS.md](AGENTS.md); el runtime de juegos no se ejecuta dentro de Next.
+Phaser será el motor predeterminado para juegos generados según la arquitectura definida en [AGENTS.md](AGENTS.md); los procesos de juego no se ejecutan dentro de Next.
