@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSandboxEnvironment } from "@meta-game/config";
-import { validPathname, validPublicIpv4, validateRedirectLocation, validateRegistryRequest } from "../../infra/sandbox/egress-proxy.mjs";
+import { validPathname, validPublicIpv4, validatePreviewRequest, validateRedirectLocation, validateRegistryRequest } from "../../infra/sandbox/egress-proxy.mjs";
 
 describe("sandbox egress policy", () => {
   it("allows only public IPv4 upstreams and blocks private, reserved and IPv6 destinations", () => {
@@ -30,6 +30,17 @@ describe("sandbox egress policy", () => {
     expect(validateRedirectLocation("https://169.254.169.254/latest/meta-data", "registry.npmjs.org", hosts)).toBeNull();
     expect(validateRedirectLocation("https://evil.example/pkg.tgz", "registry.npmjs.org", hosts)).toBeNull();
     expect(validateRedirectLocation("https://user:secret@registry.npmjs.org/pkg.tgz", "registry.npmjs.org", hosts)).toBeNull();
+  });
+
+  it("routes preview only to its fixed sandbox and rejects hostile hosts or traversal", () => {
+    const expectedHost = "mg-egress-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:8080";
+    expect(validatePreviewRequest("/__preview/@vite/client?session=1", expectedHost, expectedHost)).toEqual({
+      gamePath: "/@vite/client", query: "?session=1",
+    });
+    expect(validatePreviewRequest("/__preview/%2e%2e/private", expectedHost, expectedHost)).toBeNull();
+    expect(validatePreviewRequest("/__preview/%2fetc/passwd", expectedHost, expectedHost)).toBeNull();
+    expect(validatePreviewRequest("/__preview/", "attacker:8080", expectedHost)).toBeNull();
+    expect(validatePreviewRequest("http://169.254.169.254/latest", expectedHost, expectedHost)).toBeNull();
   });
 
   it("rejects redirects or dependency allowlists that name private networks", () => {

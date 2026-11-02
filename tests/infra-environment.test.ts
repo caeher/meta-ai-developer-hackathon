@@ -13,6 +13,14 @@ const validEnvironment = {
   S3_CONSOLE_PORT: "9001",
   S3_BUCKET_PRIVATE: "meta-game-private",
   S3_BUCKET_PUBLIC: "meta-game-public",
+  PREVIEW_GATEWAY_ENABLED: "false",
+  PREVIEW_BASE_DOMAIN: "preview.example.test",
+  PREVIEW_TOKEN_KEY_ID: "replace-with-active-key-id",
+  PREVIEW_TOKEN_PRIVATE_KEY: "replace-with-base64-pkcs8-rsa-private-key",
+  PREVIEW_TOKEN_PUBLIC_KEYS: "{\"replace-with-active-key-id\":\"replace-with-base64-spki-rsa-public-key\"}",
+  PREVIEW_TOKEN_TTL_SECONDS: "60",
+  PREVIEW_SESSION_TTL_SECONDS: "900",
+  APP_ORIGIN: "http://localhost:3000",
 };
 
 describe("local infrastructure environment", () => {
