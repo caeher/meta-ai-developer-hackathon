@@ -279,6 +279,7 @@ export const sandboxes = pgTable(
     ownerUserId: uuid("owner_user_id").notNull(),
     projectId: uuid("project_id").notNull(),
     runtimeId: varchar("runtime_id", { length: 255 }),
+    runtimeUid: integer("runtime_uid").notNull().default(sql`nextval('sandboxes_runtime_uid_seq')`),
     status: sandboxStatus("status").notNull().default("provisioning"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     createdAt: createdAt(),
@@ -291,7 +292,9 @@ export const sandboxes = pgTable(
       foreignColumns: [projects.ownerUserId, projects.id],
     }).onDelete("cascade"),
     unique("sandboxes_owner_project_unique").on(table.ownerUserId, table.projectId),
+    unique("sandboxes_runtime_uid_unique").on(table.runtimeUid),
     index("sandboxes_owner_status_idx").on(table.ownerUserId, table.status),
+    check("sandboxes_runtime_uid_range_check", sql`${table.runtimeUid} between 10000 and 59999`),
   ],
 );
 

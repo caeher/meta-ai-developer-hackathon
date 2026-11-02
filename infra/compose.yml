@@ -164,6 +164,8 @@ services:
       RUN_MAX_TOKENS: ${RUN_MAX_TOKENS:-16000}
       USER_DAILY_TOKEN_LIMIT: ${USER_DAILY_TOKEN_LIMIT:-100000}
       USER_DAILY_IMAGE_LIMIT: ${USER_DAILY_IMAGE_LIMIT:-10}
+      SANDBOX_CONTROLLER_URL: ${SANDBOX_CONTROLLER_URL:-https://sandbox-controller.example.internal:8443}
+      SANDBOX_CONTROLLER_TOKEN: ${SANDBOX_CONTROLLER_TOKEN:-placeholder-generate-a-random-token}
     depends_on:
       postgres:
         condition: service_healthy

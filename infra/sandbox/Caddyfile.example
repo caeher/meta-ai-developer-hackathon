@@ -1,0 +1,9 @@
+# Mantén el controlador en 127.0.0.1; expón este listener únicamente en la red
+# privada de workers. Provisiona certificados internos fuera del repositorio.
+sandbox-controller.example.internal:8443 {
+	bind 10.20.0.10
+	tls /etc/meta-game/tls/controller.crt /etc/meta-game/tls/controller.key
+	@controller path /healthz /v1/*
+	reverse_proxy @controller 127.0.0.1:8081
+	respond 404
+}

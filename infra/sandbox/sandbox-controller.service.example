@@ -1,0 +1,23 @@
+[Unit]
+Description=Meta Game rootless sandbox controller
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/meta-game
+EnvironmentFile=%h/.config/meta-game/sandbox-controller.env
+Environment=SANDBOX_DOCKER_SOCKET=%t/docker.sock
+ExecStart=/usr/bin/node --import tsx apps/sandbox-controller/src/index.ts
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=default.target
