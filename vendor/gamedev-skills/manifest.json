@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/gamedev-skills/awesome-gamedev-agent-skills",
+  "sourceCommit": "19d93f97c9c1ea0f8b306e77aa81e0d3e352d3e9",
+  "license": "Apache-2.0",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "7b6e4f65e5e1d0918447c4b5a371f01b49432098fee25a9ed0832c646e74cd90"
+    },
+    {
+      "path": "NOTICE",
+      "sha256": "18ffe13bb86fbd1f9ec3a4e0987cccc34fdc129b8dc88e2e06c125aad8ac982f"
+    },
+    {
+      "path": "router/SKILL.md",
+      "sha256": "bf41c3ebc0db5e893135f166771b6fd43cbda07c7fa5bfff5e5dcbbef101d3e7"
+    },
+    {
+      "path": "router/references/engine-detection.md",
+      "sha256": "063cb652ad2ceb05f0e589d55d9a779beeac0896771663b563999d8f1e3086c6"
+    },
+    {
+      "path": "router/references/routing-table.md",
+      "sha256": "004f9d96d35b90b5680939183a81e0783243375e4ad409c8fb79d97088e0ace1"
+    },
+    {
+      "path": "skills/disciplines/audio-design/SKILL.md",
+      "sha256": "b537036014f7765712d1035f3da314c8ff898ac492e491c6e82a488d03417db5"
+    },
+    {
+      "path": "skills/disciplines/audio-design/references/adaptive-music.md",
+      "sha256": "65cef2b92eb407b8c066c35cdd25b6d6d4c00e0d8f9eb0bc70186a4794f0c091"
+    },
+    {
+      "path": "skills/disciplines/camera-systems/SKILL.md",
+      "sha256": "3c590facf57b2110c59d9e245b3078c0d4c20ebbfe723507914575c4cb36f9ee"
+    },
+    {
+      "path": "skills/disciplines/camera-systems/references/follow-and-framing.md",
+      "sha256": "60b77e51b47972550f4f59a82854f96b929a961f9d971b5e38be1f6972b91166"
+    },
+    {
+      "path": "skills/disciplines/create-game-assets/SKILL.md",
+      "sha256": "c7c6da3d7bd528ff79934ac7556097cca4288fb321449d5acfa8e45fbba88b20"
+    },
+    {
+      "path": "skills/disciplines/create-game-assets/assets/art-direction-brief.md",
+      "sha256": "abb5652aa6aed679fb0ab77ad605dd48f6575f915dc1e5660a94ccad812c5519"
+    },
+    {
+      "path": "skills/disciplines/create-game-assets/assets/asset-manifest.json",
+      "sha256": "f08696a6716d5b87259c56137e613d5e4c9166b67f68781f40de68541a103f7f"
+    },
+    {
+      "path": "skills/disciplines/create-game-assets/references/art-direction.md",
+      "sha256": "8c7789a3c69fe10589aef8e180d9ce380e0194a42caa44761ecaaec052b3a0c8"
+    },
+    {
+      "path": "skills/disciplines/create-game-assets/references/provenance.md",
+      "sha256": "faeb283803f2b6d4a733ef547c0912853caf27605c7a8e822c49d461c08bdfbb"
+    },
+    {
+      "path": "skills/disciplines/create-game-assets/references/raster-pipeline.md",
+      "sha256": "3094921c690e65ca96684ced6260ba6c23babe25e1ea7a8f1fcf2c122ed7cef7"
+    },
+    {
+      "path": "skills/disciplines/game-feel/SKILL.md",
+      "sha256": "67900d0e41630914e1a45b55aced3321550f87b26d34e439d3952dd803e9c842"
+    },
+    {
+      "path": "skills/disciplines/game-feel/references/feedback-recipes.md",
+      "sha256": "b4a0756039d325a2a8ad5f86f7d87e3003e8e768761fc828ba4ede7cf67f7612"
+    },
+    {
+      "path": "skills/disciplines/game-ui-ux/SKILL.md",
+      "sha256": "8916cd1da6df6e53cf316e9024657c5c178f7e7750e79eeea93bfd44cf9acd54"
+    },
+    {
+      "path": "skills/disciplines/game-ui-ux/references/layout-and-flow.md",
+      "sha256": "7800ef927c07934c21fb229a2788f0ba8126b31972deb369333663177b2765fd"
+    },
+    {
+      "path": "skills/disciplines/input-systems/SKILL.md",
+      "sha256": "70112718392e1e0a62cd335a5fe8c6272128e18728b1e40c6f8a75001bbef9b4"
+    },
+    {
+      "path": "skills/disciplines/input-systems/references/buffering-and-accessibility.md",
+      "sha256": "46bfaef1c89e423415e6cf57a3b8a5f2280cb6d9bbded0dba44d2ff1f17f861f"
+    },
+    {
+      "path": "skills/disciplines/level-design/SKILL.md",
+      "sha256": "51e8368cc1a78faae3467ee73ec03c7c7aae7e45991639a09441832aca9694d2"
+    },
+    {
+      "path": "skills/disciplines/level-design/references/pacing-and-flow.md",
+      "sha256": "7c68f640dc64880904fd1e1d53c9d4562fa11973d10b2cb72617922504e4bb9d"
+    },
+    {
+      "path": "skills/disciplines/performance-optimization/SKILL.md",
+      "sha256": "9c68d80b13943b246b0e1b8c35747ab4de700d3deb1ce2a0d3f65eba1b8da731"
+    },
+    {
+      "path": "skills/disciplines/performance-optimization/references/profiling-and-budgets.md",
+      "sha256": "4e4aabc292e90d6c4064efbb9df85cd1a9cf2efec23c872bf7c6e3cec5ebb30a"
+    },
+    {
+      "path": "skills/disciplines/physics-tuning/SKILL.md",
+      "sha256": "b0ff90eb85509cfa3ca9e27f989b637160903479e57daa2011be9101cbd4913c"
+    },
+    {
+      "path": "skills/disciplines/physics-tuning/references/timestep-and-ccd.md",
+      "sha256": "0e06a3650ee7664d02bc8fcdad02f2740b2e51c0aa548d3d206a10fb326ea8ac"
+    },
+    {
+      "path": "skills/genres/platformer/SKILL.md",
+      "sha256": "1d5c688c33a9ca4562070878b84c88cc687681dcfea842c121d25a0620f74cba"
+    },
+    {
+      "path": "skills/genres/platformer/references/feel-tuning.md",
+      "sha256": "90d59952f030515f186c7b991763b84ee2e8202e0b457bdc9a1547730ad99b28"
+    },
+    {
+      "path": "skills/genres/puzzle/SKILL.md",
+      "sha256": "2923586901c4998a5bc5deb2235038e6161e7f927d45b8e8ea6b4c7c7327a384"
+    },
+    {
+      "path": "skills/genres/puzzle/references/board-and-resolution.md",
+      "sha256": "1dca4e19ffd7256b536ec56296abeeef4f2797ab03caa6923a860fd3a48d4699"
+    },
+    {
+      "path": "skills/genres/rpg/SKILL.md",
+      "sha256": "370d9b73048f8760576595bdb14924f14f8fe48e2c17853a4e5c87d3b24877c5"
+    },
+    {
+      "path": "skills/genres/rpg/references/stats-combat-quests.md",
+      "sha256": "47874287dd21d9934fd6f81fa66e22562e7ca79a2d825fa7eef03e90cc1abefa"
+    },
+    {
+      "path": "skills/web-engines/phaser-arcade-physics/SKILL.md",
+      "sha256": "7de2d1bab06517b39cb2bb4d386ae540abaa5a4e57e42f74abea34e79a52d80d"
+    },
+    {
+      "path": "skills/web-engines/phaser-arcade-physics/references/bodies-and-collision.md",
+      "sha256": "f098c57a24f85ea7992ee042685c086cb80f604c7f5be8b717d639edde056115"
+    },
+    {
+      "path": "skills/web-engines/phaser-core/SKILL.md",
+      "sha256": "889febef63e0c6f11a46f1cc58d11af0dabd63c33ae19c203fc136a928114ebf"
+    },
+    {
+      "path": "skills/web-engines/phaser-core/references/scene-flow.md",
+      "sha256": "20d9e3728d5c290c181b1f723dd1cc7c3f911b662a3d24c81cb345e76642d05f"
+    },
+    {
+      "path": "skills/workflows/game-jam/SKILL.md",
+      "sha256": "ba3fd961e683dda3d50002fe556b95120d246c4b3849f1200628e1b04c06e7f0"
+    },
+    {
+      "path": "skills/workflows/prototype-fast/SKILL.md",
+      "sha256": "35491f7f6c1e94a535098fd40c678369ea94f60905f6f8803b30496f7954881e"
+    }
+  ]
+}

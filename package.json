@@ -11,7 +11,8 @@
     "packages/contracts",
     "packages/db",
     "packages/meta",
-    "packages/storage"
+    "packages/storage",
+    "packages/skills"
   ],
   "scripts": {
     "preinstall": "node scripts/check-node-version.mjs",
@@ -27,8 +28,9 @@
     "db:migrate": "node scripts/check-node-version.mjs && node scripts/db-migrate.mjs",
     "db:seed": "node scripts/check-node-version.mjs && node scripts/db-seed.mjs",
     "meta:smoke": "node scripts/check-node-version.mjs && node --conditions=react-server --import tsx scripts/meta-smoke.ts",
-    "lint": "node scripts/check-node-version.mjs && eslint apps/web packages/config packages/contracts packages/db packages/meta packages/storage tests scripts --max-warnings=0",
-    "typecheck": "node scripts/check-node-version.mjs && tsc --noEmit -p apps/web/tsconfig.json && tsc --noEmit -p packages/config/tsconfig.json && tsc --noEmit -p packages/contracts/tsconfig.json && tsc --noEmit -p packages/db/tsconfig.json && tsc --noEmit -p packages/meta/tsconfig.json && tsc --noEmit -p packages/storage/tsconfig.json && tsc --noEmit -p tsconfig.tests.json",
+    "skills:verify": "node scripts/check-node-version.mjs && node --import tsx scripts/verify-skills.ts",
+    "lint": "node scripts/check-node-version.mjs && eslint apps/web packages/config packages/contracts packages/db packages/meta packages/skills packages/storage tests scripts --max-warnings=0",
+    "typecheck": "node scripts/check-node-version.mjs && tsc --noEmit -p apps/web/tsconfig.json && tsc --noEmit -p packages/config/tsconfig.json && tsc --noEmit -p packages/contracts/tsconfig.json && tsc --noEmit -p packages/db/tsconfig.json && tsc --noEmit -p packages/meta/tsconfig.json && tsc --noEmit -p packages/skills/tsconfig.json && tsc --noEmit -p packages/storage/tsconfig.json && tsc --noEmit -p tsconfig.tests.json",
     "test": "node scripts/check-node-version.mjs && vitest run",
     "test:integration": "node scripts/check-node-version.mjs && node scripts/test-integration.mjs",
     "check:node": "node scripts/check-node-version.mjs"

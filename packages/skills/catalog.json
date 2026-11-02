@@ -1,0 +1,300 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/gamedev-skills/awesome-gamedev-agent-skills",
+    "commit": "19d93f97c9c1ea0f8b306e77aa81e0d3e352d3e9",
+    "license": "Apache-2.0",
+    "licensePath": "LICENSE",
+    "noticePath": "NOTICE"
+  },
+  "tokenBudget": 8000,
+  "tokenEstimator": "ceil(UTF-8 byte length / 3), intentionally conservative and model-independent",
+  "router": {
+    "sourcePath": "router/SKILL.md",
+    "metadataOnly": true,
+    "referencePaths": [
+      "router/references/engine-detection.md",
+      "router/references/routing-table.md"
+    ]
+  },
+  "skills": [
+    {
+      "id": "phaser-core",
+      "title": "Phaser core",
+      "description": "Scenes, lifecycle, loader, cameras and scene communication.",
+      "category": "engine",
+      "stage": 0,
+      "rank": 0,
+      "sourcePath": "skills/web-engines/phaser-core/SKILL.md",
+      "runtime": true,
+      "always": true,
+      "triggers": [],
+      "minimumMajor": 4,
+      "adapterForPhaser3": "packages/skills/local/phaser-core-3.90.md",
+      "references": [
+        {
+          "id": "scene-flow",
+          "sourcePath": "skills/web-engines/phaser-core/references/scene-flow.md",
+          "triggers": ["scene transition", "scene lifecycle", "scene flow"]
+        }
+      ]
+    },
+    {
+      "id": "phaser-arcade-physics",
+      "title": "Phaser Arcade Physics",
+      "description": "Movement, gravity, world bounds, overlap and collision handling.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 0,
+      "sourcePath": "skills/web-engines/phaser-arcade-physics/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["physics", "collision", "collisions", "gravity", "velocity", "platformer", "plataformas", "shooter", "disparos", "top-down", "top down"],
+      "minimumMajor": 4,
+      "adapterForPhaser3": "packages/skills/local/arcade-physics-3.90.md",
+      "references": [
+        {
+          "id": "bodies-and-collision",
+          "sourcePath": "skills/web-engines/phaser-arcade-physics/references/bodies-and-collision.md",
+          "triggers": ["body collision", "arcade body", "collision callback"]
+        }
+      ]
+    },
+    {
+      "id": "create-game-assets",
+      "title": "Game assets",
+      "description": "Art direction, sprite and tileset planning, asset manifests and validation.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 10,
+      "sourcePath": "skills/disciplines/create-game-assets/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["asset", "assets", "sprite", "sprites", "spritesheet", "tileset", "background", "fondo", "arte", "art style", "pixel art", "visual style", "icon", "icons"],
+      "references": [
+        { "id": "art-direction", "sourcePath": "skills/disciplines/create-game-assets/references/art-direction.md", "triggers": ["art direction", "dirección de arte", "style bible"] },
+        { "id": "raster-pipeline", "sourcePath": "skills/disciplines/create-game-assets/references/raster-pipeline.md", "triggers": ["raster pipeline", "sprite dimensions", "transparency"] },
+        { "id": "provenance", "sourcePath": "skills/disciplines/create-game-assets/references/provenance.md", "triggers": ["asset provenance", "asset license", "asset source"] },
+        { "id": "art-direction-brief", "sourcePath": "skills/disciplines/create-game-assets/assets/art-direction-brief.md", "triggers": ["art direction brief"] },
+        { "id": "asset-manifest", "sourcePath": "skills/disciplines/create-game-assets/assets/asset-manifest.json", "triggers": ["asset manifest"] }
+      ]
+    },
+    {
+      "id": "input-systems",
+      "title": "Input systems",
+      "description": "Actions, keyboard, touch, gamepad, buffering and accessible controls.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 20,
+      "sourcePath": "skills/disciplines/input-systems/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["input", "controls", "control", "controles", "teclado", "keyboard", "touch", "gamepad", "rebind", "coyote time", "jump buffering"],
+      "references": [
+        { "id": "buffering-and-accessibility", "sourcePath": "skills/disciplines/input-systems/references/buffering-and-accessibility.md", "triggers": ["jump buffering", "input buffering", "coyote time", "accessible controls"] }
+      ]
+    },
+    {
+      "id": "audio-design",
+      "title": "Audio design",
+      "description": "SFX, mixing, music layers, mute and autoplay behavior.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 30,
+      "sourcePath": "skills/disciplines/audio-design/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["audio", "sound", "sounds", "sonido", "sonidos", "sfx", "music", "música", "musica", "sound effect", "efectos de sonido", "mute", "autoplay"],
+      "references": [
+        { "id": "adaptive-music", "sourcePath": "skills/disciplines/audio-design/references/adaptive-music.md", "triggers": ["adaptive music", "music layers", "música dinámica"] }
+      ]
+    },
+    {
+      "id": "physics-tuning",
+      "title": "Physics tuning",
+      "description": "Timestep, jitter, tunneling and stable motion tuning.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 40,
+      "sourcePath": "skills/disciplines/physics-tuning/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["timestep", "jitter", "tunneling", "physics tuning", "physics feel", "fixed timestep"],
+      "references": [
+        { "id": "timestep-and-ccd", "sourcePath": "skills/disciplines/physics-tuning/references/timestep-and-ccd.md", "triggers": ["fixed timestep", "continuous collision", "tunneling"] }
+      ]
+    },
+    {
+      "id": "performance-optimization",
+      "title": "Performance optimization",
+      "description": "Measure frame time, profile bottlenecks and optimize assets and loops.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 50,
+      "sourcePath": "skills/disciplines/performance-optimization/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["performance", "optimize", "optimization", "fps drop", "frame drop", "stutter", "lag", "profiler", "object pooling", "rendimiento"],
+      "references": [
+        { "id": "profiling-and-budgets", "sourcePath": "skills/disciplines/performance-optimization/references/profiling-and-budgets.md", "triggers": ["frame budget", "profiling", "profile the game"] }
+      ]
+    },
+    {
+      "id": "level-design",
+      "title": "Level design",
+      "description": "Playable blockouts, pacing, gating and encounters.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 60,
+      "sourcePath": "skills/disciplines/level-design/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["level design", "level layout", "diseño de nivel", "diseño de niveles", "blockout", "whitebox", "encounter design", "pacing", "critical path"],
+      "references": [
+        { "id": "pacing-and-flow", "sourcePath": "skills/disciplines/level-design/references/pacing-and-flow.md", "triggers": ["pacing curve", "tension curve", "level pacing"] }
+      ]
+    },
+    {
+      "id": "game-feel",
+      "title": "Game feel",
+      "description": "Feedback, hit stop, screen shake, easing and responsive movement.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 70,
+      "sourcePath": "skills/disciplines/game-feel/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["game feel", "juice", "screen shake", "hit stop", "squash and stretch", "impact feedback", "game feel"],
+      "references": [
+        { "id": "feedback-recipes", "sourcePath": "skills/disciplines/game-feel/references/feedback-recipes.md", "triggers": ["feedback recipe", "hit feedback", "jump feedback"] }
+      ]
+    },
+    {
+      "id": "camera-systems",
+      "title": "Camera systems",
+      "description": "2D follow, deadzones, smoothing, look-ahead and bounds.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 80,
+      "sourcePath": "skills/disciplines/camera-systems/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["camera", "camera follow", "deadzone", "look-ahead", "camera bounds", "cámara", "seguimiento de cámara"],
+      "references": [
+        { "id": "follow-and-framing", "sourcePath": "skills/disciplines/camera-systems/references/follow-and-framing.md", "triggers": ["camera framing", "camera follow tuning"] }
+      ]
+    },
+    {
+      "id": "game-ui-ux",
+      "title": "Game UI/UX",
+      "description": "Responsive game HUDs, menus, safe areas and controller focus.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 90,
+      "sourcePath": "skills/disciplines/game-ui-ux/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["hud", "game ui", "pause menu", "main menu", "settings screen", "game menu", "ui layout", "interfaz de juego"],
+      "references": [
+        { "id": "layout-and-flow", "sourcePath": "skills/disciplines/game-ui-ux/references/layout-and-flow.md", "triggers": ["responsive game ui", "ui navigation", "menu flow"] }
+      ]
+    },
+    {
+      "id": "platformer",
+      "title": "Platformer",
+      "description": "2D run and jump controls, coyote time, jump buffering, hazards and levels.",
+      "category": "genre",
+      "stage": 2,
+      "rank": 0,
+      "sourcePath": "skills/genres/platformer/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["platformer", "platform game", "plataformero", "plataformas", "side-scrolling", "side scrolling", "sidescroller", "mario-like", "celeste-like"],
+      "references": [
+        { "id": "feel-tuning", "sourcePath": "skills/genres/platformer/references/feel-tuning.md", "triggers": ["jump feel", "jump tuning", "coyote time tuning", "jump buffering details"] }
+      ]
+    },
+    {
+      "id": "puzzle",
+      "title": "Puzzle",
+      "description": "Grid and board state, deterministic rule resolution, scoring, undo and progression.",
+      "category": "genre",
+      "stage": 2,
+      "rank": 10,
+      "sourcePath": "skills/genres/puzzle/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["puzzle", "rompecabezas", "sokoban", "match-3", "match 3", "sliding puzzle", "logic grid", "tile logic"],
+      "references": [
+        { "id": "board-and-resolution", "sourcePath": "skills/genres/puzzle/references/board-and-resolution.md", "triggers": ["board resolution", "puzzle undo", "match cascade"] }
+      ]
+    },
+    {
+      "id": "rpg",
+      "title": "RPG",
+      "description": "Stats, inventory, quests, dialogue and persistent progression.",
+      "category": "genre",
+      "stage": 2,
+      "rank": 20,
+      "sourcePath": "skills/genres/rpg/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["rpg", "role-playing", "role playing", "jrpg", "inventory", "quest", "quests", "dialogue", "diálogo", "misión", "misiones"],
+      "references": [
+        { "id": "stats-combat-quests", "sourcePath": "skills/genres/rpg/references/stats-combat-quests.md", "triggers": ["stat progression", "combat formula", "quest state"] }
+      ]
+    },
+    {
+      "id": "shooter-2d",
+      "title": "2D shooter (local guide)",
+      "description": "Top-down 2D shooter patterns bound to Phaser and Arcade Physics.",
+      "category": "genre",
+      "stage": 2,
+      "rank": 30,
+      "localPath": "packages/skills/local/shooter-2d.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["shooter", "top-down shooter", "top down shooter", "shooter 2d", "2d shooter", "juego de disparos", "shooter cenital"],
+      "references": []
+    },
+    {
+      "id": "phaser-testing",
+      "title": "Phaser testing (local guide)",
+      "description": "Vitest for game logic and Playwright for canvas, assets, controls and console behavior.",
+      "category": "discipline",
+      "stage": 1,
+      "rank": 100,
+      "localPath": "packages/skills/local/phaser-testing.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["testing", "test", "tests", "pruebas", "probar", "verificar el juego", "canvas test"],
+      "references": []
+    },
+    {
+      "id": "prototype-fast",
+      "title": "Fast prototype",
+      "description": "Timeboxed greybox prototype and explicit keep or discard criteria.",
+      "category": "workflow",
+      "stage": 3,
+      "rank": 0,
+      "sourcePath": "skills/workflows/prototype-fast/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["prototype", "prototipo", "greybox", "blockout", "vertical slice", "rough playable", "mecánica rápida"],
+      "references": []
+    },
+    {
+      "id": "game-jam",
+      "title": "Game jam",
+      "description": "Scope and deliver a playable game under a jam deadline.",
+      "category": "workflow",
+      "stage": 3,
+      "rank": 10,
+      "sourcePath": "skills/workflows/game-jam/SKILL.md",
+      "runtime": true,
+      "always": false,
+      "triggers": ["game jam", "jam deadline", "hackathon", "gamejam", "game jam deadline"],
+      "references": []
+    }
+  ]
+}
