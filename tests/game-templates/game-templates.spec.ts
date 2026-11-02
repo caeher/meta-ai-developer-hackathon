@@ -161,10 +161,31 @@ test("platformer preset jumps across the guardian and completes the level", asyn
   await page.goto("/?genre=platformer");
   await page.waitForFunction(() => window.__GAME_TEST__?.getState()?.assetsReady === true);
   await expect.poll(async () => (await readState(page)).y, { timeout: 3_000 }).toBeGreaterThan(480);
-  await page.keyboard.press("Space");
+  await page.keyboard.down("Space");
   await expect.poll(async () => (await readState(page)).velocityY, { timeout: 1_000 }).toBeLessThan(0);
   await page.keyboard.press("r");
-  await expect.poll(async () => readState(page)).toMatchObject({ phase: "playing", lives: 3, score: 0 });
+  await page.keyboard.up("Space");
+  await expect.poll(async () => readState(page)).toMatchObject({ phase: "playing", lives: 3, score: 0, actions: 0 });
+  await page.keyboard.down("ArrowRight");
+  await page.waitForFunction(() => (window.__GAME_TEST__?.getState()?.x ?? 0) > 420, { timeout: 5_000 });
+  await page.keyboard.press("Space");
+  await page.waitForFunction(() => (window.__GAME_TEST__?.getState()?.velocityY ?? 0) < 0, { timeout: 1_000 });
+  await page.waitForFunction(() => (window.__GAME_TEST__?.getState()?.x ?? 0) > 690, { timeout: 5_000 });
+  await page.keyboard.up("ArrowRight");
+  await expect.poll(async () => (await readState(page)).y, { timeout: 5_000 }).toBeGreaterThan(480);
+  const landed = await readState(page);
+  if (landed.score < 3) {
+    if (landed.x > 705) {
+      await page.keyboard.down("ArrowLeft");
+      await page.waitForFunction(() => (window.__GAME_TEST__?.getState()?.x ?? Number.MAX_SAFE_INTEGER) <= 700, { timeout: 1_000 });
+      await page.keyboard.up("ArrowLeft");
+    } else {
+      await page.keyboard.down("ArrowRight");
+      await page.waitForFunction(() => (window.__GAME_TEST__?.getState()?.x ?? 0) >= 710, { timeout: 1_000 });
+      await page.keyboard.up("ArrowRight");
+    }
+    await expect.poll(async () => (await readState(page)).score).toBe(3);
+  }
   await page.keyboard.down("ArrowRight");
   await expect.poll(async () => (await readState(page)).phase, { timeout: 15_000 }).toBe("won");
   await page.keyboard.up("ArrowRight");

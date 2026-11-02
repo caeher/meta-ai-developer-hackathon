@@ -84,6 +84,11 @@ function releaseControls(): void {
   pointerControls.clear();
 }
 
+function dispatchCommand(command: "pause" | "mute" | "restart"): void {
+  if (command === "restart") releaseControls();
+  emit({ kind: "command", command });
+}
+
 function controlFromKey(key: string): GameControl | undefined {
   if (key === "ArrowLeft" || key.toLowerCase() === "a") return "left";
   if (key === "ArrowRight" || key.toLowerCase() === "d") return "right";
@@ -106,7 +111,7 @@ function onKeyDown(event: KeyboardEvent): void {
   const command = event.key.toLowerCase() === "r" ? "restart"
     : event.key.toLowerCase() === "p" ? "pause"
       : event.key.toLowerCase() === "m" ? "mute" : undefined;
-  if (command) emit({ kind: "command", command });
+  if (command) dispatchCommand(command);
 }
 
 function onKeyUp(event: KeyboardEvent): void {
@@ -147,7 +152,7 @@ function onCommandClick(event: MouseEvent): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
   const command = target.closest<HTMLButtonElement>("button[data-command]")?.dataset.command;
-  if (command === "pause" || command === "mute" || command === "restart") emit({ kind: "command", command });
+  if (command === "pause" || command === "mute" || command === "restart") dispatchCommand(command);
 }
 
 function onSnapshot(snapshot: GameSnapshot): void {
