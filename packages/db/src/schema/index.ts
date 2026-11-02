@@ -135,6 +135,7 @@ export const projects = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 120 }).notNull(),
+    isInternal: boolean("is_internal").notNull().default(false),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -445,6 +446,11 @@ export const publications = pgTable(
     versionId: uuid("version_id").notNull(),
     slug: varchar("slug", { length: 100 }).notNull().unique(),
     artifactKey: varchar("artifact_key", { length: 700 }).notNull().unique(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }),
+    artifactSha256: varchar("artifact_sha256", { length: 64 }),
+    manifest: jsonb("manifest").$type<Record<string, unknown>>().notNull().default({}),
+    buildLeaseToken: uuid("build_lease_token"),
+    buildLeaseExpiresAt: timestamp("build_lease_expires_at", { withTimezone: true }),
     status: publicationStatus("status").notNull().default("building"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -460,6 +466,11 @@ export const publications = pgTable(
       table.projectId,
       table.id,
     ),
+    uniqueIndex("publications_owner_project_idempotency_unique")
+      .on(table.ownerUserId, table.projectId, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
+    index("publications_build_lease_idx").on(table.status, table.buildLeaseExpiresAt),
+    check("publications_artifact_sha256_format_check", sql`${table.artifactSha256} is null or ${table.artifactSha256} ~ '^[a-f0-9]{64}$'`),
     index("publications_owner_project_created_idx").on(
       table.ownerUserId,
       table.projectId,

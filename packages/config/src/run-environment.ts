@@ -5,6 +5,7 @@ const positiveInteger = (fallback: number, maximum: number) =>
 
 export const RunEnvironmentSchema = z.object({
   RUNS_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  PUBLISHING_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   REDIS_URL: z.string().url().refine((value) => ["redis:", "rediss:"].includes(new URL(value).protocol)).default("redis://127.0.0.1:6379"),
   USER_MAX_CONCURRENT_JOBS: positiveInteger(1, 100),
   PROJECT_MAX_RUN_STEPS: positiveInteger(20, 1000),

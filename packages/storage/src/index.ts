@@ -314,3 +314,5 @@ export { createPrivateCheckpointStorage, createPrivateCheckpointStorageFromEnvir
 export type { PrivateCheckpointIdentity } from "./checkpoints";
 export { createPrivateSnapshotStorage, createPrivateSnapshotStorageFromEnvironment, decodeVersionSnapshot, readSnapshotEnvironment, snapshotBytes, snapshotObjectKey, VersionSnapshotSchema } from "./snapshots";
 export type { SnapshotLimits, VersionSnapshot, VersionSnapshotFile, VersionSnapshotIdentity, VersionSnapshotMetadata } from "./snapshots";
+export { createPublicationArtifactStorage, createPublicationArtifactStorageFromEnvironment, createS3PublicationObjectClient } from "./publications";
+export type { PublicationBuildFile, PublicationManifestFile, PublicationObjectClient } from "./publications";

@@ -1,0 +1,19 @@
+{
+  "name": "@meta-game/publishing-origin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "dev": "node ../../scripts/check-node-version.mjs && node --conditions=react-server --import tsx --watch src/index.ts",
+    "build": "node ../../scripts/check-node-version.mjs && tsc --noEmit -p tsconfig.json",
+    "start": "node ../../scripts/check-node-version.mjs && node --conditions=react-server --import tsx src/index.ts"
+  },
+  "dependencies": {
+    "@meta-game/contracts": "0.1.0",
+    "@meta-game/db": "0.1.0",
+    "@meta-game/storage": "0.1.0",
+    "dotenv": "18.0.9"
+  },
+  "devDependencies": { "@types/node": "24.19.2", "typescript": "5.9.3", "tsx": "4.23.15" }
+}

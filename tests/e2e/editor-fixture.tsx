@@ -14,6 +14,7 @@ const messageKey = `editor-e2e-messages-${projectId}`;
 const runKey = `editor-e2e-run-${projectId}`;
 const streamCursorsKey = `editor-e2e-stream-cursors-${projectId}`;
 const projectNameKey = `editor-e2e-name-${projectId}`;
+const publicationsKey = `editor-e2e-publications-${projectId}`;
 let privateApiInstalled = false;
 
 interface RunFixture {
@@ -43,6 +44,11 @@ function readMessages(): PersistedMessage[] {
 
 function readProjectName(): string {
   return sessionStorage.getItem(projectNameKey) ?? "Aventura de prueba";
+}
+
+function readPublications() {
+  try { return JSON.parse(sessionStorage.getItem(publicationsKey) ?? "[]") as Array<Record<string, unknown>>; }
+  catch { return []; }
 }
 
 function readRun(): RunFixture | null {
@@ -105,6 +111,28 @@ function installPrivateApiFixture() {
     }
     if (url.pathname === `/api/projects/${projectId}/versions/c31d319e-831a-47e0-a1f3-e965c7b7a243/restore` && method === "POST") {
       return Response.json({ restored: { versionId: crypto.randomUUID(), versionNumber: 4 } });
+    }
+
+    if (url.pathname === `/api/projects/${projectId}/publications` && method === "GET") {
+      return Response.json({ items: readPublications(), nextCursor: null });
+    }
+    if (url.pathname === `/api/projects/${projectId}/publications` && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { versionId: string; idempotencyKey: string };
+      const existing = readPublications().find((item) => item.idempotencyKey === body.idempotencyKey);
+      const publication = existing ?? {
+        id: "d31d319e-831a-47e0-a1f3-e965c7b7a243", versionId: body.versionId, versionNumber: 3,
+        status: "ready", idempotencyKey: body.idempotencyKey, artifactSha256: "a".repeat(64),
+        url: "https://a1b2c3d4e5f607182930.games.example.test", createdAt: new Date().toISOString(),
+      };
+      const next = [publication, ...readPublications().filter((item) => item.id !== publication.id)];
+      sessionStorage.setItem(publicationsKey, JSON.stringify(next));
+      return Response.json({ publication }, { status: 200 });
+    }
+    const publicationRoute = url.pathname.match(new RegExp(`^/api/projects/${projectId}/publications/([0-9a-f-]+)$`, "i"));
+    if (publicationRoute && method === "DELETE") {
+      const next = readPublications().map((publication) => publication.id === publicationRoute[1] ? { ...publication, status: "revoked", url: null } : publication);
+      sessionStorage.setItem(publicationsKey, JSON.stringify(next));
+      return Response.json({ revoked: true, id: publicationRoute[1] });
     }
 
     if (url.pathname === `/api/projects/${projectId}/preview-grant` && method === "POST") {
@@ -272,6 +300,7 @@ function EditorTestApp() {
             initialCursor={null}
             previewBaseDomain={previewEnabled ? "preview.example.test" : undefined}
             versions={versions}
+            publishingEnabled={params.has("publishing")}
           />
         </main>
       </Theme>

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { GameDatabase } from "../database";
 import {
@@ -168,7 +168,7 @@ async function assertOwnedProject(
   const [project] = await db
     .select({ id: projects.id })
     .from(projects)
-    .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), isNull(projects.deletedAt)))
+    .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false))))
     .limit(1);
   if (!project) throw new OwnedResourceNotFoundError();
 }
@@ -196,13 +196,56 @@ export function createRepositories(db: GameDatabase) {
         return project;
       },
 
+      async createBuildWorkspace(identity: VerifiedIdentityContext) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const [project] = await db.insert(projects).values({
+          ownerUserId,
+          name: "Build privado",
+          isInternal: true,
+        }).returning();
+        if (!project) throw new Error("No se pudo crear el workspace de build");
+        return project;
+      },
+
+      async deleteBuildWorkspace(identity: VerifiedIdentityContext, projectId: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const [deleted] = await db.delete(projects).where(and(
+          eq(projects.ownerUserId, ownerUserId),
+          eq(projects.id, uuidSchema.parse(projectId)),
+          eq(projects.isInternal, true),
+        )).returning({ id: projects.id });
+        if (!deleted) throw new OwnedResourceNotFoundError();
+        return deleted;
+      },
+
+      async reapBuildWorkspaces(cutoff: Date, limit = 50) {
+        const candidates = await db.select({ id: projects.id, ownerUserId: projects.ownerUserId }).from(projects).where(and(
+          eq(projects.isInternal, true), lt(projects.createdAt, cutoff),
+        )).orderBy(asc(projects.createdAt)).limit(Math.max(1, Math.min(100, Math.trunc(limit))));
+        let deleted = 0;
+        for (const candidate of candidates) {
+          const [sandbox] = await db.select({ status: sandboxes.status })
+            .from(sandboxes).where(and(
+              eq(sandboxes.ownerUserId, candidate.ownerUserId), eq(sandboxes.projectId, candidate.id),
+            )).limit(1);
+          // Keep the project/sandbox registration until the controller confirms runtime destruction.
+          if (sandbox && sandbox.status !== "stopped") continue;
+          const [removed] = await db.delete(projects).where(and(
+            eq(projects.id, candidate.id), eq(projects.ownerUserId, candidate.ownerUserId),
+            eq(projects.isInternal, true), lt(projects.createdAt, cutoff),
+          )).returning({ id: projects.id });
+          if (removed) deleted += 1;
+        }
+        return { deleted };
+      },
+
       async get(identity: VerifiedIdentityContext, projectId: string) {
         const ownerUserId = await resolveOwnerId(db, identity);
         const parsedProjectId = uuidSchema.parse(projectId);
         const [project] = await db
           .select()
           .from(projects)
-          .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsedProjectId), isNull(projects.deletedAt)))
+          .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsedProjectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false))))
           .limit(1);
         return project;
       },
@@ -213,7 +256,7 @@ export function createRepositories(db: GameDatabase) {
         const [project] = await db
           .update(projects)
           .set({ name: projectNameSchema.parse(name), updatedAt: new Date() })
-          .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsedProjectId), isNull(projects.deletedAt)))
+          .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsedProjectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false))))
           .returning();
         if (!project) throw new OwnedResourceNotFoundError();
         return project;
@@ -226,13 +269,13 @@ export function createRepositories(db: GameDatabase) {
         const where = cursor
           ? and(
               eq(projects.ownerUserId, ownerUserId),
-              isNull(projects.deletedAt),
+              and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
               or(
                 lt(projects.createdAt, cursor.createdAt),
                 and(eq(projects.createdAt, cursor.createdAt), lt(projects.id, cursor.id)),
               ),
             )
-          : and(eq(projects.ownerUserId, ownerUserId), isNull(projects.deletedAt));
+          : and(eq(projects.ownerUserId, ownerUserId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)));
         const rows = await db
           .select()
           .from(projects)
@@ -252,7 +295,7 @@ export function createRepositories(db: GameDatabase) {
             .where(and(
               eq(projects.ownerUserId, ownerUserId),
               eq(projects.id, parsedProjectId),
-              isNull(projects.deletedAt),
+              and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
             ))
             .for("update")
             .limit(1);
@@ -279,7 +322,7 @@ export function createRepositories(db: GameDatabase) {
             .set({ status: "delete_requested" })
             .where(and(eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, parsedProjectId)));
           await tx.update(publications)
-            .set({ status: "revoked", updatedAt: deletedAt })
+            .set({ status: "revoked", buildLeaseToken: null, buildLeaseExpiresAt: null, updatedAt: deletedAt })
             .where(and(eq(publications.ownerUserId, ownerUserId), eq(publications.projectId, parsedProjectId)));
           await tx.update(usageReservations)
             .set({ status: "released", updatedAt: deletedAt })
@@ -304,7 +347,7 @@ export function createRepositories(db: GameDatabase) {
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id })
             .from(projects)
-            .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), isNull(projects.deletedAt)))
+            .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false))))
             .for("update")
             .limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
@@ -392,7 +435,7 @@ export function createRepositories(db: GameDatabase) {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
             eq(projects.ownerUserId, ownerUserId),
             eq(projects.id, parsed.projectId),
-            isNull(projects.deletedAt),
+            and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
 
@@ -523,7 +566,7 @@ export function createRepositories(db: GameDatabase) {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
             eq(projects.ownerUserId, ownerUserId),
             eq(projects.id, candidate.projectId),
-            isNull(projects.deletedAt),
+            and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [run] = await tx.select().from(runs).where(and(
@@ -585,7 +628,7 @@ export function createRepositories(db: GameDatabase) {
         const ownerUserId = await resolveOwnerId(db, identity);
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [inserted] = await tx.insert(runs).values({
@@ -608,7 +651,7 @@ export function createRepositories(db: GameDatabase) {
           .select()
           .from(runs)
           .innerJoin(projects, and(eq(projects.ownerUserId, runs.ownerUserId), eq(projects.id, runs.projectId)))
-          .where(and(eq(runs.ownerUserId, ownerUserId), eq(runs.id, parsedRunId), isNull(projects.deletedAt)))
+          .where(and(eq(runs.ownerUserId, ownerUserId), eq(runs.id, parsedRunId), and(isNull(projects.deletedAt), eq(projects.isInternal, false))))
           .limit(1);
         return run?.runs;
       },
@@ -619,7 +662,7 @@ export function createRepositories(db: GameDatabase) {
         const [project] = await db.select({ id: projects.id }).from(projects).where(and(
           eq(projects.ownerUserId, ownerUserId),
           eq(projects.id, parsedProjectId),
-          isNull(projects.deletedAt),
+          and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
         )).limit(1);
         if (!project) throw new OwnedResourceNotFoundError();
         const [run] = await db.select().from(runs).where(and(
@@ -648,7 +691,7 @@ export function createRepositories(db: GameDatabase) {
             .where(and(eq(runs.ownerUserId, ownerUserId), eq(runs.id, parsedRunId))).limit(1);
           if (!ownedRun) throw new OwnedResourceNotFoundError();
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, ownedRun.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, ownedRun.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [run] = await tx.update(runs)
@@ -669,7 +712,7 @@ export function createRepositories(db: GameDatabase) {
             .where(and(eq(runs.ownerUserId, ownerUserId), eq(runs.id, parsedRunId))).limit(1);
           if (!candidate) throw new OwnedResourceNotFoundError();
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, candidate.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, candidate.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [run] = await tx.select({ id: runs.id, projectId: runs.projectId }).from(runs)
@@ -707,7 +750,7 @@ export function createRepositories(db: GameDatabase) {
           .select({ id: runs.id })
           .from(runs)
           .innerJoin(projects, and(eq(projects.ownerUserId, runs.ownerUserId), eq(projects.id, runs.projectId)))
-          .where(and(eq(runs.ownerUserId, ownerUserId), eq(runs.id, parsedRunId), isNull(projects.deletedAt)))
+          .where(and(eq(runs.ownerUserId, ownerUserId), eq(runs.id, parsedRunId), and(isNull(projects.deletedAt), eq(projects.isInternal, false))))
           .limit(1);
         if (!run) throw new OwnedResourceNotFoundError();
         return db
@@ -739,7 +782,7 @@ export function createRepositories(db: GameDatabase) {
         const projectId = uuidSchema.parse(input.projectId);
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [sandbox] = await tx.insert(sandboxes).values({
@@ -786,7 +829,7 @@ export function createRepositories(db: GameDatabase) {
         const objectKey = `private/${ownerUserId}/projects/${parsed.projectId}/assets/${id}`;
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [asset] = await tx.insert(assets)
@@ -947,7 +990,7 @@ export function createRepositories(db: GameDatabase) {
         const runId = uuidSchema.parse(claim.runId);
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const now = new Date();
@@ -1004,7 +1047,7 @@ export function createRepositories(db: GameDatabase) {
         if (ownerUserId !== claim.ownerUserId) throw new StaleRunWorkerError();
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, claim.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, claim.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const now = new Date();
@@ -1034,7 +1077,7 @@ export function createRepositories(db: GameDatabase) {
         if (ownerUserId !== claim.ownerUserId) throw new StaleRunWorkerError();
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, claim.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, claim.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const now = new Date();
@@ -1078,7 +1121,7 @@ export function createRepositories(db: GameDatabase) {
         if (!Number.isSafeInteger(leaseMs) || leaseMs < 5_000 || leaseMs > 120_000) throw new RangeError("Lease de restauración inválido");
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsedProjectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsedProjectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [activeRun] = await tx.select({ id: runs.id }).from(runs).where(and(
@@ -1136,7 +1179,7 @@ export function createRepositories(db: GameDatabase) {
           const [project] = await tx
             .select({ id: projects.id })
             .from(projects)
-            .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), isNull(projects.deletedAt)))
+            .where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false))))
             .for("update")
             .limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
@@ -1188,7 +1231,7 @@ export function createRepositories(db: GameDatabase) {
         const id = parsed.versionId ?? randomUUID();
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const now = new Date();
@@ -1310,7 +1353,7 @@ export function createRepositories(db: GameDatabase) {
             .where(and(eq(versions.ownerUserId, ownerUserId), eq(versions.id, parsedVersionId))).limit(1);
           if (!candidate) throw new OwnedResourceNotFoundError();
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, candidate.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, candidate.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [version] = await tx.update(versions).set({ status }).where(and(
@@ -1366,14 +1409,15 @@ export function createRepositories(db: GameDatabase) {
     publications: {
       async create(
         identity: VerifiedIdentityContext,
-        input: { projectId: string; versionId: string },
+        input: { projectId: string; versionId: string; idempotencyKey?: string },
       ) {
         const ownerUserId = await resolveOwnerId(db, identity);
         const projectId = uuidSchema.parse(input.projectId);
         const versionId = uuidSchema.parse(input.versionId);
+        const idempotencyKey = z.string().trim().min(8).max(128).parse(input.idempotencyKey ?? randomUUID());
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [version] = await tx.select({ id: versions.id }).from(versions).where(and(
@@ -1381,11 +1425,20 @@ export function createRepositories(db: GameDatabase) {
             eq(versions.id, versionId), eq(versions.status, "ready"),
           )).limit(1);
           if (!version) throw new OwnedResourceNotFoundError();
+          const [existing] = await tx.select().from(publications).where(and(
+            eq(publications.ownerUserId, ownerUserId),
+            eq(publications.projectId, projectId),
+            eq(publications.idempotencyKey, idempotencyKey),
+          )).limit(1);
+          if (existing) {
+            if (existing.versionId !== versionId) throw new IdempotencyConflictError();
+            return existing;
+          }
           const id = randomUUID();
           const slug = randomUUID().replaceAll("-", "").slice(0, 20);
-          const artifactKey = `published/${ownerUserId}/projects/${projectId}/${id}`;
+          const artifactKey = `published/${slug}`;
           const [publication] = await tx.insert(publications)
-            .values({ id, ownerUserId, projectId, versionId, slug, artifactKey })
+            .values({ id, ownerUserId, projectId, versionId, slug, artifactKey, idempotencyKey })
             .returning();
           if (!publication) throw new Error("No se pudo crear la publicación");
           return publication;
@@ -1404,15 +1457,148 @@ export function createRepositories(db: GameDatabase) {
             .where(and(eq(publications.ownerUserId, ownerUserId), eq(publications.id, parsedPublicationId))).limit(1);
           if (!candidate) throw new OwnedResourceNotFoundError();
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, candidate.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, candidate.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
-          const [publication] = await tx.update(publications).set({ status, updatedAt: new Date() }).where(and(
+          const [publication] = await tx.update(publications).set({
+            status,
+            updatedAt: new Date(),
+            ...(status === "revoked" || status === "failed" ? { buildLeaseToken: null, buildLeaseExpiresAt: null } : {}),
+          }).where(and(
             eq(publications.ownerUserId, ownerUserId), eq(publications.id, parsedPublicationId),
           )).returning();
           if (!publication) throw new OwnedResourceNotFoundError();
           return publication;
         });
+      },
+
+      async get(identity: VerifiedIdentityContext, projectId: string, publicationId: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedProjectId = uuidSchema.parse(projectId);
+        const parsedPublicationId = uuidSchema.parse(publicationId);
+        await assertOwnedProject(db, ownerUserId, parsedProjectId);
+        const [publication] = await db.select().from(publications).where(and(
+          eq(publications.ownerUserId, ownerUserId),
+          eq(publications.projectId, parsedProjectId),
+          eq(publications.id, parsedPublicationId),
+        )).limit(1);
+        return publication;
+      },
+
+      async claimBuild(identity: VerifiedIdentityContext, publicationId: string, leaseMs = 120_000) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedPublicationId = uuidSchema.parse(publicationId);
+        const now = new Date();
+        const token = randomUUID();
+        const slug = randomUUID().replaceAll("-", "").slice(0, 20);
+        return db.transaction(async (tx) => {
+          const [candidate] = await tx.select({ projectId: publications.projectId }).from(publications).where(and(
+            eq(publications.ownerUserId, ownerUserId), eq(publications.id, parsedPublicationId),
+          )).limit(1);
+          if (!candidate) throw new OwnedResourceNotFoundError();
+          const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, candidate.projectId),
+            and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
+          )).for("update").limit(1);
+          if (!project) throw new OwnedResourceNotFoundError();
+          const [otherActiveBuild] = await tx.select({ id: publications.id }).from(publications).where(and(
+            eq(publications.ownerUserId, ownerUserId),
+            eq(publications.projectId, candidate.projectId),
+            ne(publications.id, parsedPublicationId),
+            eq(publications.status, "building"),
+            gt(publications.buildLeaseExpiresAt, now),
+          )).limit(1);
+          if (otherActiveBuild) return undefined;
+          const [publication] = await tx.update(publications).set({
+            status: "building", slug, artifactKey: `published/${slug}`, buildLeaseToken: token,
+            buildLeaseExpiresAt: new Date(now.getTime() + leaseMs), updatedAt: now,
+          }).where(and(
+            eq(publications.ownerUserId, ownerUserId),
+            eq(publications.id, parsedPublicationId),
+            or(
+              eq(publications.status, "failed"),
+              and(eq(publications.status, "building"), or(isNull(publications.buildLeaseExpiresAt), lt(publications.buildLeaseExpiresAt, now))),
+            ),
+          )).returning();
+          return publication;
+        });
+      },
+
+      async renewBuildLease(identity: VerifiedIdentityContext, publicationId: string, leaseToken: string, leaseMs = 120_000) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const [publication] = await db.update(publications).set({
+          buildLeaseExpiresAt: new Date(Date.now() + leaseMs), updatedAt: new Date(),
+        }).where(and(
+          eq(publications.ownerUserId, ownerUserId),
+          eq(publications.id, uuidSchema.parse(publicationId)),
+          eq(publications.status, "building"),
+          eq(publications.buildLeaseToken, uuidSchema.parse(leaseToken)),
+        )).returning();
+        return publication;
+      },
+
+      async markPublished(identity: VerifiedIdentityContext, publicationId: string, leaseToken: string, input: {
+        artifactSha256: string;
+        manifest: Record<string, unknown>;
+      }) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const sha = z.string().regex(/^[a-f0-9]{64}$/).parse(input.artifactSha256);
+        const parsedManifest = z.record(z.string().max(512), z.unknown()).parse(input.manifest);
+        const [publication] = await db.update(publications).set({
+          status: "published", artifactSha256: sha, manifest: parsedManifest,
+          buildLeaseToken: null, buildLeaseExpiresAt: null, updatedAt: new Date(),
+        }).where(and(
+          eq(publications.ownerUserId, ownerUserId),
+          eq(publications.id, uuidSchema.parse(publicationId)),
+          eq(publications.status, "building"),
+          eq(publications.buildLeaseToken, uuidSchema.parse(leaseToken)),
+        )).returning();
+        return publication;
+      },
+
+      async markBuildFailed(identity: VerifiedIdentityContext, publicationId: string, leaseToken: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const [publication] = await db.update(publications).set({
+          status: "failed", buildLeaseToken: null, buildLeaseExpiresAt: null, updatedAt: new Date(),
+        }).where(and(
+          eq(publications.ownerUserId, ownerUserId),
+          eq(publications.id, uuidSchema.parse(publicationId)),
+          eq(publications.status, "building"),
+          eq(publications.buildLeaseToken, uuidSchema.parse(leaseToken)),
+        )).returning();
+        return publication;
+      },
+
+      async getBySlug(slug: string) {
+        const parsedSlug = z.string().regex(/^[a-f0-9]{20}$/).parse(slug);
+        const [publication] = await db.select({
+          id: publications.id,
+          slug: publications.slug,
+          artifactKey: publications.artifactKey,
+          artifactSha256: publications.artifactSha256,
+          manifest: publications.manifest,
+          status: publications.status,
+        }).from(publications).where(and(
+          eq(publications.slug, parsedSlug), eq(publications.status, "published"),
+        )).limit(1);
+        return publication;
+      },
+
+      async getForCleanup(identity: VerifiedIdentityContext, publicationId: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const [publication] = await db.select().from(publications).where(and(
+          eq(publications.ownerUserId, ownerUserId), eq(publications.id, uuidSchema.parse(publicationId)),
+        )).limit(1);
+        if (!publication) throw new OwnedResourceNotFoundError();
+        return publication;
+      },
+
+      async listExpiredBuilds(cutoff: Date, limit = 50) {
+        return db.select({ publication: publications, userId: users.userId }).from(publications)
+          .innerJoin(users, eq(users.id, publications.ownerUserId)).where(and(
+          eq(publications.status, "building"),
+          or(isNull(publications.buildLeaseExpiresAt), lt(publications.buildLeaseExpiresAt, cutoff)),
+        )).orderBy(asc(publications.updatedAt)).limit(Math.max(1, Math.min(100, Math.trunc(limit))));
       },
 
       async list(
@@ -1443,11 +1629,20 @@ export function createRepositories(db: GameDatabase) {
             id: publications.id,
             projectId: publications.projectId,
             versionId: publications.versionId,
+              versionNumber: versions.versionNumber,
             slug: publications.slug,
             status: publications.status,
+            idempotencyKey: publications.idempotencyKey,
+            artifactSha256: publications.artifactSha256,
+            manifest: publications.manifest,
             createdAt: publications.createdAt,
           })
           .from(publications)
+            .innerJoin(versions, and(
+              eq(versions.ownerUserId, publications.ownerUserId),
+              eq(versions.projectId, publications.projectId),
+              eq(versions.id, publications.versionId),
+            ))
           .where(where)
           .orderBy(desc(publications.createdAt), desc(publications.id))
           .limit(limit + 1);
@@ -1461,7 +1656,7 @@ export function createRepositories(db: GameDatabase) {
         const ownerUserId = await resolveOwnerId(db, identity);
         return db.transaction(async (tx) => {
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [inserted] = await tx.insert(usageReservations).values({ ...parsed, ownerUserId })
@@ -1488,7 +1683,7 @@ export function createRepositories(db: GameDatabase) {
             .where(and(eq(usageReservations.ownerUserId, ownerUserId), eq(usageReservations.id, parsedReservationId))).limit(1);
           if (!candidate) throw new OwnedResourceNotFoundError();
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, candidate.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, candidate.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [reservation] = await tx.update(usageReservations).set({ status, updatedAt: new Date() }).where(and(
@@ -1509,7 +1704,7 @@ export function createRepositories(db: GameDatabase) {
             .limit(1);
           if (!reservation) throw new OwnedResourceNotFoundError();
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
-            eq(projects.ownerUserId, ownerUserId), eq(projects.id, reservation.projectId), isNull(projects.deletedAt),
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, reservation.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
           const [inserted] = await tx.insert(usageLedger)

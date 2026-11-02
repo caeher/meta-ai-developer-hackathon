@@ -113,6 +113,8 @@ services:
       PREVIEW_TOKEN_PUBLIC_KEYS: ${PREVIEW_TOKEN_PUBLIC_KEYS:-replace-with-json-public-keys}
       PREVIEW_TOKEN_TTL_SECONDS: ${PREVIEW_TOKEN_TTL_SECONDS:-60}
       PREVIEW_SESSION_TTL_SECONDS: ${PREVIEW_SESSION_TTL_SECONDS:-900}
+      PUBLISHING_ENABLED: ${PUBLISHING_ENABLED:-false}
+      PUBLISH_BASE_DOMAIN: ${PUBLISH_BASE_DOMAIN:-games.example.test}
       WORKER_INTERNAL_URL: ${WORKER_INTERNAL_URL:-http://worker:8082}
       WORKER_INTERNAL_TOKEN: ${WORKER_INTERNAL_TOKEN:-placeholder-generate-a-separate-random-token}
       NEXT_TELEMETRY_DISABLED: "1"
@@ -174,6 +176,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}
       REDIS_URL: redis://redis:6379
       RUNS_ENABLED: ${RUNS_ENABLED:-false}
+      PUBLISHING_ENABLED: ${PUBLISHING_ENABLED:-false}
       USER_MAX_CONCURRENT_JOBS: ${USER_MAX_CONCURRENT_JOBS:-1}
       PROJECT_MAX_RUN_STEPS: ${PROJECT_MAX_RUN_STEPS:-20}
       RUN_MAX_TOKENS: ${RUN_MAX_TOKENS:-16000}
@@ -182,14 +185,19 @@ services:
       S3_ENDPOINT: http://s3:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET_PRIVATE: ${S3_BUCKET_PRIVATE:-meta-game-private}
+      S3_BUCKET_PUBLIC: ${S3_BUCKET_PUBLIC:-meta-game-public}
       S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-meta_game_local}
       S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-local-only-s3-password-change-me-2026}
+      PUBLISH_S3_ACCESS_KEY_ID: ${PUBLISH_S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-meta_game_local}}
+      PUBLISH_S3_SECRET_ACCESS_KEY: ${PUBLISH_S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-local-only-s3-password-change-me-2026}}
       SNAPSHOT_MAX_FILES: ${SNAPSHOT_MAX_FILES:-512}
       SNAPSHOT_MAX_FILE_BYTES: ${SNAPSHOT_MAX_FILE_BYTES:-8388608}
       SNAPSHOT_MAX_TOTAL_BYTES: ${SNAPSHOT_MAX_TOTAL_BYTES:-20971520}
       SNAPSHOT_MAX_ARCHIVE_BYTES: ${SNAPSHOT_MAX_ARCHIVE_BYTES:-26214400}
       WORKER_INTERNAL_TOKEN: ${WORKER_INTERNAL_TOKEN:-placeholder-generate-a-separate-random-token}
       WORKER_INTERNAL_PORT: ${WORKER_INTERNAL_PORT:-8082}
+      PUBLISH_BASE_DOMAIN: ${PUBLISH_BASE_DOMAIN:-games.example.test}
+      SANDBOX_DRIVER: ${SANDBOX_DRIVER:-disabled}
       SANDBOX_CONTROLLER_URL: ${SANDBOX_CONTROLLER_URL:-https://sandbox-controller.example.internal:8443}
       SANDBOX_CONTROLLER_TOKEN: ${SANDBOX_CONTROLLER_TOKEN:-placeholder-generate-a-random-token}
     depends_on:
@@ -202,6 +210,36 @@ services:
     cap_drop:
       - ALL
     pids_limit: 128
+    networks:
+      - control
+
+  publishing-origin:
+    profiles: [publishing]
+    build:
+      context: ..
+      dockerfile: infra/publishing-origin.Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      PUBLISHING_ENABLED: ${PUBLISHING_ENABLED:-false}
+      PUBLISHING_ORIGIN_PORT: ${PUBLISHING_ORIGIN_PORT:-8083}
+      PUBLISH_BASE_DOMAIN: ${PUBLISH_BASE_DOMAIN:-games.example.test}
+      PUBLISH_READ_DATABASE_URL: ${PUBLISH_READ_DATABASE_URL:-postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}}
+      S3_ENDPOINT: http://s3:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET_PUBLIC: ${S3_BUCKET_PUBLIC:-meta-game-public}
+      PUBLISH_READ_ACCESS_KEY_ID: ${PUBLISH_READ_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-meta_game_local}}
+      PUBLISH_READ_SECRET_ACCESS_KEY: ${PUBLISH_READ_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-local-only-s3-password-change-me-2026}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      s3:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
     networks:
       - control
 

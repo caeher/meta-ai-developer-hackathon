@@ -97,6 +97,24 @@
 .quickOptionsGroups h3 { margin: 0; }
 .quickOptionsGrid { display: flex; flex-wrap: wrap; gap: 8px; }
 
+.publishDialog { max-height: min(86svh, 760px); overflow-y: auto; }
+.publishSection { display: grid; gap: 8px; margin-top: 18px; }
+.publishSection label { color: var(--app-text); font-size: 13px; }
+.publishSection p { margin: 0; line-height: 1.5; }
+.publishConsent { display: flex; align-items: flex-start; gap: 9px; margin-top: 16px; color: var(--app-text-muted); font-size: 12px; line-height: 1.5; }
+.publishConsent > button { flex: none; margin-top: 1px; }
+.publicationHistory { display: grid; gap: 10px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--app-border); }
+.publicationHistoryTitle { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.publicationHistoryTitle h3 { margin: 0; color: var(--app-text); font-size: 14px; }
+.publicationHistory > ul { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.publicationHistory > ul > li { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid var(--app-border); border-radius: 9px; background: var(--app-surface); }
+.publicationInfo { min-width: 0; display: grid; gap: 4px; }
+.publicationInfo > div { display: flex; align-items: center; gap: 8px; }
+.publicationInfo code { color: var(--app-cyan); font-size: 11px; }
+.publicationInfo a { width: fit-content; color: var(--app-blue); font-size: 12px; overflow-wrap: anywhere; }
+.publicationActions { display: flex; flex: none; align-items: center; gap: 6px; }
+.publicationStatus { color: var(--app-text-muted); font-size: 11px; }
+
 .previewPane { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 12px; }
 
 @media (max-width: 900px) {
@@ -115,6 +133,7 @@
   .breadcrumb { max-width: 70vw; font-size: 12px; }
   .projectActions { width: 100%; justify-content: flex-end; gap: 5px; }
   .projectActions > button { padding-inline: 8px; }
+  .publicationHistory > ul > li { align-items: flex-start; flex-direction: column; }
   .mobilePaneSwitch { display: flex; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--app-border); }
   .mobilePaneSwitch button { flex: 1; }
   .workspace { grid-template-columns: minmax(0, 1fr); }

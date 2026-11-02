@@ -4,11 +4,19 @@ import { identityFromAuthenticatedSession } from "@meta-game/db";
 import { z } from "zod";
 
 const restorePath = /^\/internal\/projects\/([0-9a-f-]{36})\/versions\/([0-9a-f-]{36})\/restore$/i;
+const publishPath = /^\/internal\/projects\/([0-9a-f-]{36})\/publications$/i;
+const revokePath = /^\/internal\/projects\/([0-9a-f-]{36})\/publications\/([0-9a-f-]{36})$/i;
 const restoreInput = z.object({ userId: z.string().trim().min(1).max(255) }).strict();
+const publishInput = restoreInput.extend({
+  versionId: z.string().uuid(),
+  idempotencyKey: z.string().trim().min(8).max(128),
+}).strict();
 
 export function createWorkerVersionServer(options: {
   token: string;
-  restore(identity: ReturnType<typeof identityFromAuthenticatedSession>, projectId: string, versionId: string): Promise<unknown>;
+  restore?(identity: ReturnType<typeof identityFromAuthenticatedSession>, projectId: string, versionId: string): Promise<unknown>;
+  publish?(identity: ReturnType<typeof identityFromAuthenticatedSession>, projectId: string, versionId: string, idempotencyKey: string): Promise<unknown>;
+  revoke?(identity: ReturnType<typeof identityFromAuthenticatedSession>, projectId: string, publicationId: string): Promise<unknown>;
 }): Server {
   if (Buffer.byteLength(options.token) < 32 || /placeholder|replace-me|change-me/i.test(options.token)) {
     throw new Error("WORKER_INTERNAL_TOKEN must be a generated secret");
@@ -26,25 +34,59 @@ async function handle(
   options: Parameters<typeof createWorkerVersionServer>[0],
 ) {
   securityHeaders(response);
-  if (request.method !== "POST" || !request.url) { send(response, 405, { error: "method_not_allowed" }); return; }
+  if (!request.url || !["POST", "DELETE"].includes(request.method ?? "")) { send(response, 405, { error: "method_not_allowed" }); return; }
   if (!validBearer(request.headers.authorization, options.token)) { send(response, 401, { error: "unauthorized" }); return; }
-  const match = restorePath.exec(new URL(request.url, "http://worker.internal").pathname);
-  if (!match) { send(response, 404, { error: "not_found" }); return; }
+  const pathname = new URL(request.url, "http://worker.internal").pathname;
+  const restore = request.method === "POST" ? restorePath.exec(pathname) : null;
+  const publish = request.method === "POST" ? publishPath.exec(pathname) : null;
+  const revoke = request.method === "DELETE" ? revokePath.exec(pathname) : null;
+  if (!restore && !publish && !revoke) { send(response, 404, { error: "not_found" }); return; }
   try {
-    const body = await readJson(request, 4_096);
-    const input = restoreInput.safeParse(body);
+    const body = request.method === "DELETE" ? await readJson(request, 4_096) : await readJson(request, 4_096);
+    const input = (publish ? publishInput : restoreInput).safeParse(body);
     if (!input.success) { send(response, 400, { error: "invalid_request" }); return; }
     const identity = identityFromAuthenticatedSession({ userId: input.data.userId });
-    const result = await options.restore(identity, match[1]!, match[2]!);
+    let result: unknown;
+    if (restore) {
+      if (!options.restore) { send(response, 503, { error: "restore_unavailable" }); return; }
+      result = await options.restore(identity, restore[1]!, restore[2]!);
+    } else if (publish) {
+      if (!options.publish || !publishInput.safeParse(body).success) { send(response, 503, { error: "publishing_unavailable" }); return; }
+      const publishBody = publishInput.parse(body);
+      result = await options.publish(identity, publish[1]!, publishBody.versionId, publishBody.idempotencyKey);
+    } else if (revoke) {
+      if (!options.revoke) { send(response, 503, { error: "publishing_unavailable" }); return; }
+      result = await options.revoke(identity, revoke[1]!, revoke[2]!);
+    }
     if (!result) { send(response, 404, { error: "not_found" }); return; }
-    send(response, 200, { restored: result });
+    if (restore) send(response, 200, { restored: result });
+    else if (publish) send(response, 202, { publication: publicPublication(result) });
+    else send(response, 200, { publication: publicPublication(result) });
   } catch (error) {
     if (error instanceof Error && error.name === "ProjectRunBusyError") {
       send(response, 409, { error: "project_busy" });
       return;
     }
-    send(response, 503, { error: "restore_failed" });
+    if (error instanceof Error && error.name === "IdempotencyConflictError") { send(response, 409, { error: "idempotency_conflict" }); return; }
+    send(response, 503, { error: restore ? "restore_failed" : "publishing_failed" });
   }
+}
+
+function publicPublication(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const publication = value as Record<string, unknown>;
+  return {
+    id: publication.id,
+    projectId: publication.projectId,
+    versionId: publication.versionId,
+    slug: publication.slug,
+    status: publication.status,
+    idempotencyKey: publication.idempotencyKey,
+    artifactSha256: publication.artifactSha256,
+    manifest: publication.manifest,
+    createdAt: publication.createdAt,
+    updatedAt: publication.updatedAt,
+  };
 }
 
 async function readJson(request: IncomingMessage, maxBytes: number): Promise<unknown> {

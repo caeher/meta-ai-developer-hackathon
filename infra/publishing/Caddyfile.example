@@ -1,0 +1,9 @@
+# Publicaciones salen por un registrable/origen separado de la app y la preview.
+# Provisiona DNS wildcard y TLS para *.games.example.test; no expongas el bucket S3.
+*.games.example.test {
+	tls /etc/caddy/certs/games-wildcard.crt /etc/caddy/certs/games-wildcard.key
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy publishing-origin:8083 {
+		header_up X-Forwarded-Proto https
+	}
+}

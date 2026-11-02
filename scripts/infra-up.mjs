@@ -8,12 +8,13 @@ import {
 import { spawnSync } from "node:child_process";
 
 function parseOptions(arguments_) {
-  const options = { web: false, worker: false, preview: false };
+  const options = { web: false, worker: false, preview: false, publishing: false };
 
   for (const argument of arguments_) {
     if (argument === "--web") options.web = true;
     else if (argument === "--worker") options.worker = true;
     else if (argument === "--preview") options.preview = true;
+    else if (argument === "--publishing") options.publishing = true;
     else throw new Error(`Opción desconocida para infra:up: ${argument}`);
   }
 
@@ -87,9 +88,14 @@ try {
     }
     ensureSandboxEgressNetwork();
   }
+  if (options.publishing) {
+    if (environment.PUBLISHING_ENABLED !== "true") throw new Error("Configura PUBLISHING_ENABLED=true antes de iniciar el origen público.");
+    if (environment.SANDBOX_DRIVER !== "rootless") throw new Error("Publicar requiere SANDBOX_DRIVER=rootless en el host Linux dedicado.");
+  }
   const profiles = [
-    ...(options.web ? ["--profile", "web"] : []),
-    ...(options.worker ? ["--profile", "worker"] : []),
+    ...(options.web || options.publishing ? ["--profile", "web"] : []),
+    ...(options.worker || options.publishing ? ["--profile", "worker"] : []),
+    ...(options.publishing ? ["--profile", "publishing"] : []),
     ...(options.preview ? ["--profile", "preview"] : []),
   ];
   runDocker(composeArguments([...profiles, "up", "--detach", "--wait"]));
@@ -97,6 +103,7 @@ try {
   console.log("Postgres, Redis y S3 local están disponibles; los buckets siguen siendo privados.");
   if (options.web) console.log("La aplicación web está disponible en http://localhost:3000.");
   if (options.worker) console.log("El worker está activo; los runs terminan con orchestrator_pending hasta integrar el orquestador.");
+  if (options.publishing) console.log("El worker y el origen de publicación están activos; configura DNS/TLS wildcard y un bucket privado de lectura para el origen.");
 } catch (error) {
   reportInfrastructureError(error);
 }

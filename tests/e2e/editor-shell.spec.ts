@@ -213,6 +213,26 @@ test.describe("editor de dos paneles", () => {
     expect(response.body).not.toContain("Moverse hasta la meta.");
   });
 
+  test("publica una build verificada, comparte solo el enlace y permite revocarla", async ({ page }) => {
+    await page.goto("/?publishing=1&versions=1");
+    const publish = page.getByRole("button", { name: "Publish" });
+    await expect(publish).toBeEnabled();
+    await publish.click();
+    await expect(page.getByRole("heading", { name: "Publicar una build estática" })).toBeVisible();
+    await expect(page.getByLabel(/Entiendo que el juego y sus recursos compilados/)).toBeVisible();
+    await page.getByLabel(/Entiendo que el juego y sus recursos compilados/).check();
+    await page.getByRole("button", { name: "Publicar v3" }).click();
+    await expect(page.getByRole("link", { name: "Abrir juego publicado" })).toHaveAttribute("href", "https://a1b2c3d4e5f607182930.games.example.test");
+    await expect(page.getByRole("button", { name: "Share" }).first()).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Share" }).last()).toBeEnabled();
+    await page.getByRole("button", { name: "Unpublish" }).click();
+    await expect(page.getByText("Revocada", { exact: true })).toBeVisible();
+    const publishDialog = page.getByRole("dialog");
+    await expect(publishDialog.getByRole("button", { name: "Share" })).toHaveCount(0);
+    await publishDialog.getByRole("button", { name: "Cerrar" }).click();
+    await expect(page.getByRole("button", { name: "Share" })).toBeDisabled();
+  });
+
   test("canjea una sesión y monta un iframe aislado con canvas, assets y HMR", async ({ page }) => {
     const fixture = await installPrivatePreviewFixture(page);
     await page.context().addCookies([{ name: "forja_session", value: "app-secret-cookie", url: "http://127.0.0.1:4173" }]);

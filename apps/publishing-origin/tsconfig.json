@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "noEmit": true, "outDir": "../../dist/apps/publishing-origin" },
+  "include": ["src/**/*.ts"]
+}

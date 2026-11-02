@@ -7,6 +7,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/worker/package.json apps/worker/package.json
 COPY apps/sandbox-controller/package.json apps/sandbox-controller/package.json
 COPY apps/preview-gateway/package.json apps/preview-gateway/package.json
+COPY apps/publishing-origin/package.json apps/publishing-origin/package.json
 COPY packages/config/package.json packages/config/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json

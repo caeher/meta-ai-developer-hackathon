@@ -1,8 +1,8 @@
 # Forja — plataforma de juegos 2D
 
-Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, autenticación propia, persistencia Drizzle y storage privado S3. El editor conecta el chat con runs y transmite progreso durable por SSE. La ejecución y la preview siguen apagadas por defecto hasta configurar Meta, dominio/TLS y un host Linux dedicado; la generación jugable completa y la publicación siguen pendientes.
+Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, autenticación propia, persistencia Drizzle y storage privado S3. El editor conecta el chat con runs y transmite progreso durable por SSE. Runs, preview y publicación siguen apagados por defecto hasta configurar los proveedores, DNS/TLS y un host Linux dedicado. El flujo de publicación de builds estáticas verificadas está implementado, pendiente de validación operativa externa.
 
-Los proyectos privados abren un editor de dos paneles en `/projects/[projectId]`: chat persistido, consentimiento de Meta Contributor y opciones rápidas a la izquierda; iframe privado con navegación a la derecha cuando el gateway está habilitado. Enviar un mensaje lo guarda y encola un run cuando `RUNS_ENABLED=true`. Publish/Share siguen deshabilitados.
+Los proyectos privados abren un editor de dos paneles en `/projects/[projectId]`: chat persistido, consentimiento de Meta Contributor y opciones rápidas a la izquierda; iframe privado con navegación a la derecha cuando el gateway está habilitado. Enviar un mensaje lo guarda y encola un run cuando `RUNS_ENABLED=true`. Publish/Share aparecen cuando `PUBLISHING_ENABLED=true` y solo sirven builds estáticas verificadas desde un origen de juego separado. Consulta [docs/publications.md](docs/publications.md).
 
 ## Requisitos
 
@@ -67,6 +67,7 @@ npm run infra:config
 npm run infra:up
 npm run infra:up -- --web
 npm run infra:up -- --worker
+npm run infra:up -- --publishing
 npm run infra:down
 npm run db:migrate
 npm run db:seed
@@ -77,6 +78,8 @@ npm run typecheck
 npm test
 npm run build
 npm run build:worker
+npm run build:publishing-origin
+npm run dev:publishing-origin
 npm run build:controller
 npm run sandbox:host-check
 npm run start

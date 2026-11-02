@@ -209,6 +209,44 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
       versionId: readyVersion.id,
     });
     expect(publication.status).toBe("building");
+    const idempotencyKey = `publication-idempotency-${suffix}`;
+    const concurrentPublications = await Promise.all([
+      repositories.publications.create(identityA, {
+        projectId: projectA.id, versionId: readyVersion.id, idempotencyKey,
+      }),
+      repositories.publications.create(identityA, {
+        projectId: projectA.id, versionId: readyVersion.id, idempotencyKey,
+      }),
+    ]);
+    expect(concurrentPublications[0]?.id).toBe(concurrentPublications[1]?.id);
+    const otherVersion = await repositories.versions.create(identityA, {
+      projectId: projectA.id, sha256: "b".repeat(64), sizeBytes: 512,
+    });
+    const readyOtherVersion = await repositories.versions.setStatus(identityA, otherVersion.id, "ready");
+    await expect(repositories.publications.create(identityA, {
+      projectId: projectA.id, versionId: readyOtherVersion.id, idempotencyKey,
+    })).rejects.toBeInstanceOf(IdempotencyConflictError);
+    const queuedPublication = await repositories.publications.create(identityA, {
+      projectId: projectA.id, versionId: readyVersion.id, idempotencyKey: `publication-next-${suffix}`,
+    });
+    const firstClaim = await repositories.publications.claimBuild(identityA, concurrentPublications[0]!.id);
+    expect(firstClaim).toBeDefined();
+    if (!firstClaim?.buildLeaseToken) throw new Error("publication build lease fixture missing");
+    await expect(repositories.publications.claimBuild(identityA, queuedPublication.id)).resolves.toBeUndefined();
+    await repositories.publications.markBuildFailed(identityA, firstClaim.id, firstClaim.buildLeaseToken);
+    const retryClaim = await repositories.publications.claimBuild(identityA, firstClaim.id);
+    expect(retryClaim?.slug).not.toBe(firstClaim.slug);
+    const buildWorkspace = await repositories.projects.createBuildWorkspace(identityA);
+    expect(await repositories.projects.get(identityA, buildWorkspace.id)).toBeUndefined();
+    expect((await repositories.projects.list(identityA, { limit: 100 })).items.map(({ id }) => id)).not.toContain(buildWorkspace.id);
+    const buildSandbox = await createOrGetProjectSandbox(database.db, buildWorkspace.id);
+    await updateProjectSandbox(database.db, buildSandbox, {
+      status: "ready", runtimeId: "publication-build-fixture", leaseExpiresAt: new Date(0),
+    });
+    const futureCutoff = new Date(Date.now() + 1_000);
+    await expect(repositories.projects.reapBuildWorkspaces(futureCutoff)).resolves.toEqual({ deleted: 0 });
+    await updateProjectSandbox(database.db, buildSandbox, { status: "stopped", runtimeId: null, leaseExpiresAt: null });
+    await expect(repositories.projects.reapBuildWorkspaces(futureCutoff)).resolves.toEqual({ deleted: 1 });
     await expect(
       repositories.publications.create(identityB, { projectId: projectA.id, versionId: version.id }),
     ).rejects.toThrow("Recurso no encontrado");

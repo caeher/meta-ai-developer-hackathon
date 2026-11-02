@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { Badge, Button, Checkbox, Dialog, Heading, Tabs, Text, TextField } from "@radix-ui/themes";
 import type { EditorProgress, EditorRunStatus, EditorStepStatus } from "@meta-game/contracts";
@@ -9,6 +9,7 @@ import { TextArea } from "../ui/text-area";
 import { appendPromptText, MAX_PROMPT_LENGTH } from "./prompt";
 import { PreviewFrame } from "./preview-frame";
 import type { PreviewVersion } from "./preview-toolbar";
+import { PublishDialog, type EditorPublication } from "./publish-dialog";
 import styles from "./EditorShell.module.css";
 
 export interface PersistedMessage {
@@ -109,7 +110,19 @@ async function responseError(response: Response): Promise<string> {
   if (payload.error === "authentication_not_configured") return "La autenticación no está configurada.";
   if (payload.error === "idempotency_conflict") return "La solicitud ya se usó con otro contenido.";
   if (payload.error === "origin_not_allowed") return "No se pudo verificar el origen de la solicitud.";
+  if (payload.error === "publishing_unavailable") return "Las publicaciones están deshabilitadas hasta configurar el origen y el sandbox rootless.";
   return "No se pudo completar la solicitud. Puedes volver a intentarlo.";
+}
+
+function isEditorPublication(value: unknown): value is EditorPublication {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<EditorPublication>;
+  return typeof candidate.id === "string" && typeof candidate.versionId === "string" &&
+    Number.isSafeInteger(candidate.versionNumber) &&
+    (candidate.status === "pending" || candidate.status === "ready" || candidate.status === "failed" || candidate.status === "revoked") &&
+    (candidate.idempotencyKey === null || typeof candidate.idempotencyKey === "string") &&
+    (candidate.artifactSha256 === null || typeof candidate.artifactSha256 === "string") &&
+    (candidate.url === null || typeof candidate.url === "string") && typeof candidate.createdAt === "string";
 }
 
 function ProgressView({ view, progress }: { view: "plan" | "steps" | "files" | "verification"; progress?: EditorProgress }) {
@@ -154,6 +167,7 @@ export function EditorShell({
   progress,
   previewBaseDomain,
   versions = [],
+  publishingEnabled = false,
 }: {
   projectId: string;
   projectName: string;
@@ -162,6 +176,7 @@ export function EditorShell({
   progress?: EditorProgress;
   previewBaseDomain?: string;
   versions?: readonly PreviewVersion[];
+  publishingEnabled?: boolean;
 }) {
   const runEvents = useRunEvents(projectId);
   const [projectName, setProjectName] = useState(initialProjectName);
@@ -177,10 +192,49 @@ export function EditorShell({
   const [nameDraft, setNameDraft] = useState(initialProjectName);
   const [renaming, setRenaming] = useState(false);
   const [contributorConsent, setContributorConsent] = useState(false);
+  const [publications, setPublications] = useState<EditorPublication[]>([]);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [publishVersionId, setPublishVersionId] = useState(versions.find((version) => version.status === "ready")?.id ?? "");
+  const [publishConfirmed, setPublishConfirmed] = useState(false);
+  const [publicationBusy, setPublicationBusy] = useState(false);
+  const [publicationNotice, setPublicationNotice] = useState("");
+  const pendingPublishRequest = useRef<{ versionId: string; key: string } | null>(null);
+  const recoveredPublications = useRef(new Set<string>());
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
   const pendingRunRestored = useRef(false);
   const displayProgress = runEvents.progress ?? progress;
   const pendingRunStorageKey = `meta-game:pending-run:${projectId}`;
+
+  const refreshPublications = useCallback(async () => {
+    const response = await fetch(`/api/projects/${projectId}/publications`, { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json() as { items?: unknown };
+    if (!Array.isArray(payload.items)) return;
+    setPublications(payload.items.filter(isEditorPublication));
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!publishingEnabled) return;
+    void refreshPublications();
+  }, [publishingEnabled, refreshPublications]);
+
+  useEffect(() => {
+    if (!publishingEnabled || !publications.some((publication) => publication.status === "pending")) return;
+    const interval = window.setInterval(() => { void refreshPublications(); }, 2_000);
+    return () => window.clearInterval(interval);
+  }, [publishingEnabled, publications, refreshPublications]);
+
+  useEffect(() => {
+    if (!publishingEnabled) return;
+    for (const publication of publications) {
+      if (publication.status !== "pending" || !publication.idempotencyKey || recoveredPublications.current.has(publication.id)) continue;
+      recoveredPublications.current.add(publication.id);
+      void fetch(`/api/projects/${projectId}/publications`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ versionId: publication.versionId, idempotencyKey: publication.idempotencyKey }),
+      }).then(() => refreshPublications()).catch(() => undefined);
+    }
+  }, [publishingEnabled, publications, projectId, refreshPublications]);
 
   useEffect(() => {
     if (runEvents.hydrating || pendingRunRestored.current) return;
@@ -352,6 +406,63 @@ export function EditorShell({
     }
   }
 
+  async function publishVersion(versionId: string, idempotencyKey?: string) {
+    if (!publishingEnabled || publicationBusy || !versionId) return;
+    setPublicationBusy(true);
+    setPublicationNotice("");
+    const pending = pendingPublishRequest.current;
+    const key = idempotencyKey ?? (pending?.versionId === versionId ? pending.key : globalThis.crypto.randomUUID());
+    if (!idempotencyKey) pendingPublishRequest.current = { versionId, key };
+    try {
+      const response = await fetch(`/api/projects/${projectId}/publications`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ versionId, idempotencyKey: key }),
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      pendingPublishRequest.current = null;
+      setPublishConfirmed(false);
+      setPublishDialogOpen(true);
+      setPublicationNotice("Build estática en cola. El historial se actualizará al terminar.");
+      await refreshPublications();
+    } catch (error) {
+      setPublicationNotice(error instanceof Error ? error.message : "No se pudo iniciar la publicación.");
+    } finally { setPublicationBusy(false); }
+  }
+
+  async function revokePublication(publication: EditorPublication) {
+    if (publicationBusy) return;
+    setPublicationBusy(true);
+    setPublicationNotice("");
+    try {
+      const response = await fetch(`/api/projects/${projectId}/publications/${publication.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(await responseError(response));
+      setPublicationNotice("Publicación revocada. El origen dejará de servirla; las cachés expiran en 60 segundos.");
+      await refreshPublications();
+    } catch (error) {
+      setPublicationNotice(error instanceof Error ? error.message : "No se pudo revocar la publicación.");
+    } finally { setPublicationBusy(false); }
+  }
+
+  async function sharePublication(publication: EditorPublication) {
+    if (publication.status !== "ready" || !publication.url) return;
+    try {
+      await navigator.clipboard.writeText(publication.url);
+      setPublicationNotice("URL pública copiada.");
+    } catch {
+      setPublicationNotice("No se pudo copiar la URL. Ábrela desde el historial de publicaciones.");
+    }
+  }
+
+  function retryPublication(publication: EditorPublication) {
+    if (!publication.idempotencyKey) return;
+    void publishVersion(publication.versionId, publication.idempotencyKey);
+  }
+
+  function shareLatestPublication() {
+    const latest = publications.find((publication) => publication.status === "ready" && publication.url);
+    if (latest) void sharePublication(latest);
+  }
+
   function insertQuickOption(value: string) {
     const next = appendPromptText(content, value);
     setContent(next);
@@ -397,8 +508,23 @@ export function EditorShell({
           </Dialog.Root>
         </div>
         <div className={styles.projectActions}>
-          <Button variant="soft" disabled title="Publicar estará disponible cuando exista una build verificada." aria-describedby="editor-pending-note">Publish</Button>
-          <Button variant="soft" disabled title="Compartir estará disponible cuando exista una publicación." aria-describedby="editor-pending-note">Share</Button>
+          <PublishDialog
+            enabled={publishingEnabled}
+            open={publishDialogOpen}
+            onOpenChange={(open) => { setPublishDialogOpen(open); if (!open) setPublishConfirmed(false); }}
+            versions={versions}
+            selectedVersionId={publishVersionId}
+            onVersionChange={setPublishVersionId}
+            confirmed={publishConfirmed}
+            onConfirmedChange={setPublishConfirmed}
+            publishing={publicationBusy}
+            onPublish={() => void publishVersion(publishVersionId)}
+            publications={publications}
+            onShare={(publication) => void sharePublication(publication)}
+            onRevoke={(publication) => void revokePublication(publication)}
+            onRetry={retryPublication}
+          />
+          <Button variant="soft" disabled={!publishingEnabled || !publications.some((publication) => publication.status === "ready" && publication.url)} onClick={shareLatestPublication} title="Copia la URL de la publicación lista más reciente">Share</Button>
         </div>
         <span id="editor-pending-note" className={styles.srOnly}>Publish y Share estarán disponibles cuando exista una build publicada. Guardar un mensaje no inicia una ejecución.</span>
       </header>
@@ -537,7 +663,7 @@ export function EditorShell({
                   <span>Confirmo que tengo 18 años o más y acepto los términos de Meta Contributor: el proveedor puede usar las entradas para entrenamiento. No incluir datos personales, secretos ni información confidencial.</span>
                 </label>
               </form>
-              <p className={styles.chatStatus} role="status" aria-live="polite">{status || runEvents.error}</p>
+              <p className={styles.chatStatus} role="status" aria-live="polite">{status || runEvents.error || publicationNotice}</p>
             </Tabs.Content>
             <Tabs.Content value="plan" className={styles.progressContent}>
               <ProgressView view="plan" progress={displayProgress} />

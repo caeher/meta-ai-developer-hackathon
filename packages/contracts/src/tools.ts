@@ -16,8 +16,9 @@ const workspacePath = z.string().min(1).max(512).refine((value) => {
 
 export const SandboxReadFileInputSchema = z.object({ path: workspacePath }).strict();
 export const SandboxReadBinaryFileInputSchema = z.object({ path: workspacePath.refine((path) =>
-  /^public\/assets\/.+\.(?:png|jpe?g|webp|gif|ico|mp3|ogg|wav|mp4|webm|wasm|woff2?|ttf|otf)$/i.test(path),
-  "Binary reads are restricted to known public asset paths",
+  /^public\/assets\/.+\.(?:png|jpe?g|webp|gif|svg|ico|mp3|ogg|wav|mp4|webm|wasm|woff2?|ttf|otf)$/i.test(path) ||
+  /^dist\/.+\.(?:png|jpe?g|webp|gif|svg|ico|mp3|ogg|wav|mp4|webm|wasm|woff2?|ttf|otf)$/i.test(path),
+  "Binary reads are restricted to known public asset and verified build paths",
 ) }).strict();
 export const SandboxDeleteFileInputSchema = z.object({ path: workspacePath }).strict();
 export const SandboxListFilesInputSchema = z.object({
@@ -74,6 +75,8 @@ export function validateSandboxNpmArgs(args: readonly string[]): string[] {
   const [subcommand, script, ...rest] = args;
   if (subcommand === "--version" && args.length === 1) return ["--version"];
   if (subcommand === "test" && args.length === 1) return ["test"];
+  if (args.length === 5 && args[0] === "ci" && args[1] === "--ignore-scripts" && args[2] === "--no-audit" &&
+    args[3] === "--no-fund" && args[4] === "--registry=http://npm-proxy:8080/registry/registry.npmjs.org/") return [...args];
   if (subcommand !== "run" || !script || !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$/.test(script)) {
     throw new Error("sandbox_command_not_allowed");
   }

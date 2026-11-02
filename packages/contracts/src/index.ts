@@ -15,3 +15,4 @@ export * from "./tools";
 export * from "./assets";
 export * from "./game-spec";
 export * from "./preview";
+export * from "./publications";
