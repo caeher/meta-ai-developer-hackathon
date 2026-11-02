@@ -39,6 +39,10 @@ Postgres, Redis y S3 quedan ligados solo a loopback. `infra:up` prepara buckets 
 
 El endpoint `GET /api/health` solo comprueba que la app web responde. Devuelve `{"status":"ok","service":"web"}` sin consultar servicios externos ni serializar el entorno. No representa readiness de base de datos, cola, Meta o sandbox.
 
+## Capturas del tema Tokyo Night
+
+Para repetir la revisión visual a 390 y 1440 px, inicia `npm run dev` y en otra terminal ejecuta `npx playwright install chromium` (solo la primera vez) y `npm run screenshots:theme`. El script verifica contraste, desbordamiento, foco por teclado, diálogo e hidratación del navegador y guarda las capturas en `docs/screenshots/`. Puedes indicar otra URL local con `THEME_SCREENSHOT_BASE_URL`.
+
 ## Comandos disponibles
 
 ```sh
@@ -56,6 +60,7 @@ npm test
 npm run build
 npm run start
 npm run check:node
+npm run screenshots:theme
 ```
 
 `npm ci` aplica `engine-strict`; también hay una comprobación explícita de Node 24 en la instalación y en los comandos de raíz. CI usa Node 24 y ejecuta instalación, lint, typecheck, tests y build sin claves.

@@ -6,7 +6,7 @@ Plan creado a partir de [PROJECT_BRIEF.md](PROJECT_BRIEF.md). Leer [AGENTS.md](.
 
 Estado de issue #4 actualizado el 2 de noviembre de 2026: la integración de Clerk, las rutas privadas, el contexto de owner y los fixtures de autorización ya están implementados. La issue sigue abierta hasta verificar sign-in, expiración y acceso cruzado con una instancia y dos usuarios Clerk de prueba; no hay credenciales de esa instancia configuradas en este entorno.
 
-Estado de issue #5 actualizado el 2 de noviembre de 2026: tokens Tokyo Night, overrides de Radix, variables de Clerk, wrappers accesibles y galería local ya están implementados. La inspección visual y las capturas a 390 y 1440 px quedan pendientes porque BrowserOS no está conectado en este entorno; la issue permanece abierta hasta esa revisión.
+Estado de issue #5 actualizado el 2 de noviembre de 2026: tokens Tokyo Night, overrides de Radix, variables de Clerk, wrappers accesibles y galería local están implementados. La galería se revisó con Playwright Chromium en 390 y 1440 px; se guardaron capturas de la página y del diálogo en `docs/screenshots/`. El script `npm run screenshots:theme` comprueba contraste AA de tokens de texto, desbordamiento, foco de teclado, diálogo e hidratación. La validación real de Clerk sigue pendiente en #4 y no bloquea este alcance visual; #5 permanece abierta.
 
 | Orden | Issue | Fase | Dependencia |
 | --- | --- | --- | --- |
