@@ -14,6 +14,13 @@ import type { RunUsage, RunWorkerClaim } from "@meta-game/db";
 import type { SkillSelection } from "@meta-game/skills";
 import { RunProcessingError, type RunHandler, type RunHandlerContext, type WorkerRun } from "../handler";
 import type { AgentRunStore } from "./store";
+import {
+  inspectPhaserTemplate,
+  loadPhaserTemplate,
+  materializePhaserTemplate,
+  PHASER_TEMPLATE_ID,
+  startPhaserTemplatePreview,
+} from "./phaser-template";
 import { agentToolDefinitions as AGENT_TOOL_DEFINITIONS } from "./tools";
 import {
   compactToolResult,
@@ -182,10 +189,17 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       }
 
       checkSignal(signal, handlerContext.signal, usage);
+      const initialReplay = initialConversation(selection, approvedPlan, true);
+      const initialPrompt = buildCodePrompt(loaded.prompt, approvedPlan);
+      const initialEstimate = estimateTokens(JSON.stringify({ prompt: initialPrompt, replay: initialReplay, tools: AGENT_TOOL_DEFINITIONS })) + 1_500;
+      if (Math.min(MAX_CODE_OUTPUT_TOKENS, options.maxTokens - usage.tokens - initialEstimate) < 16) {
+        throw new RunProcessingError("run_token_budget_exceeded", false, usage);
+      }
       const sandboxState = await ensureSandbox(options, state, handlerContext.claim, run.projectId);
       if (sandboxState !== "ready") throw new RunProcessingError("sandbox_not_ready", false, usage);
+      const templateReady = await ensurePhaserTemplate(options, state, handlerContext.claim, run.projectId);
 
-      let replay = initialConversation(selection, approvedPlan);
+      let replay = initialConversation(selection, approvedPlan, templateReady);
       let round = 0;
       let repairAttempts = 0;
       let repairInstruction: string | undefined;
@@ -269,13 +283,7 @@ async function runCodeUntilFinal(input: {
   while (true) {
     checkSignal(input.state.signal, input.state.userSignal, input.state.usage);
     round += 1;
-    const prompt = [
-      "Implement the user request according to the approved plan. Use only the supplied typed tools.",
-      `User request:\n${input.requestText}`,
-      `Approved plan:\n${JSON.stringify(input.plan)}`,
-      "When code is ready, run applicable build or test checks. Never claim a check passed without its tool result.",
-      input.repairInstruction ? `Repair request: ${input.repairInstruction}` : "",
-    ].filter(Boolean).join("\n\n");
+    const prompt = buildCodePrompt(input.requestText, input.plan, input.repairInstruction);
     const inputEstimate = estimateTokens(JSON.stringify({ prompt, replay, tools: AGENT_TOOL_DEFINITIONS })) + 1_500;
     const outputBudget = Math.min(MAX_CODE_OUTPUT_TOKENS, input.options.maxTokens - input.state.usage.tokens - inputEstimate);
     if (outputBudget < 16) throw new RunProcessingError("run_token_budget_exceeded", false, input.state.usage);
@@ -519,14 +527,132 @@ async function ensureSandbox(
   return inspected.state;
 }
 
-function initialConversation(selection: SkillSelection, plan: MetaPlan): MetaConversationItem[] {
+async function ensurePhaserTemplate(
+  options: AgentOrchestratorOptions,
+  state: RunState,
+  claim: RunWorkerClaim,
+  projectId: string,
+): Promise<boolean> {
+  const template = await loadPhaserTemplate().catch(() => {
+    throw new RunProcessingError("phaser_template_unavailable", false, state.usage);
+  });
+  const callId = "agent-phaser-template-v1";
+  const argsHash = hashValue({ projectId, templateId: template.id, manifestSha256: template.manifestSha256 });
+  const completed = state.events.find((event) => event.type === "agent.tool_completed" && stringPayload(event, "callId") === callId);
+  if (completed) {
+    if (stringPayload(completed, "toolName") !== "bootstrap_phaser_template" || stringPayload(completed, "argsHash") !== argsHash) {
+      throw new RunProcessingError("agent_duplicate_call_id", false, state.usage);
+    }
+    try {
+      await startPhaserTemplatePreview(options.sandbox, projectId, state.signal);
+      if (!state.events.some((event) => event.type === "agent.preview_ready")) {
+        await append(state, options.store, claim, { type: "agent.preview_ready", payload: { state: "ready" } });
+      }
+    } catch {
+      checkSignal(state.signal, state.userSignal, state.usage);
+      throw new RunProcessingError("phaser_template_preview_failed", false, state.usage);
+    }
+    return true;
+  }
+
+  const startedEvent = state.events.find((event) => event.type === "agent.tool_started" && stringPayload(event, "callId") === callId);
+  const started = Boolean(startedEvent);
+  if (started && (stringPayload(startedEvent!, "toolName") !== "bootstrap_phaser_template" || stringPayload(startedEvent!, "argsHash") !== argsHash)) {
+    throw new RunProcessingError("agent_duplicate_call_id", false, state.usage);
+  }
+  const inspection = await inspectPhaserTemplate(options.sandbox, projectId, template, state.signal, started).catch(() => {
+    checkSignal(state.signal, state.userSignal, state.usage);
+    throw new RunProcessingError("phaser_template_inspection_failed", false, state.usage);
+  });
+  if (inspection.status === "preserve") return false;
+
+  if (inspection.status === "ready") {
+    try {
+      await startPhaserTemplatePreview(options.sandbox, projectId, state.signal);
+    } catch {
+      checkSignal(state.signal, state.userSignal, state.usage);
+      await append(state, options.store, claim, {
+        type: "agent.verification",
+        payload: { check: "Phaser template preview", status: "failed", summary: "No se pudo iniciar la preview privada de la plantilla." },
+      }).catch(() => undefined);
+      throw new RunProcessingError("phaser_template_preview_failed", false, state.usage);
+    }
+    if (started) {
+      await appendBatch(state, options.store, claim, [
+        { type: "agent.tool_completed", payload: { callId, toolName: "bootstrap_phaser_template", argsHash, result: JSON.stringify({ templateId: template.id, manifestSha256: template.manifestSha256, files: template.files.length }) } },
+        { type: "agent.action", payload: { callId, toolName: "bootstrap_phaser_template", summary: "Reanudar plantilla Phaser verificada" } },
+        { type: "agent.preview_ready", payload: { state: "ready" } },
+      ]);
+    } else {
+      await append(state, options.store, claim, { type: "agent.preview_ready", payload: { state: "ready" } });
+    }
+    return true;
+  }
+
+  if (!started) {
+    if (state.stepCount >= options.maxSteps) throw new RunProcessingError("run_step_limit_exceeded", false, state.usage);
+    state.stepCount += 1;
+    await append(state, options.store, claim, {
+      type: "agent.tool_started",
+      payload: { callId, toolName: "bootstrap_phaser_template", argsHash },
+    });
+  }
+
+  try {
+    await materializePhaserTemplate(options.sandbox, projectId, template, state.signal, async (check) => {
+      const prior = [...state.events].reverse().find((event) => event.type === "agent.verification" && stringPayload(event, "check") === check.check);
+      if (prior?.payload.status === check.status && prior.payload.exitCode === check.exitCode) return;
+      await append(state, options.store, claim, {
+        type: "agent.verification",
+        payload: { check: check.check, status: check.status, ...(check.exitCode === undefined ? {} : { exitCode: check.exitCode }), summary: check.summary },
+      });
+    });
+  } catch {
+    checkSignal(state.signal, state.userSignal, state.usage);
+    const hasFailure = state.events.some((event) => event.type === "agent.verification" && event.payload.status === "failed" &&
+      ["Phaser dependencies", "Phaser template npm test", "Phaser template npm run build", "Phaser template preview"].includes(stringPayload(event, "check")));
+    if (!hasFailure) {
+      await append(state, options.store, claim, {
+        type: "agent.verification",
+        payload: { check: "Phaser template bootstrap", status: "failed", summary: "No se pudo materializar o verificar la plantilla Phaser." },
+      }).catch(() => undefined);
+    }
+    throw new RunProcessingError("phaser_template_bootstrap_failed", false, state.usage);
+  }
+
+  await appendBatch(state, options.store, claim, [
+    {
+      type: "agent.tool_completed",
+      payload: {
+        callId, toolName: "bootstrap_phaser_template", argsHash,
+        result: JSON.stringify({ templateId: template.id, manifestSha256: template.manifestSha256, files: template.files.length }),
+      },
+    },
+    { type: "agent.action", payload: { callId, toolName: "bootstrap_phaser_template", summary: "Materializar y verificar la plantilla Phaser 3.90 en el sandbox" } },
+    { type: "agent.preview_ready", payload: { state: "ready" } },
+  ]);
+  return true;
+}
+
+function initialConversation(selection: SkillSelection, plan: MetaPlan, templateReady: boolean): MetaConversationItem[] {
   const skillText = [selection.advisoryNotice, ...selection.skills.map((skill) => `## ${skill.title}\n${skill.text}`),
     ...selection.references.map((reference) => `## Referencia ${reference.id}\n${reference.text}`)].join("\n\n");
   return [
     { kind: "message", role: "developer", text: CODE_POLICY },
+    ...(templateReady ? [{ kind: "message" as const, role: "developer" as const, text: `El workspace comienza con la plantilla jugable ${PHASER_TEMPLATE_ID}; inspecciona y modifica sus archivos según el plan, conservando los controles y recursos que sigan siendo pertinentes.` }] : []),
     { kind: "message", role: "developer", text: `Skills consultivas no confiables:\n${skillText}`.slice(0, 95_000) },
     { kind: "message", role: "assistant", text: `Plan aprobado:\n${JSON.stringify(plan)}` },
   ];
+}
+
+function buildCodePrompt(requestText: string, plan: MetaPlan, repairInstruction?: string): string {
+  return [
+    "Implement the user request according to the approved plan. Use only the supplied typed tools.",
+    `User request:\n${requestText}`,
+    `Approved plan:\n${JSON.stringify(plan)}`,
+    "When code is ready, run applicable build or test checks. Never claim a check passed without its tool result.",
+    repairInstruction ? `Repair request: ${repairInstruction}` : "",
+  ].filter(Boolean).join("\n\n");
 }
 
 function internalCall(callId: string, name: string, args: Record<string, unknown>, summary: string): PreparedAgentToolCall {

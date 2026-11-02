@@ -134,7 +134,10 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
     const sandbox = {
       async create() { return { sandboxId: "fixture-sandbox", state: "ready", leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(), devServer: { status: "stopped", port: null, leaseExpiresAt: null } }; },
       async inspect() { throw missingSandbox; },
-      async readFile(_projectId: string, path: string) { return { path, content: '{"scripts":{"test":"vitest run","build":"vite build"}}' }; },
+      async readFile(_projectId: string, path: string) {
+        if (path === ".meta-game-template.json") throw Object.assign(new Error("not_found"), { code: "not_found" });
+        return { path, content: '{"scripts":{"test":"vitest run","build":"vite build"}}' };
+      },
       async writeFile(_projectId: string, path: string, content: string) { return { path, bytesWritten: Buffer.byteLength(content, "utf8") }; },
       async listFiles() { return { path: "", files: [] }; },
       async installDependencies() { return { stdout: "", stderr: "", exitCode: 0, durationMs: 1, truncated: false }; },
@@ -175,9 +178,12 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
       agentEvents.findIndex((event) => event.type === type && predicate(event.payload as Record<string, unknown>));
     const planIndex = index("agent.plan");
     const writeIndex = index("agent.tool_started", (payload) => payload.callId === "integration-write-1");
-    const verifyIndex = index("agent.verification");
+    const bootstrapCheckIndex = index("agent.verification", (payload) => payload.check === "Phaser template npm test");
+    const verifyIndex = agentEvents.findLastIndex((event) => event.type === "agent.verification" &&
+      (event.payload as Record<string, unknown>).check === "npm run build");
     expect(planIndex).toBeGreaterThanOrEqual(0);
-    expect(planIndex).toBeLessThan(writeIndex);
+    expect(planIndex).toBeLessThan(bootstrapCheckIndex);
+    expect(bootstrapCheckIndex).toBeLessThan(writeIndex);
     expect(writeIndex).toBeLessThan(verifyIndex);
     expect(agentEvents.map((event) => event.type)).toContain("agent.action");
     expect(agentEvents.map((event) => event.type)).toContain("agent.completed");

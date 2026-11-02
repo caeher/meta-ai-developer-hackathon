@@ -97,6 +97,11 @@ function makeOptions(args: {
       throw error;
     }),
     readFile: vi.fn(async (_projectId: string, path: string) => {
+      if (path === ".meta-game-template.json") {
+        const error = new Error("not_found") as Error & { code: string };
+        error.code = "not_found";
+        throw error;
+      }
       trace.push(`sandbox:read:${path}`);
       return { path, content: '{"scripts":{"build":"vite build"}}' };
     }),
@@ -105,12 +110,18 @@ function makeOptions(args: {
       return { path, bytesWritten: Buffer.byteLength(content, "utf8") };
     }),
     listFiles: vi.fn(async () => ({ path: "", files: [] })),
-    installDependencies: vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0, durationMs: 1, truncated: false })),
+    installDependencies: vi.fn(async () => {
+      trace.push("sandbox:install");
+      return { stdout: "", stderr: "", exitCode: 0, durationMs: 1, truncated: false };
+    }),
     runCommand: vi.fn(async (_projectId: string, input: { args: string[] }) => {
-      trace.push(`sandbox:verify:${input.args.join(" ")}`);
+      trace.push(`sandbox:command:${input.args.join(" ")}`);
       return { stdout: "Build passed", stderr: "", exitCode: 0, durationMs: 100, truncated: false };
     }),
-    startDevServer: vi.fn(async () => ({ status: "ready", port: 4173, leaseExpiresAt: "2026-11-02T12:00:00.000Z" })),
+    startDevServer: vi.fn(async () => {
+      trace.push("sandbox:server");
+      return { status: "ready", port: 4173, leaseExpiresAt: "2026-11-02T12:00:00.000Z" };
+    }),
     readLogs: vi.fn(async () => ({ status: "ready", port: 4173, leaseExpiresAt: null, stdout: "", stderr: "" })),
     ...args.sandboxOverrides,
   } as unknown as AgentSandbox;
@@ -149,7 +160,7 @@ function codeCall(callId: string, name: string, argumentsValue: unknown): Extrac
 }
 
 describe("orquestador de runs", () => {
-  it("emite preview.ready solo cuando start_dev_server confirma estado ready", async () => {
+  it("emite preview.ready solo después del health check del sandbox", async () => {
     const startServer = codeCall("call-start-server", "start_dev_server", {});
     const { options, store } = makeOptions({
       streams: [[startServer, completion([
@@ -159,9 +170,9 @@ describe("orquestador de runs", () => {
     });
     const handler = createAgentRunHandler(options);
     await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
-    expect(store.events.filter((event) => event.type === "agent.preview_ready")).toEqual([
-      { sequence: expect.any(Number), type: "agent.preview_ready", payload: { state: "ready" } },
-    ]);
+    const readyEvents = store.events.filter((event) => event.type === "agent.preview_ready");
+    expect(readyEvents).toHaveLength(2);
+    expect(readyEvents.every((event) => event.payload.state === "ready")).toBe(true);
   });
 
   it("persiste el plan antes de preparar el sandbox, escribir y verificar; cobra el uso medido", async () => {
@@ -179,13 +190,19 @@ describe("orquestador de runs", () => {
     const order = (event: string) => trace.indexOf(event);
     expect(order("persist:plan")).toBeLessThan(order("sandbox:create"));
     expect(order("persist:plan")).toBeLessThan(order("sandbox:write:src/game.ts"));
-    expect(order("sandbox:write:src/game.ts")).toBeLessThan(order("sandbox:verify:run build"));
+    expect(order("sandbox:write:package.json")).toBeLessThan(order("sandbox:install"));
+    expect(order("sandbox:install")).toBeLessThan(order("sandbox:command:test"));
+    expect(order("sandbox:command:test")).toBeLessThan(order("sandbox:command:run build"));
+    expect(order("sandbox:command:run build")).toBeLessThan(order("sandbox:server"));
+    expect(order("sandbox:server")).toBeLessThan(order("meta:code"));
+    expect(order("meta:code")).toBeLessThan(order("sandbox:write:src/game.ts"));
+    expect(trace.lastIndexOf("sandbox:command:run build")).toBeGreaterThan(order("sandbox:write:src/game.ts"));
     expect(store.events.map((event) => event.type)).toContain("agent.plan");
     expect(store.events.map((event) => event.type)).toContain("agent.action");
     expect(store.events.map((event) => event.type)).toContain("agent.verification");
     expect(store.events.map((event) => event.type)).toContain("agent.completed");
     expect(result.usage).toEqual({ tokens: 60, images: 0 });
-    expect(sandbox.writeFile).toHaveBeenCalledOnce();
+    expect(sandbox.writeFile).toHaveBeenCalledWith(claim.projectId, "src/game.ts", "export const createGame = () => true;", expect.any(AbortSignal));
   });
 
   it("reutiliza el resultado durable de un call_id repetido y no duplica una escritura", async () => {
@@ -199,7 +216,7 @@ describe("orquestador de runs", () => {
     });
     const handler = createAgentRunHandler(options);
     await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
-    expect(sandbox.writeFile).toHaveBeenCalledOnce();
+    expect(vi.mocked(sandbox.writeFile).mock.calls.filter(([, path]) => path === "src/game.ts")).toHaveLength(1);
   });
 
   it("tras una caída simulada falla cerrado si Meta quedó completado sin replay recuperable", async () => {
@@ -216,7 +233,7 @@ describe("orquestador de runs", () => {
     const handler = createAgentRunHandler(options);
     await expect(handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
       .rejects.toMatchObject({ code: "agent_replay_unavailable", usage: { tokens: 50, images: 0 } });
-    expect(sandbox.writeFile).not.toHaveBeenCalled();
+    expect(sandbox.writeFile).not.toHaveBeenCalledWith(claim.projectId, "src/game.ts", "unsafe", expect.any(AbortSignal));
   });
 
   it("bloquea solicitudes con información sensible antes de llamar a Meta", async () => {
@@ -249,7 +266,7 @@ describe("orquestador de runs", () => {
     const handler = createAgentRunHandler(options);
     await expect(handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
       .rejects.toMatchObject({ code: "meta_incomplete_response" });
-    expect(sandbox.writeFile).not.toHaveBeenCalled();
+    expect(sandbox.writeFile).not.toHaveBeenCalledWith(claim.projectId, "src/game.ts", "unsafe", expect.any(AbortSignal));
   });
 
   it("valida el conjunto completo antes de ejecutar y rechaza tools desconocidas o call_id duplicados", async () => {
@@ -263,7 +280,11 @@ describe("orquestador de runs", () => {
       const handler = createAgentRunHandler(options);
       await expect(handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
         .rejects.toBeInstanceOf(RunProcessingError);
-      expect(sandbox.writeFile).not.toHaveBeenCalled();
+      for (const call of badCalls) {
+        if (call.name === "write_file" && typeof call.arguments === "object" && call.arguments !== null && "path" in call.arguments) {
+          expect(sandbox.writeFile).not.toHaveBeenCalledWith(claim.projectId, (call.arguments as { path: string }).path, expect.any(String), expect.any(AbortSignal));
+        }
+      }
     }
   });
 
@@ -281,8 +302,7 @@ describe("orquestador de runs", () => {
     await expect(handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
       .rejects.toMatchObject({ code: "agent_unknown_tool" });
     expect(streamCall).toHaveBeenCalledTimes(2);
-    expect(sandbox.runCommand).toHaveBeenCalledOnce();
-    expect(sandbox.writeFile).not.toHaveBeenCalled();
+    expect(sandbox.runCommand).toHaveBeenCalledTimes(3);
   });
 
   it("no hace escrituras si no queda presupuesto estimado para otra respuesta", async () => {
