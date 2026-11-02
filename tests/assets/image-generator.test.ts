@@ -100,7 +100,9 @@ describe("server-side generated asset integration", () => {
     const test = harness(await validImage());
     const result = await test.imageTool(brief, test.context);
 
-    expect(test.calls.indexOf("quota:reserved")).toBeLessThan(test.calls.indexOf("meta:image"));
+    expect(test.calls.indexOf("quota:reserved")).toBeLessThan(
+      test.calls.findIndex((call) => call.startsWith("meta:image:")),
+    );
     expect(test.calls.indexOf("event:response-completed")).toBeLessThan(test.calls.indexOf("storage:upload"));
     expect(test.storage.upload).toHaveBeenCalledTimes(2);
     expect(test.uploaded.every((asset) => asset.identity === identity)).toBe(true);
