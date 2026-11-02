@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "policy": "Runtime assets are local, original to this template, or synthesized in code. No external asset URL is used.",
+  "assets": [
+    { "path": "/assets/player.svg", "type": "image/svg+xml", "source": "Original vector artwork authored for this template", "license": "project-original" },
+    { "path": "/assets/crystal.svg", "type": "image/svg+xml", "source": "Original vector artwork authored for this template", "license": "project-original" },
+    { "path": "/assets/enemy.svg", "type": "image/svg+xml", "source": "Original vector artwork authored for this template", "license": "project-original" },
+    { "path": "/assets/gate.svg", "type": "image/svg+xml", "source": "Original vector artwork authored for this template", "license": "project-original" },
+    { "path": "/assets/tile.svg", "type": "image/svg+xml", "source": "Original vector artwork authored for this template", "license": "project-original" },
+    { "path": "/assets/bullet.svg", "type": "image/svg+xml", "source": "Original vector artwork authored for this template", "license": "project-original" }
+  ],
+  "audio": [
+    { "source": "Oscillator tones synthesized by src/game/audio.ts after user interaction", "license": "original-code" }
+  ]
+}

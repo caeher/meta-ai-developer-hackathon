@@ -10,7 +10,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "packages/game-templates/phaser/src/**/*.test.ts"],
     clearMocks: true,
     testTimeout: process.env.PERSISTENCE_TEST_ENABLED === "1" ? 30_000 : 5_000,
   },

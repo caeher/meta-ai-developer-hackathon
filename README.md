@@ -103,6 +103,21 @@ El adaptador de storage usa solo `S3_BUCKET_PRIVATE`, genera claves en servidor,
 
 El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y verificación, y `packages/contracts/src/events.ts` define los eventos SSE públicos versionados. El editor reconstruye plan, pasos, archivos y verificaciones desde el stream durable; permite reconectar, detener y reintentar. `npm test` cubre contratos, proyección de eventos, ownership y las interacciones principales sin Clerk real ni clave Meta. `npm run test:e2e` comprueba los recorridos de editor con fixtures en Chromium, Firefox y WebKit; no acredita Clerk real, dominio/TLS ni el host Linux dedicado.
 
+## Plantillas Phaser
+
+`packages/game-templates/phaser/` incluye una plantilla autocontenida Phaser 3.90.0, Vite y TypeScript con lockfile, build estático, assets SVG originales, audio sintetizado y presets jugables de plataformas, puzzle, shooter y RPG top-down. Los presets exponen victoria, derrota y reinicio, con teclado, controles táctiles, pausa y mute. La guía y límites de validación están en [docs/game-template.md](docs/game-template.md).
+
+Desde la raíz se puede validar la plantilla sin claves:
+
+```sh
+npm ci --prefix packages/game-templates/phaser --ignore-scripts
+npm --prefix packages/game-templates/phaser test
+npm run build:game-template
+npm run test:e2e:game-templates
+```
+
+El E2E de la plantilla valida el canvas, teclado, botón táctil, pause/mute, reinicio, victoria/derrota y solicitudes locales en Chromium, Firefox y WebKit. El build de Vite no requiere conexión de assets externos. Materializar esta plantilla desde un run del agente en un sandbox aún requiere la integración posterior; no se afirma validación con Docker rootless ni con gateway/dominio real.
+
 ## Capacidades planificadas
 
 `dev:gateway` y `build:gateway` ya existen. El gateway resuelve únicamente sandboxes listos desde PostgreSQL, consume grants de un uso en Redis y autoriza cada HTTP/WebSocket; `npm run infra:up -- --preview` activa el perfil solo con claves válidas. El editor monta un iframe con sandbox mínimo, renovación de sesión, navegación por rutas comunicadas y fallback de primer nivel por formulario sin grant en URL. Las versiones guardadas se muestran, pero su restauración espera a #21. Los E2E de navegador usan un fixture; aún faltan dominio wildcard con TLS, cookies del dominio real, host Linux dedicado y un recorrido autenticado con dos cuentas Clerk. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue. El acceso real a Meta se informa por separado del resultado de los tests con fixtures.
@@ -123,4 +138,4 @@ El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y ve
 - `tests`: contratos, interacciones del editor, persistencia y autorización sintética.
 - `.github/workflows/ci.yml`: verificación en Node 24, sin secretos.
 
-Phaser será el motor predeterminado para juegos generados según la arquitectura definida en [AGENTS.md](AGENTS.md); los procesos de juego no se ejecutan dentro de Next.
+Phaser es el motor predeterminado para juegos generados según la arquitectura definida en [AGENTS.md](AGENTS.md); los procesos de juego no se ejecutan dentro de Next.

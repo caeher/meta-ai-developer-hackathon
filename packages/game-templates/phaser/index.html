@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#1a1b26" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Juego 2D</title>
+  </head>
+  <body>
+    <main id="game-shell" aria-label="Juego web 2D">
+      <h1 class="visually-hidden">Juego web 2D</h1>
+      <div id="game" aria-label="Área de juego"></div>
+      <p id="game-status" class="visually-hidden" role="status" aria-live="polite">Cargando juego…</p>
+      <nav id="touch-controls" aria-label="Controles de juego">
+        <div class="dpad" role="group" aria-label="Mover">
+          <button type="button" data-control="up" aria-label="Mover arriba">↑</button>
+          <button type="button" data-control="left" aria-label="Mover izquierda">←</button>
+          <button type="button" data-control="down" aria-label="Mover abajo">↓</button>
+          <button type="button" data-control="right" aria-label="Mover derecha">→</button>
+        </div>
+        <button type="button" class="action-button" data-control="action" aria-label="Acción">Acción</button>
+      </nav>
+      <nav id="game-actions" aria-label="Opciones de juego">
+        <button type="button" data-command="pause" aria-label="Pausar juego">Pausa</button>
+        <button type="button" data-command="mute" aria-label="Silenciar o activar sonido">Silenciar</button>
+        <button type="button" data-command="restart" aria-label="Reiniciar juego">Reiniciar</button>
+      </nav>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

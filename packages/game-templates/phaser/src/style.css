@@ -1,0 +1,85 @@
+:root {
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  background: #1a1b26;
+  color: #c0caf5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #game-shell {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body { overscroll-behavior: none; }
+
+#game-shell {
+  position: relative;
+  min-height: 100dvh;
+  background: #1a1b26;
+  touch-action: none;
+}
+
+#game, #game canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#game canvas { outline: none; }
+
+#touch-controls, #game-actions {
+  position: fixed;
+  z-index: 2;
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  touch-action: none;
+}
+
+#touch-controls { left: max(1rem, env(safe-area-inset-left)); }
+#game-actions { right: max(1rem, env(safe-area-inset-right)); }
+
+button {
+  min-width: 2.8rem;
+  min-height: 2.8rem;
+  border: 1px solid #414868;
+  border-radius: 0.7rem;
+  background: #24283b;
+  color: #c0caf5;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+button:hover { border-color: #7aa2f7; background: #2d3350; }
+button:focus-visible { outline: 3px solid #7dcfff; outline-offset: 2px; }
+button:active { background: #414868; transform: translateY(1px); }
+.action-button { min-width: 4.5rem; min-height: 4.5rem; border-radius: 50%; }
+.dpad { display: grid; grid-template-columns: repeat(3, 2.8rem); gap: 0.3rem; }
+.dpad button[data-control="up"] { grid-column: 2; }
+.dpad button[data-control="left"] { grid-column: 1; grid-row: 2; }
+.dpad button[data-control="down"] { grid-column: 2; grid-row: 2; }
+.dpad button[data-control="right"] { grid-column: 3; grid-row: 2; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 650px) {
+  #touch-controls, #game-actions { bottom: max(0.6rem, env(safe-area-inset-bottom)); gap: 0.35rem; }
+  #touch-controls { left: max(0.55rem, env(safe-area-inset-left)); }
+  #game-actions { right: max(0.55rem, env(safe-area-inset-right)); flex-direction: column; align-items: flex-end; }
+  #game-actions button { min-width: 2.5rem; min-height: 2.4rem; padding: 0 0.45rem; font-size: 0.75rem; }
+  .dpad { grid-template-columns: repeat(3, 2.35rem); }
+  .dpad button { min-width: 2.35rem; min-height: 2.35rem; }
+  .action-button { min-width: 3.7rem; min-height: 3.7rem; }
+}

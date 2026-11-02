@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "presets": [
+    {
+      "id": "platformer",
+      "name": "Plataformas",
+      "objectiveCount": 3,
+      "controls": ["left", "right", "action"],
+      "objective": "Collect three crystals and reach the gate.",
+      "collisionModel": "arcade-physics",
+      "defeat": "Lose three lives to the guardian or a fall.",
+      "restart": "R"
+    },
+    {
+      "id": "puzzle",
+      "name": "Puzzle",
+      "objectiveCount": 3,
+      "controls": ["left", "right", "up", "down", "action"],
+      "objective": "Collect three crystals and open the gate.",
+      "collisionModel": "bounded-grid-and-hazards",
+      "defeat": "Lose three lives to traps.",
+      "restart": "R"
+    },
+    {
+      "id": "shooter",
+      "name": "Shooter 2D",
+      "objectiveCount": 5,
+      "controls": ["left", "right", "action"],
+      "objective": "Destroy five drones.",
+      "collisionModel": "arcade-projectiles-and-enemies",
+      "defeat": "Lose three lives to descending drones.",
+      "restart": "R"
+    },
+    {
+      "id": "rpg",
+      "name": "RPG top-down",
+      "objectiveCount": 3,
+      "controls": ["left", "right", "up", "down", "action"],
+      "objective": "Collect three runes and reach the gate.",
+      "collisionModel": "bounded-grid-and-guardians",
+      "defeat": "Lose three lives to guardians.",
+      "restart": "R"
+    }
+  ]
+}
