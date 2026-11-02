@@ -64,6 +64,7 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
     await expect(
       repositories.messages.create(identityB, {
         projectId: projectA.id,
+        requestId: `cross-owner-${suffix}`,
         role: "user",
         content: "cross-owner write",
       }),
@@ -76,6 +77,7 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
     await expect(
       repositories.messages.create(identityA, {
         projectId: projectASecond.id,
+        requestId: `wrong-run-project-${suffix}`,
         runId: run.id,
         role: "assistant",
         content: "run belongs to another project",
@@ -94,6 +96,8 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
         projectId: projectB.id,
         role: "user",
         content: "direct SQL cannot cross composite ownership",
+        requestId: `direct-sql-${suffix}`,
+        sequence: 1,
       }),
     ).rejects.toMatchObject({ cause: { code: "23503" } });
   });
