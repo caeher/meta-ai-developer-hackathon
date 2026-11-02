@@ -36,6 +36,21 @@ body { overscroll-behavior: none; }
 
 #game canvas { outline: none; }
 
+#game-controls {
+  position: fixed;
+  z-index: 2;
+  top: max(5.2rem, env(safe-area-inset-top));
+  left: max(1rem, env(safe-area-inset-left));
+  max-width: min(34rem, calc(100vw - 2rem));
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid #414868;
+  border-radius: 0.55rem;
+  background: #24283b;
+  color: #c0caf5;
+  font-size: 0.85rem;
+}
+
 #touch-controls, #game-actions {
   position: fixed;
   z-index: 2;

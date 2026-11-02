@@ -1,11 +1,13 @@
 import Phaser from "phaser";
 import "./style.css";
+import projectSpec from "./game/project-spec.json";
 import { gameAudio } from "./game/audio";
 import { BootScene } from "./game/BootScene";
 import { HudScene } from "./game/HudScene";
 import { PlayScene } from "./game/PlayScene";
 import {
   GAME_CONTROL_EVENT,
+  GAME_HELP,
   GAME_LABELS,
   GAME_SNAPSHOT_EVENT,
   GAME_WIDTH,
@@ -23,8 +25,12 @@ declare global {
 const canvasParent = document.querySelector<HTMLElement>("#game");
 const status = document.querySelector<HTMLElement>("#game-status");
 const actionButton = document.querySelector<HTMLButtonElement>('[data-control="action"]');
+const controlsSummary = document.querySelector<HTMLElement>("#game-controls");
 const genreQuery = new URLSearchParams(window.location.search).get("genre");
-const genre: GameGenre = isGameGenre(genreQuery) ? genreQuery : "platformer";
+const configuredGenre = typeof projectSpec.genre === "string" && isGameGenre(projectSpec.genre) ? projectSpec.genre : "platformer";
+const genre: GameGenre = import.meta.env.DEV && isGameGenre(genreQuery) ? genreQuery : configuredGenre;
+const movement = projectSpec.controls?.movement === "wasd" ? "wasd" : "arrows";
+const actionKey = projectSpec.controls?.action === "e" ? "e" : "space";
 const actionLabel: Readonly<Record<GameGenre, string>> = {
   platformer: "Saltar",
   puzzle: "Interactuar",
@@ -63,6 +69,11 @@ const game = new Phaser.Game({
   fps: { target: 60, forceSetTimeOut: false },
 });
 game.registry.set("genre", genre);
+const movementLabel = movement === "wasd" ? "WASD" : "Flechas";
+const actionLabelText = actionKey === "e" ? "E" : "Espacio";
+const controlHelp = GAME_HELP[genre].replaceAll("Flechas", movementLabel).replaceAll("espacio", actionLabelText).replaceAll("E para interactuar", `${actionLabelText} para interactuar`);
+game.registry.set("controlHelp", controlHelp);
+if (controlsSummary) controlsSummary.textContent = `${movementLabel} para moverte · ${actionLabelText} para actuar · botones táctiles visibles`;
 
 const activeControls = new Set<GameControl>();
 const pointerControls = new Map<number, GameControl>();
@@ -90,11 +101,16 @@ function dispatchCommand(command: "pause" | "mute" | "restart"): void {
 }
 
 function controlFromKey(key: string): GameControl | undefined {
-  if (key === "ArrowLeft" || key.toLowerCase() === "a") return "left";
-  if (key === "ArrowRight" || key.toLowerCase() === "d") return "right";
-  if (key === "ArrowUp" || key.toLowerCase() === "w") return "up";
-  if (key === "ArrowDown" || key.toLowerCase() === "s") return "down";
-  if (key === " " || key === "Space" || key === "Spacebar" || key.toLowerCase() === "e") return "action";
+  const normalized = key.toLowerCase();
+  const movementKeys = movement === "wasd"
+    ? { left: ["a"], right: ["d"], up: ["w"], down: ["s"] }
+    : { left: ["arrowleft"], right: ["arrowright"], up: ["arrowup"], down: ["arrowdown"] };
+  if (movementKeys.left.includes(normalized)) return "left";
+  if (movementKeys.right.includes(normalized)) return "right";
+  if (movementKeys.up.includes(normalized)) return "up";
+  if (movementKeys.down.includes(normalized)) return "down";
+  if (actionKey === "space" && [" ", "space", "spacebar"].includes(normalized)) return "action";
+  if (actionKey === "e" && normalized === "e") return "action";
   return undefined;
 }
 

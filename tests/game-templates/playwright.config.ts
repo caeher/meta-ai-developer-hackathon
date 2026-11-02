@@ -1,8 +1,8 @@
 import { defineConfig } from "playwright/test";
 
 export default defineConfig({
-  testDir: ".",
-  testMatch: "*.spec.ts",
+  testDir: "../..",
+  testMatch: ["tests/game-templates/*.spec.ts", "tests/e2e/generation.spec.ts"],
   fullyParallel: true,
   workers: 1,
   reporter: "list",

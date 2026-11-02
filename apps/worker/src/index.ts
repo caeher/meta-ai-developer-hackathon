@@ -5,7 +5,7 @@ import { createDatabaseFromEnvironment, createRepositories } from "@meta-game/db
 import { parseRunEnvironment } from "@meta-game/config";
 import { loadMetaConfig, MetaClient } from "@meta-game/meta";
 import { SandboxControllerClient } from "@meta-game/sandbox";
-import { createPrivateStorageFromEnvironment } from "@meta-game/storage";
+import { createPrivateCheckpointStorageFromEnvironment, createPrivateStorageFromEnvironment } from "@meta-game/storage";
 import { createSkillRouter } from "@meta-game/skills";
 import { createAgentRunHandler } from "./agent/orchestrator";
 import { createPostgresAgentRunStore } from "./agent/store";
@@ -43,7 +43,8 @@ async function createEnabledAgentHandler() {
   const sandbox = new SandboxControllerClient(controllerUrl, controllerToken);
   const meta = new MetaClient(loadMetaConfig());
   const storage = createPrivateStorageFromEnvironment(createRepositories(database.db).assets);
-  closeGeneratedAssetStorage = () => storage.close();
+  const checkpoints = createPrivateCheckpointStorageFromEnvironment();
+  closeGeneratedAssetStorage = () => { storage.close(); checkpoints.close(); };
   const imageGenerator = createGeneratedImageTool({
     meta,
     storage,
@@ -54,6 +55,7 @@ async function createEnabledAgentHandler() {
     store,
     meta,
     sandbox,
+    checkpoints,
     skills,
     maxSteps: environment.PROJECT_MAX_RUN_STEPS,
     maxTokens: environment.RUN_MAX_TOKENS,

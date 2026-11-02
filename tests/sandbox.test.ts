@@ -88,6 +88,9 @@ function fixture() {
       if (argv[0] === "node" && argv[2] === "health") {
         return { stdout: "healthy", stderr: "", exitCode: 0, durationMs: 2 };
       }
+      if (argv[0] === "node" && argv[1] === "/opt/meta-game/verify-game.mjs") {
+        return { stdout: JSON.stringify({ status: "passed", checks: [], consoleErrors: [], blockedRequests: 0 }), stderr: "", exitCode: 0, durationMs: 3 };
+      }
       return { stdout: "ok", stderr: "", exitCode: 0, durationMs: 3 };
     }),
   };
@@ -294,6 +297,8 @@ describe("sandbox rootless contract", () => {
       .resolves.toMatchObject({ stdout: "ok", exitCode: 0 });
     await expect(f.service.installDependencies(PROJECT_ID, { packages: [{ name: "https://evil.example/x.tgz", version: "latest" }] }))
       .rejects.toThrow("invalid_dependency_specification");
+    await expect(f.service.installDependencies(PROJECT_ID, { packages: [{ name: "is-number", version: "7.0.0" }] }))
+      .rejects.toThrow("dependency_not_approved");
     await expect(f.service.runCommand(PROJECT_ID, { command: "npm", args: ["exec", "--", "node", "-e", "bad"] }))
       .rejects.toThrow("sandbox_command_not_allowed");
     await expect(f.service.exec(PROJECT_ID, ["sh", "-c", "id"]))
@@ -315,6 +320,19 @@ describe("sandbox rootless contract", () => {
       "",
       60_000,
       expect.objectContaining({ stdin: binaryAsset }),
+    );
+  });
+
+  it("ejecuta la verificación de interacción con el runner confiable dentro del sandbox y exige preview saludable", async () => {
+    const f = fixture();
+    await f.service.create(PROJECT_ID);
+    const input = { genre: "puzzle" as const, controls: { movement: "arrows" as const, action: "space" as const, touch: true as const } };
+    await expect(f.service.verifyGameInteraction(PROJECT_ID, input)).rejects.toThrow("game_browser_preview_unhealthy");
+    await f.service.startDevServer(PROJECT_ID);
+    await expect(f.service.verifyGameInteraction(PROJECT_ID, input)).resolves.toMatchObject({ status: "passed", checks: [] });
+    expect(f.driver.exec).toHaveBeenCalledWith(
+      SANDBOX_ID, PROJECT_ID, 23451, ["node", "/opt/meta-game/verify-game.mjs"], "", 30_000,
+      expect.objectContaining({ stdin: JSON.stringify(input) }),
     );
   });
 
@@ -364,6 +382,11 @@ describe("sandbox rootless contract", () => {
     await expect(client.exec(PROJECT_ID, ["npm", "run", "build"])).resolves.toMatchObject({ stdout: "ok", exitCode: 0, truncated: false });
     await expect(client.writeBinaryFile(PROJECT_ID, "public/assets/generated/00000000-0000-4000-8000-000000000002.png", new Uint8Array([137, 80, 78, 71])))
       .resolves.toMatchObject({ path: "public/assets/generated/00000000-0000-4000-8000-000000000002.png", bytesWritten: 4 });
+    await client.startDevServer(PROJECT_ID);
+    await expect(client.verifyGameInteraction(PROJECT_ID, {
+      genre: "puzzle",
+      controls: { movement: "arrows", action: "space", touch: true },
+    })).resolves.toMatchObject({ status: "passed", checks: [] });
     await expect(client.inspect(PROJECT_ID)).resolves.toMatchObject({ sandboxId: SANDBOX_ID, state: "ready" });
     await expect(client.stop(PROJECT_ID)).resolves.toMatchObject({ state: "stopped" });
     await expect(client.destroy(PROJECT_ID)).resolves.toMatchObject({ state: "stopped" });

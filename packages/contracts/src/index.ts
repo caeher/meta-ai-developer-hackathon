@@ -13,4 +13,5 @@ export * from "./runs";
 export * from "./events";
 export * from "./tools";
 export * from "./assets";
+export * from "./game-spec";
 export * from "./preview";

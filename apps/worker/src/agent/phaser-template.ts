@@ -33,6 +33,7 @@ const TEMPLATE_FILES = [
   "src/game/audio.ts",
   "src/game/logic.test.ts",
   "src/game/logic.ts",
+  "src/game/project-spec.json",
   "src/game/types.ts",
   "src/main.ts",
   "src/style.css",
@@ -191,8 +192,8 @@ function validatePackage(packageJson: Record<string, unknown>, nodeVersion: stri
   if (asRecord(packageJson.dependencies)?.phaser !== "3.90.0") throw new Error("phaser_template_phaser_version_invalid");
   const scripts = asRecord(packageJson.scripts);
   if (!scripts) throw new Error("phaser_template_scripts_invalid");
-  if (typeof scripts.dev !== "string" || typeof scripts.test !== "string" || typeof scripts.build !== "string" ||
-    Object.keys(scripts).some((name) => !["dev", "test", "build", "preview"].includes(name))) {
+  if (typeof scripts.dev !== "string" || typeof scripts.test !== "string" || typeof scripts.lint !== "string" ||
+    typeof scripts.build !== "string" || Object.keys(scripts).some((name) => !["dev", "test", "lint", "build", "preview"].includes(name))) {
     throw new Error("phaser_template_scripts_invalid");
   }
 }

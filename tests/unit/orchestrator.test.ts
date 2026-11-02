@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentRunEvent, MetaCodeEvent, MetaConversationItem, MetaPlan } from "@meta-game/contracts";
 import { identityFromAuthenticatedSession, UsageLimitExceededError } from "@meta-game/db";
 import type { AgentRunStore } from "../../apps/worker/src/agent/store";
 import type { GeneratedImageToolContext } from "../../apps/worker/src/assets/image-generator";
 import { createAgentRunHandler } from "../../apps/worker/src/agent/orchestrator";
-import type { AgentOrchestratorOptions } from "../../apps/worker/src/agent/orchestrator";
+import type { AgentCheckpointStorage, AgentOrchestratorOptions } from "../../apps/worker/src/agent/orchestrator";
 import type { AgentSandbox } from "../../apps/worker/src/agent/tools";
 import { RunProcessingError } from "../../apps/worker/src/handler";
 
@@ -112,7 +113,7 @@ function makeOptions(args: {
         throw error;
       }
       trace.push(`sandbox:read:${path}`);
-      return { path, content: '{"scripts":{"build":"vite build"}}' };
+      return { path, content: '{"scripts":{"test":"vitest run","lint":"tsc --noEmit","build":"vite build"}}' };
     }),
     writeFile: vi.fn(async (_projectId: string, path: string, content: string) => {
       trace.push(`sandbox:write:${path}`);
@@ -132,8 +133,22 @@ function makeOptions(args: {
       return { status: "ready", port: 4173, leaseExpiresAt: "2026-11-02T12:00:00.000Z" };
     }),
     readLogs: vi.fn(async () => ({ status: "ready", port: 4173, leaseExpiresAt: null, stdout: "", stderr: "" })),
+    verifyGameInteraction: vi.fn(async () => ({ status: "passed" as const, checks: [], consoleErrors: [], blockedRequests: 0 })),
     ...args.sandboxOverrides,
   } as unknown as AgentSandbox;
+  const checkpointBodies = new Map<string, Uint8Array>();
+  const checkpoints: AgentCheckpointStorage = {
+    async write(identity, body) {
+      checkpointBodies.set(identity.runId, body.slice());
+      return { sha256: createHash("sha256").update(body).digest("hex"), sizeBytes: body.byteLength };
+    },
+    async read(identity) {
+      const body = checkpointBodies.get(identity.runId);
+      if (!body) throw new Error("checkpoint_missing");
+      return body;
+    },
+    async delete(identity) { checkpointBodies.delete(identity.runId); },
+  };
   const skills = {
     routeForRun: vi.fn(async () => ({
       runId: run.id,
@@ -156,6 +171,7 @@ function makeOptions(args: {
     store,
     meta,
     sandbox,
+    checkpoints,
     skills,
     maxSteps: args.maxSteps ?? 20,
     maxTokens: args.maxTokens ?? 16_000,
@@ -289,7 +305,7 @@ describe("orquestador de runs", () => {
     const handler = createAgentRunHandler(options);
     await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
     const readyEvents = store.events.filter((event) => event.type === "agent.preview_ready");
-    expect(readyEvents).toHaveLength(2);
+    expect(readyEvents).toHaveLength(1);
     expect(readyEvents.every((event) => event.payload.state === "ready")).toBe(true);
   });
 

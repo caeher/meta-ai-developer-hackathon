@@ -295,3 +295,6 @@ export function createPrivateStorageFromEnvironment(
     client: createS3PrivateObjectClient(config),
   });
 }
+
+export { createPrivateCheckpointStorage, createPrivateCheckpointStorageFromEnvironment } from "./checkpoints";
+export type { PrivateCheckpointIdentity } from "./checkpoints";

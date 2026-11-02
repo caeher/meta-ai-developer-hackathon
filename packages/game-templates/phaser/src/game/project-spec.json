@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "genre": "platformer",
+  "intent": "create",
+  "objective": "Crear un juego de plataformas con ciclo jugable, objetivo y controles visibles.",
+  "changes": [],
+  "controls": {
+    "movement": "arrows",
+    "action": "space",
+    "touch": true
+  }
+}

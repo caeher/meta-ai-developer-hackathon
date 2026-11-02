@@ -16,7 +16,7 @@ import { isSensitiveWorkspacePath, redactSensitiveText, sensitiveInputReason } f
 
 export type AgentSandbox = Pick<
   SandboxControllerClient,
-  "create" | "inspect" | "readFile" | "writeFile" | "writeBinaryFile" | "listFiles" | "installDependencies" | "runCommand" | "startDevServer" | "readLogs"
+  "create" | "inspect" | "readFile" | "writeFile" | "writeBinaryFile" | "listFiles" | "installDependencies" | "runCommand" | "startDevServer" | "readLogs" | "verifyGameInteraction"
 >;
 
 type ToolDefinition = MetaToolDefinition & Readonly<{ summary(args: Record<string, unknown>): string }>;

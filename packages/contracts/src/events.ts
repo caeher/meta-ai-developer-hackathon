@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MetaPlanSchema } from "./meta";
+import { GameSpecSchema } from "./game-spec";
 
 const callId = z.string().min(1).max(64).regex(/^[A-Za-z0-9._:-]+$/);
 const safeHash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -18,6 +19,19 @@ export const AgentRunEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("agent.skills_selected"),
     payload: z.object({ record: z.record(z.string(), z.unknown()) }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent.game_spec"),
+    payload: z.object({ spec: GameSpecSchema }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent.checkpoint"),
+    payload: z.object({
+      operation: z.enum(["saved", "restored", "discarded"]),
+      sha256: safeHash,
+      sizeBytes: z.number().int().positive().max(25 * 1024 * 1024),
+      fileCount: z.number().int().nonnegative().max(256),
+    }).strict(),
   }).strict(),
   z.object({
     type: z.literal("agent.meta_request_started"),

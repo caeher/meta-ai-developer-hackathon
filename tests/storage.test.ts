@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { identityFromAuthenticatedSession } from "@meta-game/db";
 import {
   createPrivateStorage,
+  createPrivateCheckpointStorage,
   type AssetRepository,
   type PrivateObjectClient,
   type StorageAsset,
@@ -92,11 +93,29 @@ function createHarness(options: { corruptHead?: boolean; failComplete?: boolean;
     records,
     objects,
     calls,
+    client,
     storage: createPrivateStorage({ bucket: "private-only", assets, client, maxObjectBytes: 64 }),
   };
 }
 
 describe("almacenamiento privado", () => {
+  it("guarda checkpoints privados acotados, los valida por checksum y los elimina", async () => {
+    const harness = createHarness();
+    const checkpoints = createPrivateCheckpointStorage(harness.client);
+    const key = {
+      ownerUserId: "00000000-0000-4000-8000-000000000101",
+      projectId,
+      runId: "00000000-0000-4000-8000-000000000201",
+    };
+    const body = Buffer.from("private checkpoint");
+    const metadata = await checkpoints.write(key, body);
+
+    await expect(checkpoints.read(key, metadata)).resolves.toEqual(Uint8Array.from(body));
+    await checkpoints.delete(key);
+    expect(harness.objects.size).toBe(0);
+    await expect(checkpoints.read(key, metadata)).rejects.toThrow("checkpoint privado");
+  });
+
   it("deriva la clave en servidor, calcula checksum y oculta la clave al cliente", async () => {
     const harness = createHarness();
     const body = Buffer.from("fixture object data");

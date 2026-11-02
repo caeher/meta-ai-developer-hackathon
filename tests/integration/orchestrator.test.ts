@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { asc, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -19,6 +19,7 @@ import {
 } from "@meta-game/db";
 import type { AgentRunEvent, MetaCodeEvent, MetaConversationItem, MetaPlan } from "@meta-game/contracts";
 import { createAgentRunHandler } from "../../apps/worker/src/agent/orchestrator";
+import type { AgentCheckpointStorage } from "../../apps/worker/src/agent/orchestrator";
 import type { RunHandlerContext } from "../../apps/worker/src/handler";
 import { createPostgresAgentRunStore } from "../../apps/worker/src/agent/store";
 import type { AgentSandbox } from "../../apps/worker/src/agent/tools";
@@ -136,7 +137,7 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
       async inspect() { throw missingSandbox; },
       async readFile(_projectId: string, path: string) {
         if (path === ".meta-game-template.json") throw Object.assign(new Error("not_found"), { code: "not_found" });
-        return { path, content: '{"scripts":{"test":"vitest run","build":"vite build"}}' };
+        return { path, content: '{"scripts":{"test":"vitest run","lint":"tsc --noEmit","build":"vite build"}}' };
       },
       async writeFile(_projectId: string, path: string, content: string) { return { path, bytesWritten: Buffer.byteLength(content, "utf8") }; },
       async listFiles() { return { path: "", files: [] }; },
@@ -144,7 +145,21 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
       async runCommand(_projectId: string, input: { args: string[] }) { return { stdout: `passed ${input.args.join(" ")}`, stderr: "", exitCode: 0, durationMs: 2, truncated: false }; },
       async startDevServer() { return { status: "ready", port: 4173, leaseExpiresAt: null }; },
       async readLogs() { return { status: "ready", port: 4173, leaseExpiresAt: null, stdout: "", stderr: "" }; },
+      async verifyGameInteraction() { return { status: "passed", checks: [], consoleErrors: [], blockedRequests: 0 }; },
     } as unknown as AgentSandbox;
+    const checkpointBodies = new Map<string, Uint8Array>();
+    const checkpoints: AgentCheckpointStorage = {
+      async write(identity, body) {
+        checkpointBodies.set(identity.runId, body.slice());
+        return { sha256: createHash("sha256").update(body).digest("hex"), sizeBytes: body.byteLength };
+      },
+      async read(identity) {
+        const body = checkpointBodies.get(identity.runId);
+        if (!body) throw new Error("checkpoint_missing");
+        return body;
+      },
+      async delete(identity) { checkpointBodies.delete(identity.runId); },
+    };
     const skills = {
       async routeForRun(input: { runId: string }) {
         return {
@@ -158,6 +173,7 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
       store: createPostgresAgentRunStore(database.db),
       meta,
       sandbox,
+      checkpoints,
       skills: skills as never,
       maxSteps: 30,
       maxTokens: 16_000,

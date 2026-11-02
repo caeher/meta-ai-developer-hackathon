@@ -2,6 +2,8 @@ import type { PublicSandboxState } from "./service";
 import { SandboxRuntimeError } from "./driver";
 import {
   SandboxWriteBinaryFileInputSchema,
+  type GameBrowserVerificationInput,
+  type GameBrowserVerificationResult,
   type SandboxDevServerLogs,
   type SandboxDevServerState,
   type SandboxFileEntry,
@@ -77,6 +79,10 @@ export class SandboxControllerClient {
 
   readLogs(projectId: string, signal?: AbortSignal): Promise<SandboxDevServerLogs> {
     return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/tools/read-logs`, "GET", undefined, signal);
+  }
+
+  verifyGameInteraction(projectId: string, input: GameBrowserVerificationInput, signal?: AbortSignal): Promise<GameBrowserVerificationResult> {
+    return this.tool(projectId, "verify-game", input, signal);
   }
 
   private tool<T>(projectId: string, name: string, body: unknown, signal?: AbortSignal): Promise<T> {

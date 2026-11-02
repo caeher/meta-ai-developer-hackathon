@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   AgentRunEventSchema,
+  GameSpecSchema,
   MetaPlanSchema,
   type AgentRunEvent,
   type MetaCodeEvent,
@@ -8,6 +9,7 @@ import {
   type MetaPlan,
   type MetaPlanResult,
   type MetaUsage,
+  type GameSpec,
 } from "@meta-game/contracts";
 import { MetaApiError, type MetaClient } from "@meta-game/meta";
 import { UsageLimitExceededError, type RunUsage, type RunWorkerClaim } from "@meta-game/db";
@@ -33,6 +35,8 @@ import { estimateTokens, redactSensitiveText, sensitiveInputReason } from "./saf
 import type { GeneratedImageToolContext } from "../assets/image-generator";
 import { imageResponseTokenUsage } from "../assets/image-generator";
 import { ImagePipelineError } from "../assets/image-pipeline";
+import { captureGameCheckpoint, createGameSpec, decodeGameCheckpoint, gameSpecFile, gameSpecInstructions, restoreGameCheckpoint, type GameCheckpoint, GAME_SPEC_PATH } from "../pipelines/generate-game";
+import { verifyGame } from "../pipelines/verify-game";
 
 type AgentMeta = Pick<MetaClient, "plan" | "streamCode" | "generateImage">;
 type AgentImageGenerator = (args: Record<string, unknown>, context: GeneratedImageToolContext) => Promise<unknown>;
@@ -44,6 +48,7 @@ export interface AgentOrchestratorOptions {
   store: AgentRunStore;
   meta: AgentMeta;
   sandbox: AgentSandbox;
+  checkpoints: AgentCheckpointStorage;
   skills: AgentSkillRouter;
   maxSteps: number;
   maxTokens: number;
@@ -54,8 +59,22 @@ export interface AgentOrchestratorOptions {
 }
 
 type MutableRunEvent = { sequence: number; type: string; payload: Record<string, unknown> };
-type RunState = { events: MutableRunEvent[]; usage: RunUsage; stepCount: number; signal: AbortSignal; userSignal: AbortSignal };
-type Verification = { status: "passed" | "failed" | "skipped"; failures: string[] };
+type RunState = {
+  events: MutableRunEvent[];
+  usage: RunUsage;
+  stepCount: number;
+  signal: AbortSignal;
+  userSignal: AbortSignal;
+  checkpoint?: GameCheckpoint;
+  checkpointAvailable: boolean;
+  gameSpec?: GameSpec;
+};
+export interface AgentCheckpointStorage {
+  write(identity: { ownerUserId: string; projectId: string; runId: string }, body: Uint8Array): Promise<Omit<GameCheckpoint, "fileCount">>;
+  read(identity: { ownerUserId: string; projectId: string; runId: string }, expected: GameCheckpoint): Promise<Uint8Array>;
+  delete(identity: { ownerUserId: string; projectId: string; runId: string }): Promise<void>;
+}
+type Verification = { status: "passed" | "failed"; failures: readonly string[] };
 
 const PHASER_VERSION = "3.90.0";
 const CODE_POLICY = [
@@ -65,7 +84,7 @@ const CODE_POLICY = [
   "No pidas, leas ni escribas secretos, archivos de entorno, credenciales, datos personales o contenido confidencial.",
   "No expongas razonamiento privado. Cuando termines, devuelve un resumen breve basado en acciones verificables.",
 ].join(" ");
-const PLAN_INSTRUCTIONS = "Convierte la solicitud en un plan visible y conciso. Incluye un objetivo, pasos ordenados, archivos relativos esperados y verificaciones concretas. No incluyas razonamiento privado.";
+const PLAN_INSTRUCTIONS = "Convierte la solicitud y la especificación de juego validada en un plan visible y conciso. Incluye un objetivo, pasos ordenados, archivos relativos esperados y verificaciones concretas. No incluyas razonamiento privado.";
 const AGENT_PROMPT_LIMIT_BYTES = 64 * 1024;
 const MAX_CODE_OUTPUT_TOKENS = 4_096;
 const MAX_REPAIR_ATTEMPTS = 1;
@@ -77,7 +96,7 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
     const signal = AbortSignal.any([handlerContext.signal, deadlineSignal]);
     let events: MutableRunEvent[] = [];
     let usage: RunUsage = { tokens: 0, images: 0 };
-    const state: RunState = { events, usage, stepCount: 0, signal, userSignal: handlerContext.signal };
+    const state: RunState = { events, usage, stepCount: 0, signal, userSignal: handlerContext.signal, checkpointAvailable: false };
     try {
       let loaded;
       try {
@@ -97,6 +116,20 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       }
       events = loaded.events.map((event) => ({ sequence: event.sequence, type: event.type, payload: event.payload }));
       state.events = events;
+      const checkpointEvent = [...events].reverse().find((event) => event.type === "agent.checkpoint");
+      if (checkpointEvent) {
+        const parsedCheckpoint = AgentRunEventSchema.safeParse({ type: "agent.checkpoint", payload: checkpointEvent.payload });
+        if (parsedCheckpoint.success && parsedCheckpoint.data.type === "agent.checkpoint" && parsedCheckpoint.data.payload.operation !== "discarded") {
+          const metadata = parsedCheckpoint.data.payload;
+          state.checkpoint = { sha256: metadata.sha256, sizeBytes: metadata.sizeBytes, fileCount: metadata.fileCount };
+          state.checkpointAvailable = true;
+        }
+      }
+      const specEvent = [...events].reverse().find((event) => event.type === "agent.game_spec");
+      if (specEvent) {
+        const parsedSpec = GameSpecSchema.safeParse(specEvent.payload.spec);
+        if (parsedSpec.success) state.gameSpec = parsedSpec.data;
+      }
       state.stepCount = new Set(events.filter((event) => event.type === "agent.tool_started").map((event) => stringPayload(event, "callId"))).size;
       usage = measuredUsage(events);
       state.usage = usage;
@@ -106,6 +139,7 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       const alreadyCompleted = findEvent(events, "agent.completed");
       if (alreadyCompleted) {
         await handlerContext.markVerifying();
+        await discardGameCheckpoint(options, state, handlerContext.claim).catch(() => undefined);
         return { usage: state.usage };
       }
 
@@ -131,6 +165,16 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
         throw new RunProcessingError("sensitive_content_blocked", false, usage);
       }
 
+      if (state.checkpointAvailable) await restoreCurrentCheckpoint(options, state, handlerContext.claim, run.projectId);
+      if (!state.gameSpec) {
+        const priorSpec = loaded.priorGameSpec ?? await inspectPriorGameSpec(options.sandbox, run.projectId, signal);
+        state.gameSpec = createGameSpec(loaded.prompt, priorSpec);
+        await append(state, options.store, handlerContext.claim, {
+          type: "agent.game_spec",
+          payload: { spec: state.gameSpec },
+        });
+      }
+
       const selection = await options.skills.routeForRun({
         runId: run.id,
         task: loaded.prompt,
@@ -146,7 +190,7 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
 
       let approvedPlan = plan;
       if (!approvedPlan) {
-        const planningPrompt = `${CODE_POLICY}\n\n${PLAN_INSTRUCTIONS}\n\nSolicitud del usuario:\n${loaded.prompt}`;
+        const planningPrompt = `${CODE_POLICY}\n\n${PLAN_INSTRUCTIONS}\n\n${gameSpecInstructions(state.gameSpec)}\n\nSolicitud del usuario:\n${loaded.prompt}`;
         const estimatedInput = estimateTokens(planningPrompt) + 512;
         const planOutputTokens = Math.min(1_024, options.maxTokens - usage.tokens - estimatedInput);
         if (planOutputTokens < 16) throw new RunProcessingError("run_token_budget_exceeded", false, usage);
@@ -195,8 +239,8 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       }
 
       checkSignal(signal, handlerContext.signal, usage);
-      const initialReplay = initialConversation(selection, approvedPlan, true);
-      const initialPrompt = buildCodePrompt(loaded.prompt, approvedPlan);
+      const initialReplay = initialConversation(selection, approvedPlan, true, state.gameSpec);
+      const initialPrompt = buildCodePrompt(loaded.prompt, approvedPlan, state.gameSpec);
       const initialEstimate = estimateTokens(JSON.stringify({ prompt: initialPrompt, replay: initialReplay, tools: AGENT_TOOL_DEFINITIONS })) + 1_500;
       if (Math.min(MAX_CODE_OUTPUT_TOKENS, options.maxTokens - usage.tokens - initialEstimate) < 16) {
         throw new RunProcessingError("run_token_budget_exceeded", false, usage);
@@ -204,8 +248,16 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       const sandboxState = await ensureSandbox(options, state, handlerContext.claim, run.projectId);
       if (sandboxState !== "ready") throw new RunProcessingError("sandbox_not_ready", false, usage);
       const templateReady = await ensurePhaserTemplate(options, state, handlerContext.claim, run.projectId);
+      await createGameCheckpoint(options, state, handlerContext.claim, run.projectId);
+      if (templateReady) {
+        const writeSpec = internalCall("agent-game-spec-v1", "write_file", {
+          path: GAME_SPEC_PATH,
+          content: gameSpecFile(state.gameSpec!),
+        }, "Guardar la especificación validada del juego");
+        await executeCachedTool(options, state, handlerContext.claim, run.projectId, writeSpec, true);
+      }
 
-      let replay = initialConversation(selection, approvedPlan, templateReady);
+      let replay = initialConversation(selection, approvedPlan, templateReady, state.gameSpec);
       let round = 0;
       let repairAttempts = 0;
       let repairInstruction: string | undefined;
@@ -218,6 +270,7 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
           projectId: run.projectId,
           requestText: loaded.prompt,
           plan: approvedPlan,
+          gameSpec: state.gameSpec!,
           selection,
           replay,
           repairInstruction,
@@ -228,15 +281,19 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
         finalSummary = result.summary;
 
         await handlerContext.markVerifying();
-        const verification = await verifyProject(options, state, handlerContext.claim, run.projectId, repairAttempts + 1);
-        if (verification.status !== "failed") {
+        const verification = await verifyProject(options, state, handlerContext.claim, run.projectId, state.gameSpec!, repairAttempts + 1);
+        if (verification.status === "passed") {
+          if (!findEvent(state.events, "agent.preview_ready")) {
+            await append(state, options.store, handlerContext.claim, { type: "agent.preview_ready", payload: { state: "ready" } });
+          }
           await append(state, options.store, handlerContext.claim, {
             type: "agent.completed",
             payload: {
               summary: finalSummary || approvedPlan.summary,
-              verification: verification.status,
+              verification: "passed",
             },
           });
+          await discardGameCheckpoint(options, state, handlerContext.claim).catch(() => undefined);
           return { usage: state.usage };
         }
         if (repairAttempts >= MAX_REPAIR_ATTEMPTS) {
@@ -252,14 +309,22 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
         repairInstruction = "Corrige los fallos de build o tests indicados en el mensaje más reciente. Después vuelve a usar las herramientas de verificación.";
       }
     } catch (error) {
+      let finalError: unknown = error;
+      if (state.checkpointAvailable && state.checkpoint) {
+        try {
+          await restoreCurrentCheckpoint(options, state, handlerContext.claim, run.projectId);
+          await discardGameCheckpoint(options, state, handlerContext.claim).catch(() => undefined);
+        }
+        catch { finalError = new RunProcessingError("game_recovery_failed", false, state.usage); }
+      }
       const measured = measuredUsage(state.events);
       const finalUsage = { tokens: Math.max(measured.tokens, state.usage.tokens), images: Math.max(measured.images, state.usage.images) };
       state.usage = finalUsage;
-      if (error instanceof RunProcessingError) {
+      if (finalError instanceof RunProcessingError) {
         if (!findEvent(state.events, "agent.failed")) {
-          await append(state, options.store, handlerContext.claim, { type: "agent.failed", payload: { errorCode: error.code } }).catch(() => undefined);
+          await append(state, options.store, handlerContext.claim, { type: "agent.failed", payload: { errorCode: finalError.code } }).catch(() => undefined);
         }
-        throw new RunProcessingError(error.code, error.retryable, { tokens: Math.max(finalUsage.tokens, error.usage?.tokens ?? 0), images: Math.max(finalUsage.images, error.usage?.images ?? 0) });
+        throw new RunProcessingError(finalError.code, finalError.retryable, { tokens: Math.max(finalUsage.tokens, finalError.usage?.tokens ?? 0), images: Math.max(finalUsage.images, finalError.usage?.images ?? 0) });
       }
       if (handlerContext.signal.aborted || deadlineSignal.aborted) {
         const code = handlerContext.signal.aborted ? "run_cancelled" : "run_time_limit_exceeded";
@@ -279,6 +344,7 @@ async function runCodeUntilFinal(input: {
   projectId: string;
   requestText: string;
   plan: MetaPlan;
+  gameSpec: GameSpec;
   selection: SkillSelection;
   replay: MetaConversationItem[];
   repairInstruction?: string;
@@ -289,7 +355,7 @@ async function runCodeUntilFinal(input: {
   while (true) {
     checkSignal(input.state.signal, input.state.userSignal, input.state.usage);
     round += 1;
-    const prompt = buildCodePrompt(input.requestText, input.plan, input.repairInstruction);
+    const prompt = buildCodePrompt(input.requestText, input.plan, input.gameSpec, input.repairInstruction);
     const inputEstimate = estimateTokens(JSON.stringify({ prompt, replay, tools: AGENT_TOOL_DEFINITIONS })) + 1_500;
     const outputBudget = Math.min(MAX_CODE_OUTPUT_TOKENS, input.options.maxTokens - input.state.usage.tokens - inputEstimate);
     if (outputBudget < 16) throw new RunProcessingError("run_token_budget_exceeded", false, input.state.usage);
@@ -474,10 +540,6 @@ async function executeCachedTool(
       payload: { callId: call.callId, toolName: call.name, summary: call.summary || call.name },
     },
   ];
-  if (call.name === "start_dev_server" && isRecord(compact.value) && compact.value.status === "ready") {
-    // startDevServer returns only after the sandbox health check succeeds.
-    completedEvents.push({ type: "agent.preview_ready", payload: { state: "ready" } });
-  }
   await appendBatch(state, options.store, claim, completedEvents);
   return compact.value;
 }
@@ -487,75 +549,130 @@ async function verifyProject(
   state: RunState,
   claim: RunWorkerClaim,
   projectId: string,
+  gameSpec: GameSpec,
   pass: number,
 ): Promise<Verification> {
-  const manifestCall = internalCall(`agent-verify-manifest-${pass}`, "read_file", { path: "package.json" }, "Leer package.json para elegir verificaciones");
-  let result: unknown;
-  try {
-    result = await executeCachedTool(options, state, claim, projectId, manifestCall, true);
-  } catch (error) {
-    if (error instanceof RunProcessingError && ["sandbox_file_not_found", "sandbox_path_not_found"].includes(error.code)) {
+  const runTool = async (name: string, args: Record<string, unknown>, summary: string) => {
+    const call = internalCall(`agent-verify-${name}-${pass}-${hashValue(args).slice(0, 8)}`, name, args, summary);
+    return executeCachedTool(options, state, claim, projectId, call, true);
+  };
+  return verifyGame({
+    spec: gameSpec,
+    async readManifest() {
+      const result = await runTool("read_file", { path: "package.json" }, "Leer el manifiesto para elegir verificaciones") as { content?: unknown };
+      if (typeof result.content !== "string") throw new Error("game_manifest_missing");
+      return result.content;
+    },
+    async runCommand(args) {
+      return await runTool("run_command", { command: "npm", args: [...args], cwd: "" }, `Verificar npm ${args.join(" ")}`) as import("@meta-game/contracts").SandboxToolCommandResult;
+    },
+    async startDevServer() {
+      return await runTool("start_dev_server", {}, "Comprobar salud de la preview privada") as { status: string; port: number | null };
+    },
+    verifyInteraction: () => options.sandbox.verifyGameInteraction(projectId, {
+      genre: gameSpec.genre,
+      controls: gameSpec.controls,
+    }, state.signal),
+    readLogs: () => options.sandbox.readLogs(projectId, state.signal),
+    async onCheck(check) {
       await append(state, options.store, claim, {
         type: "agent.verification",
-        payload: { check: "package.json", status: "skipped", summary: "No se pudo leer el manifiesto del proyecto." },
+        payload: {
+          check: check.check,
+          status: check.status,
+          ...(check.exitCode === undefined ? {} : { exitCode: check.exitCode }),
+          summary: check.summary,
+        },
       });
-      return { status: "skipped", failures: [] };
-    }
-    throw error;
-  }
-  const manifest = result as { path?: unknown; content?: unknown };
-  if (typeof manifest.content !== "string") {
-    await append(state, options.store, claim, {
-      type: "agent.verification",
-      payload: { check: "package.json", status: "skipped", summary: "El workspace todavía no tiene package.json." },
-    });
-    return { status: "skipped", failures: [] };
-  }
-  let scripts: Record<string, unknown>;
+    },
+  });
+}
+
+async function createGameCheckpoint(
+  options: AgentOrchestratorOptions,
+  state: RunState,
+  claim: RunWorkerClaim,
+  projectId: string,
+): Promise<void> {
+  if (state.checkpointAvailable) return;
   try {
-    const parsed: unknown = JSON.parse(manifest.content);
-    if (!isRecord(parsed) || !isRecord(parsed.scripts)) throw new Error("invalid_manifest");
-    scripts = parsed.scripts;
+    const captured = await captureGameCheckpoint(options.sandbox, projectId, state.signal);
+    const checkpoint = await options.checkpoints.write(checkpointIdentity(claim), captured.body);
+    state.checkpoint = { ...checkpoint, fileCount: captured.fileCount };
+    state.checkpointAvailable = true;
+    await append(state, options.store, claim, {
+      type: "agent.checkpoint",
+      payload: { operation: "saved", ...state.checkpoint },
+    });
   } catch {
-    await append(state, options.store, claim, {
-      type: "agent.verification",
-      payload: { check: "package.json", status: "failed", exitCode: 1, summary: "package.json no contiene JSON válido ni scripts verificables." },
-    });
-    return { status: "failed", failures: ["package.json no contiene JSON válido."] };
+    checkSignal(state.signal, state.userSignal, state.usage);
+    throw new RunProcessingError("game_checkpoint_failed", false, state.usage);
   }
+}
 
-  const checks = [
-    ...(typeof scripts.test === "string" && scripts.test.trim() ? [{ key: "test", args: ["test"] }] : []),
-    ...(typeof scripts.build === "string" && scripts.build.trim() ? [{ key: "build", args: ["run", "build"] }] : []),
-  ];
-  if (checks.length === 0) {
-    await append(state, options.store, claim, {
-      type: "agent.verification",
-      payload: { check: "project", status: "skipped", summary: "No hay scripts npm test o npm run build para ejecutar." },
-    });
-    return { status: "skipped", failures: [] };
-  }
+async function restoreCurrentCheckpoint(
+  options: AgentOrchestratorOptions,
+  state: RunState,
+  claim: RunWorkerClaim,
+  projectId: string,
+): Promise<void> {
+  if (!state.checkpointAvailable || !state.checkpoint) return;
+  const signal = AbortSignal.timeout(30_000);
+  const archive = await options.checkpoints.read(checkpointIdentity(claim), state.checkpoint);
+  const manifest = decodeGameCheckpoint(archive);
+  if (manifest.files.length !== state.checkpoint.fileCount) throw new Error("game_checkpoint_file_count_mismatch");
+  await restoreGameCheckpoint(options.sandbox, projectId, manifest, signal);
+  await append(state, options.store, claim, {
+    type: "agent.checkpoint",
+    payload: { operation: "restored", ...state.checkpoint },
+  });
+}
 
-  const failures: string[] = [];
-  for (let index = 0; index < checks.length; index += 1) {
-    const check = checks[index]!;
-    const call = internalCall(`agent-verify-${check.key}-${pass}-${index + 1}`, "run_command", {
-      command: "npm", args: check.args, cwd: "",
-    }, `Verificar npm ${check.args.join(" ")}`);
-    const output = await executeCachedTool(options, state, claim, projectId, call, true) as {
-      stdout?: unknown; stderr?: unknown; exitCode?: unknown;
-    };
-    const exitCode = typeof output.exitCode === "number" ? output.exitCode : -1;
-    const summary = redactSensitiveText([output.stdout, output.stderr].filter((value): value is string => typeof value === "string").join("\n")).slice(-900) ||
-      (exitCode === 0 ? "El comando terminó correctamente." : "El comando terminó con error.");
-    const passed = exitCode === 0;
-    await append(state, options.store, claim, {
-      type: "agent.verification",
-      payload: { check: `npm ${check.args.join(" ")}`, status: passed ? "passed" : "failed", exitCode, summary },
-    });
-    if (!passed) failures.push(`${check.key}: ${summary}`);
-  }
-  return { status: failures.length ? "failed" : "passed", failures };
+async function discardGameCheckpoint(
+  options: AgentOrchestratorOptions,
+  state: RunState,
+  claim: RunWorkerClaim,
+): Promise<void> {
+  if (!state.checkpointAvailable || !state.checkpoint) return;
+  await options.checkpoints.delete(checkpointIdentity(claim));
+  state.checkpointAvailable = false;
+  await append(state, options.store, claim, {
+    type: "agent.checkpoint",
+    payload: { operation: "discarded", ...state.checkpoint },
+  });
+}
+
+function checkpointIdentity(claim: RunWorkerClaim) {
+  return { ownerUserId: claim.ownerUserId, projectId: claim.projectId, runId: claim.runId };
+}
+
+async function inspectPriorGameSpec(sandbox: AgentSandbox, projectId: string, signal: AbortSignal): Promise<unknown | undefined> {
+  const inspected = await sandbox.inspect(projectId, signal).catch((error: unknown) => {
+    if (isNotFound(error)) return undefined;
+    throw error;
+  });
+  if (inspected?.state !== "ready") return undefined;
+  const file = await sandbox.readFile(projectId, GAME_SPEC_PATH, signal).catch((error: unknown) => {
+    if (isNotFound(error)) return undefined;
+    throw error;
+  });
+  if (!file) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(file.content);
+    return GameSpecSchema.safeParse(parsed).success ? parsed : undefined;
+  } catch { return undefined; }
+}
+
+async function isExistingPhaserWorkspace(sandbox: AgentSandbox, projectId: string, signal: AbortSignal): Promise<boolean> {
+  try {
+    const [manifest, entry] = await Promise.all([
+      sandbox.readFile(projectId, "package.json", signal),
+      sandbox.readFile(projectId, "src/main.ts", signal),
+    ]);
+    const parsed: unknown = JSON.parse(manifest.content);
+    return isRecord(parsed) && isRecord(parsed.dependencies) && parsed.dependencies.phaser === PHASER_VERSION &&
+      entry.content.includes("Phaser.Game");
+  } catch { return false; }
 }
 
 async function ensureSandbox(
@@ -619,9 +736,6 @@ async function ensurePhaserTemplate(
     }
     try {
       await startPhaserTemplatePreview(options.sandbox, projectId, state.signal);
-      if (!state.events.some((event) => event.type === "agent.preview_ready")) {
-        await append(state, options.store, claim, { type: "agent.preview_ready", payload: { state: "ready" } });
-      }
     } catch {
       checkSignal(state.signal, state.userSignal, state.usage);
       throw new RunProcessingError("phaser_template_preview_failed", false, state.usage);
@@ -638,7 +752,7 @@ async function ensurePhaserTemplate(
     checkSignal(state.signal, state.userSignal, state.usage);
     throw new RunProcessingError("phaser_template_inspection_failed", false, state.usage);
   });
-  if (inspection.status === "preserve") return false;
+  if (inspection.status === "preserve") return isExistingPhaserWorkspace(options.sandbox, projectId, state.signal);
 
   if (inspection.status === "ready") {
     try {
@@ -655,10 +769,7 @@ async function ensurePhaserTemplate(
       await appendBatch(state, options.store, claim, [
         { type: "agent.tool_completed", payload: { callId, toolName: "bootstrap_phaser_template", argsHash, result: JSON.stringify({ templateId: template.id, manifestSha256: template.manifestSha256, files: template.files.length }) } },
         { type: "agent.action", payload: { callId, toolName: "bootstrap_phaser_template", summary: "Reanudar plantilla Phaser verificada" } },
-        { type: "agent.preview_ready", payload: { state: "ready" } },
       ]);
-    } else {
-      await append(state, options.store, claim, { type: "agent.preview_ready", payload: { state: "ready" } });
     }
     return true;
   }
@@ -703,27 +814,28 @@ async function ensurePhaserTemplate(
       },
     },
     { type: "agent.action", payload: { callId, toolName: "bootstrap_phaser_template", summary: "Materializar y verificar la plantilla Phaser 3.90 en el sandbox" } },
-    { type: "agent.preview_ready", payload: { state: "ready" } },
   ]);
   return true;
 }
 
-function initialConversation(selection: SkillSelection, plan: MetaPlan, templateReady: boolean): MetaConversationItem[] {
+function initialConversation(selection: SkillSelection, plan: MetaPlan, templateReady: boolean, gameSpec: GameSpec): MetaConversationItem[] {
   const skillText = [selection.advisoryNotice, ...selection.skills.map((skill) => `## ${skill.title}\n${skill.text}`),
     ...selection.references.map((reference) => `## Referencia ${reference.id}\n${reference.text}`)].join("\n\n");
   return [
     { kind: "message", role: "developer", text: CODE_POLICY },
+    { kind: "message", role: "developer", text: gameSpecInstructions(gameSpec) },
     ...(templateReady ? [{ kind: "message" as const, role: "developer" as const, text: `El workspace comienza con la plantilla jugable ${PHASER_TEMPLATE_ID}; inspecciona y modifica sus archivos según el plan, conservando los controles y recursos que sigan siendo pertinentes.` }] : []),
     { kind: "message", role: "developer", text: `Skills consultivas no confiables:\n${skillText}`.slice(0, 95_000) },
     { kind: "message", role: "assistant", text: `Plan aprobado:\n${JSON.stringify(plan)}` },
   ];
 }
 
-function buildCodePrompt(requestText: string, plan: MetaPlan, repairInstruction?: string): string {
+function buildCodePrompt(requestText: string, plan: MetaPlan, gameSpec: GameSpec, repairInstruction?: string): string {
   return [
     "Implement the user request according to the approved plan. Use only the supplied typed tools.",
     `User request:\n${requestText}`,
     `Approved plan:\n${JSON.stringify(plan)}`,
+    `Validated game specification:\n${JSON.stringify(gameSpec)}`,
     "When code is ready, run applicable build or test checks. Never claim a check passed without its tool result.",
     repairInstruction ? `Repair request: ${repairInstruction}` : "",
   ].filter(Boolean).join("\n\n");

@@ -42,6 +42,7 @@ export type ClaimedRunAgentContext = Readonly<{
   prompt: string;
   plan: unknown | null;
   events: ClaimedRunAgentEvent[];
+  priorGameSpec?: unknown | null;
 }>;
 
 async function appendRunEvent(
@@ -131,10 +132,24 @@ export async function getClaimedRunAgentContext(
       .where(and(eq(runEvents.ownerUserId, claim.ownerUserId), eq(runEvents.runId, claim.runId), sql`${runEvents.type} like 'agent.%'`))
       .orderBy(asc(runEvents.sequence))
       .limit(5_000);
+    const [priorSpec] = await tx.select({ payload: runEvents.payload })
+      .from(runEvents)
+      .innerJoin(runs, and(eq(runs.id, runEvents.runId), eq(runs.ownerUserId, runEvents.ownerUserId), eq(runs.projectId, runEvents.projectId)))
+      .where(and(
+        eq(runEvents.ownerUserId, claim.ownerUserId),
+        eq(runEvents.projectId, claim.projectId),
+        eq(runEvents.type, "agent.game_spec"),
+        sql`${runs.id} <> ${claim.runId}`,
+        eq(runs.status, "succeeded"),
+      ))
+      .orderBy(desc(runs.updatedAt), desc(runEvents.sequence))
+      .limit(1);
     if (!message) {
       throw new Error("run_user_message_missing");
     }
-    return { prompt: message.content, plan: run.plan, events };
+    const priorPayload = priorSpec?.payload as Record<string, unknown> | undefined;
+    const priorGameSpec = priorPayload && typeof priorPayload === "object" ? priorPayload.spec : null;
+    return { prompt: message.content, plan: run.plan, events, priorGameSpec };
   });
 }
 

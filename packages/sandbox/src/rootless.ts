@@ -684,6 +684,16 @@ export class RootlessDockerDriver implements SandboxDriver {
     if (verify.exitCode !== 0 || verify.stdout !== "ready") throw new SandboxRuntimeError("sandbox_npm_lifecycle_probe_failed");
     const build = await this.execWithSpec(spec, ["npm", "run", "build"], "", 15_000, true, { maxOutputBytes: 1024 });
     if (build.exitCode !== 0 || !build.stdout.includes("42")) throw new SandboxRuntimeError("sandbox_build_probe_failed");
+    const browserProbe = await this.execWithSpec(
+      spec, ["node", "/opt/meta-game/verify-game.mjs"], "", 15_000, true,
+      { stdin: JSON.stringify({ probe: true }), maxOutputBytes: 4_096 },
+    );
+    let browserReady = false;
+    try {
+      const result = JSON.parse(browserProbe.stdout) as { status?: unknown; checks?: Array<{ status?: unknown }> };
+      browserReady = browserProbe.exitCode === 0 && result.status === "passed" && result.checks?.[0]?.status === "passed";
+    } catch { /* Fail closed if the pinned sandbox image has no valid browser verifier. */ }
+    if (!browserReady) throw new SandboxRuntimeError("sandbox_browser_verifier_probe_failed");
     const output = await this.execWithSpec(
       spec, ["node", "-e", "process.stdout.write('x'.repeat(100000))"], "", 15_000, true, { maxOutputBytes: 1024 },
     );

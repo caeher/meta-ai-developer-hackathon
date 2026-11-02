@@ -9,12 +9,13 @@ import {
   SandboxRunCommandInputSchema,
   SandboxWriteFileInputSchema,
   SandboxWriteBinaryFileInputSchema,
+  GameBrowserVerificationInputSchema,
 } from "@meta-game/contracts";
 
 const projectPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox$/i;
 const execPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/exec$/i;
 const stopPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/stop$/i;
-const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|write-file|write-binary-file|list-files|install-dependencies|run-command|start-dev-server|read-logs)$/i;
+const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|write-file|write-binary-file|list-files|install-dependencies|run-command|start-dev-server|read-logs|verify-game)$/i;
 const projectIdSchema = z.uuid();
 const execSchema = z.object({
   argv: z.array(z.string()).min(1).max(64),
@@ -133,6 +134,12 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
         send(response, 200, await service.runCommand(projectId, input.data));
         return;
       }
+      if (tool === "verify-game") {
+        const input = GameBrowserVerificationInputSchema.safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        send(response, 200, await service.verifyGameInteraction(projectId, input.data));
+        return;
+      }
     }
     send(response, 405, { error: "method_not_allowed" });
   } catch (error) {
@@ -143,7 +150,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     } else if (error instanceof SandboxRuntimeError) {
       const status = ["sandbox_not_running", "execution_timeout", "sandbox_busy"].includes(error.code) ? 409 :
         ["request_too_large", "file_too_large"].includes(error.code) ? 413 :
-          ["invalid_json", "invalid_path", "invalid_tool_input", "invalid_dependency_specification", "sandbox_command_not_allowed"].includes(error.code) ? 400 :
+            ["invalid_json", "invalid_path", "invalid_tool_input", "invalid_dependency_specification", "dependency_not_approved", "sandbox_command_not_allowed"].includes(error.code) ? 400 :
             ["file_not_found", "path_not_found"].includes(error.code) ? 404 : 503;
       send(response, status, { error: error.code });
     } else {

@@ -26,7 +26,8 @@ export class HudScene extends Phaser.Scene {
       fontSize: "14px",
       color: "#7dcfff",
     }).setScrollFactor(0).setDepth(101);
-    this.help = this.add.text(938, 12, GAME_HELP[genre], {
+    const controlHelp = this.registry.get("controlHelp") as string | undefined;
+    this.help = this.add.text(938, 12, controlHelp ?? GAME_HELP[genre], {
       fontFamily: "ui-sans-serif, system-ui, sans-serif",
       fontSize: "11px",
       color: "#a9b1d6",
@@ -41,7 +42,8 @@ export class HudScene extends Phaser.Scene {
     const hint = this.registry.get("worldHint") as string | undefined;
     if (hint && hint !== this.previousHint) {
       this.previousHint = hint;
-      this.help.setText(`${GAME_HELP[snapshot.genre]}\n${hint}`);
+      const controlHelp = this.registry.get("controlHelp") as string | undefined;
+      this.help.setText(`${controlHelp ?? GAME_HELP[snapshot.genre]}\n${hint}`);
     }
     const status = snapshot.phase === "won" ? "¡Victoria! · R para reiniciar"
       : snapshot.phase === "lost" ? "Derrota · R para volver a jugar"

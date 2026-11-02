@@ -6,6 +6,10 @@ import {
   SANDBOX_FILE_OUTPUT_MAX_BYTES,
   SANDBOX_LIST_MAX_ENTRIES,
   SandboxInstallDependenciesInputSchema,
+  GameBrowserVerificationInputSchema,
+  GameBrowserVerificationResultSchema,
+  type GameBrowserVerificationInput,
+  type GameBrowserVerificationResult,
   SandboxWriteBinaryFileInputSchema,
   SANDBOX_BINARY_FILE_MAX_BYTES,
   SandboxListFilesInputSchema,
@@ -23,6 +27,14 @@ import {
 import type { SandboxDriver, SandboxExecOptions, SandboxExecResult, SandboxLimits } from "./driver";
 import { SandboxRuntimeError } from "./driver";
 import type { SandboxRegistry } from "./registry";
+
+const APPROVED_GAME_DEPENDENCIES = new Set([
+  "@types/node@24.19.2",
+  "phaser@3.90.0",
+  "typescript@5.9.3",
+  "vite@7.3.7",
+  "vitest@3.2.7",
+]);
 
 export class SandboxNotFoundError extends Error {
   constructor() { super("sandbox_not_found"); this.name = "SandboxNotFoundError"; }
@@ -194,9 +206,36 @@ export class SandboxService {
     ));
   }
 
+  async verifyGameInteraction(projectId: string, input: GameBrowserVerificationInput): Promise<GameBrowserVerificationResult> {
+    const parsed = GameBrowserVerificationInputSchema.safeParse(input);
+    if (!parsed.success) throw new SandboxRuntimeError("invalid_tool_input");
+    const record = await this.requiredRecord(projectId);
+    const serverReady = record.status === "ready" && record.devServerStatus === "ready" &&
+      record.devServerPort === SANDBOX_DEV_SERVER_PORT && record.devServerLeaseExpiresAt !== null &&
+      record.devServerLeaseExpiresAt.getTime() > this.clock();
+    if (!serverReady) throw new SandboxRuntimeError("game_browser_preview_unhealthy");
+    const output = await this.executeSandboxCommand(
+      projectId,
+      ["node", "/opt/meta-game/verify-game.mjs"],
+      "",
+      Math.min(30_000, this.environment.SANDBOX_COMMAND_TIMEOUT_MS),
+      SANDBOX_COMMAND_OUTPUT_MAX_BYTES,
+      JSON.stringify(parsed.data),
+    );
+    let result: unknown;
+    try { result = JSON.parse(output.stdout); }
+    catch { throw new SandboxRuntimeError("game_browser_verification_invalid"); }
+    const validated = GameBrowserVerificationResultSchema.safeParse(result);
+    if (!validated.success) throw new SandboxRuntimeError("game_browser_verification_invalid");
+    return validated.data;
+  }
+
   async installDependencies(projectId: string, input: SandboxInstallDependenciesInput): Promise<SandboxToolCommandResult> {
     const parsed = SandboxInstallDependenciesInputSchema.safeParse(input);
     if (!parsed.success) throw new SandboxRuntimeError("invalid_dependency_specification");
+    if (parsed.data.packages.some(({ name, version }) => !APPROVED_GAME_DEPENDENCIES.has(`${name}@${version}`))) {
+      throw new SandboxRuntimeError("dependency_not_approved");
+    }
     const args = [
       "install", "--save-exact", "--ignore-scripts", "--no-audit", "--no-fund",
       "--registry=http://npm-proxy:8080/registry/registry.npmjs.org/", "--",
