@@ -42,6 +42,10 @@ No se completó la validación externa: `infra/.env` no define `PREVIEW_BASE_DOM
 
 La integración de iframe de #15 cuenta con E2E de fixtures en Chromium, Firefox y WebKit; esto comprueba el contrato de navegador, no DNS/TLS ni las cookies de un dominio real. La issue continúa abierta. Mantener `PREVIEW_GATEWAY_ENABLED=false` hasta validar DNS/TLS público, cookies en los navegadores objetivo con el dominio real, Clerk de prueba y el host Linux dedicado.
 
+### Validación local de #15 (2 de noviembre de 2026)
+
+En Node 24.22.1, `npm run typecheck`, `npm run lint`, `npm run build`, `npm run build:gateway` y `git diff --check` pasaron. `npm test` pasó 128 pruebas y omitió 22 pruebas que requieren servicios de integración. `npm run test:integration` pasó 28 pruebas con PostgreSQL, Redis y Silo locales y omitió una prueba que requiere `PREVIEW_TEST_REDIS_URL`; esas pruebas verifican además CSP y headers de seguridad del gateway. `npm run test:e2e` pasó 33 pruebas Playwright en Chromium, Firefox y WebKit; incluye iframe con canvas/assets/HMR, grants rechazados para anónimo/otro dueño, grant vencido, cookie particionada bloqueada, navegación con teclado e historial de rutas hostiles. Los grants y los sitios de preview E2E son fixtures, no sustituyen DNS/TLS, Clerk ni cookie real del dominio.
+
 ## Reversión
 
 Deshabilite `PREVIEW_GATEWAY_ENABLED`, detenga gateway y Caddy y revoque el epoch de cada proyecto. Retire la clave privada de la app y las claves públicas tras vencer grants anteriores. No borre la red `mg-sandbox-egress` ni recursos Docker administrados mientras existan sandboxes activos.
