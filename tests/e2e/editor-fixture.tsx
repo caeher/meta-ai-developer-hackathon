@@ -11,8 +11,27 @@ import "../../apps/web/styles/globals.css";
 
 const projectId = "9fe9e0e0-0b85-4eb8-bd69-7f16c7569f28";
 const messageKey = `editor-e2e-messages-${projectId}`;
+const runKey = `editor-e2e-run-${projectId}`;
+const streamCursorsKey = `editor-e2e-stream-cursors-${projectId}`;
 const projectNameKey = `editor-e2e-name-${projectId}`;
 let privateApiInstalled = false;
+
+interface RunFixture {
+  run: {
+    id: string;
+    projectId: string;
+    status: "queued" | "planning" | "running" | "verifying" | "succeeded" | "failed" | "cancelled";
+    errorCode: string | null;
+    cancelRequested: boolean;
+    createdAt: string;
+    updatedAt: string;
+  };
+  idempotencyKey: string;
+  sourceMessageRequestId: string;
+  owner: string;
+  events: Array<Record<string, unknown>>;
+  activeFixture: boolean;
+}
 
 function readMessages(): PersistedMessage[] {
   try {
@@ -26,6 +45,38 @@ function readProjectName(): string {
   return sessionStorage.getItem(projectNameKey) ?? "Aventura de prueba";
 }
 
+function readRun(): RunFixture | null {
+  try { return JSON.parse(sessionStorage.getItem(runKey) ?? "null") as RunFixture | null; }
+  catch { return null; }
+}
+
+function saveRun(run: RunFixture | null) {
+  if (run) sessionStorage.setItem(runKey, JSON.stringify(run));
+  else sessionStorage.removeItem(runKey);
+}
+
+function fixtureEvent(runId: string, sequence: number, type: string, payload: Record<string, unknown>) {
+  return {
+    id: sequence,
+    type,
+    data: {
+      version: 1,
+      runId,
+      sequence,
+      createdAt: new Date(Date.now() + sequence).toISOString(),
+      type,
+      payload,
+    },
+  };
+}
+
+function sse(events: Array<Record<string, unknown>>, after: number) {
+  const body = events.filter((event) => Number(event.id) > after).map((event) =>
+    `id: ${String(event.id)}\nevent: ${String(event.type)}\ndata: ${JSON.stringify(event.data)}\n\n`,
+  ).join("");
+  return new Response(body, { headers: { "cache-control": "private, no-store", "content-type": "text/event-stream; charset=utf-8" } });
+}
+
 function installPrivateApiFixture() {
   if (privateApiInstalled) return;
   privateApiInstalled = true;
@@ -34,6 +85,7 @@ function installPrivateApiFixture() {
   window.fetch = async (input, init) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin);
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+    const identity = new URLSearchParams(location.search).get("identity") ?? "owner-a";
 
     if (url.pathname === `/api/projects/${projectId}/preview-grant` && method === "POST") {
       nextGrant += 1;
@@ -65,6 +117,84 @@ function installPrivateApiFixture() {
       };
       sessionStorage.setItem(messageKey, JSON.stringify([...readMessages(), saved]));
       return Response.json(saved, { status: 201 });
+    }
+
+    if (url.pathname === `/api/projects/${projectId}/runs` && method === "GET") {
+      const existing = readRun();
+      if (existing && existing.owner !== identity) return Response.json({ error: "not_found" }, { status: 404 });
+      return Response.json({
+        run: existing?.run ?? null,
+        sourceMessageRequestId: existing?.sourceMessageRequestId ?? null,
+        enabled: true,
+      });
+    }
+
+    if (url.pathname === `/api/projects/${projectId}/runs` && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { idempotencyKey: string; messageRequestId: string; contributorConsent: boolean };
+      const existing = readRun();
+      if (existing?.idempotencyKey === body.idempotencyKey) return Response.json({ run: existing.run, duplicate: true });
+      if (body.contributorConsent !== true || !readMessages().some((message) => message.requestId === body.messageRequestId)) {
+        return Response.json({ error: "contributor_consent_required" }, { status: 400 });
+      }
+      const activeFixture = new URLSearchParams(location.search).has("run-active");
+      const id = crypto.randomUUID();
+      const createdAt = new Date().toISOString();
+      const run: RunFixture["run"] = {
+        id,
+        projectId,
+        status: activeFixture ? "running" : "succeeded",
+        errorCode: null,
+        cancelRequested: false,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const events: RunFixture["events"] = [
+        fixtureEvent(id, 1, "run.queued", { status: "queued" }),
+        fixtureEvent(id, 2, "run.status", { status: "planning" }),
+        fixtureEvent(id, 3, "plan.created", { summary: "Crear un juego de prueba.", objective: "Moverse hasta la meta.", steps: [{ id: "scene", title: "Crear la escena" }] }),
+        fixtureEvent(id, 4, "step.started", { stepId: "write-1", title: "Escribir un archivo" }),
+        ...(activeFixture ? [] : [
+          fixtureEvent(id, 5, "step.completed", { stepId: "write-1", title: "Escribir un archivo", status: "succeeded" }),
+          fixtureEvent(id, 6, "file.changed", { path: "src/main.ts", bytesWritten: 64 }),
+          fixtureEvent(id, 7, "verification.result", { check: "npm run build", status: "passed", exitCode: 0, summary: "Build correcto." }),
+          fixtureEvent(id, 8, "preview.ready", { state: "ready" }),
+          fixtureEvent(id, 9, "run.finished", { summary: "El prototipo quedó verificado." }),
+        ]),
+      ];
+      const record = { run, idempotencyKey: body.idempotencyKey, sourceMessageRequestId: body.messageRequestId, owner: identity, events, activeFixture };
+      saveRun(record);
+      return Response.json({ run, duplicate: false }, { status: 202 });
+    }
+
+    const eventRoute = url.pathname.match(/^\/api\/runs\/([0-9a-f-]+)\/events$/i);
+    if (eventRoute) {
+      const existing = readRun();
+      if (!existing || existing.run.id !== eventRoute[1] || existing.owner !== identity) return Response.json({ error: "not_found" }, { status: 404 });
+      const requestHeaders = input instanceof Request ? input.headers : new Headers(init?.headers);
+      const cursor = Number(requestHeaders.get("last-event-id") ?? 0);
+      const cursors = JSON.parse(sessionStorage.getItem(streamCursorsKey) ?? "[]") as number[];
+      cursors.push(Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0);
+      sessionStorage.setItem(streamCursorsKey, JSON.stringify(cursors));
+      if (new URLSearchParams(location.search).has("stream-drop") && cursors.length === 1) {
+        return sse(existing.events.slice(0, 3), Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0);
+      }
+      return sse(existing.events, Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0);
+    }
+
+    const cancelRoute = url.pathname.match(new RegExp(`^/api/projects/${projectId}/runs/([0-9a-f-]+)$`, "i"));
+    if (cancelRoute && method === "DELETE") {
+      const existing = readRun();
+      if (!existing || existing.run.id !== cancelRoute[1] || existing.owner !== identity) return Response.json({ error: "not_found" }, { status: 404 });
+      if (existing.activeFixture && existing.run.status !== "cancelled") {
+        existing.run = { ...existing.run, status: "cancelled", cancelRequested: false, updatedAt: new Date().toISOString() };
+        existing.events = [
+          ...existing.events,
+          fixtureEvent(existing.run.id, existing.events.length + 1, "run.cancel_requested", {}),
+          fixtureEvent(existing.run.id, existing.events.length + 2, "run.cancelled", {}),
+        ];
+        saveRun(existing);
+      }
+      return Response.json({ run: existing.run });
     }
 
     if (url.pathname === `/api/projects/${projectId}` && method === "PATCH") {

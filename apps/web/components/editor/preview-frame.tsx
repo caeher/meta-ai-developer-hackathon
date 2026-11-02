@@ -51,10 +51,13 @@ export function PreviewFrame({
   projectId,
   baseDomain,
   versions = [],
+  refreshRevision = 0,
 }: {
   projectId: string;
   baseDomain?: string;
   versions?: readonly PreviewVersion[];
+  /** Incremented only by an authenticated worker health event. */
+  refreshRevision?: number;
 }) {
   const origin = useMemo(() => getPreviewOrigin(projectId, baseDomain), [projectId, baseDomain]);
   const initialStatus: PreviewStatus = origin ? "booting" : "disabled";
@@ -125,7 +128,7 @@ export function PreviewFrame({
       operationRef.current += 1;
       clearTimers();
     };
-  }, [clearTimers, origin, startPreview]);
+  }, [clearTimers, origin, refreshRevision, startPreview]);
 
   useEffect(() => {
     if (!origin) return;

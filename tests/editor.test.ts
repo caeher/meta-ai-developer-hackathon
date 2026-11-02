@@ -68,6 +68,7 @@ describe("editor interactivo", () => {
   it("inserta preferencias editables y mantiene vacía la preview", async () => {
     renderEditor();
 
+    await waitFor(() => expect((screen.getByRole("button", { name: "Opciones rápidas" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Opciones rápidas" }));
     expect(screen.getByRole("button", { name: "Insertar: Plataformas 2D" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Insertar: Shooter 2D" })).not.toBeNull();
@@ -97,7 +98,7 @@ describe("editor interactivo", () => {
     expect((screen.getByRole("combobox", { name: "Versión de la vista previa" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("guarda el prompt en el endpoint privado sin iniciar una ejecución", async () => {
+  it("guarda el prompt y encola una ejecución idempotente después del consentimiento", async () => {
     const message = {
       id: "2f82ba61-ea6b-44bc-b5ec-e4126bbb2d00",
       projectId,
@@ -107,29 +108,70 @@ describe("editor interactivo", () => {
       sequence: 1,
       createdAt: new Date().toISOString(),
     };
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(message, { status: 201 }));
+    const runId = "00000000-0000-4000-8000-000000000002";
+    const run = {
+      id: runId,
+      projectId,
+      status: "queued",
+      errorCode: null,
+      cancelRequested: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const finished = {
+      version: 1,
+      runId,
+      sequence: 1,
+      createdAt: new Date().toISOString(),
+      type: "run.finished",
+      payload: { summary: "El prototipo quedó verificado." },
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === `/api/projects/${projectId}/runs` && !init?.method) return Response.json({ run: null, enabled: true });
+      if (url === `/api/projects/${projectId}/messages`) return Response.json(message, { status: 201 });
+      if (url === `/api/projects/${projectId}/runs` && init?.method === "POST") return Response.json({ run, duplicate: false }, { status: 202 });
+      if (url === `/api/runs/${runId}/events`) {
+        return new Response(`id: 1\nevent: run.finished\ndata: ${JSON.stringify(finished)}\n\n`, {
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
     vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000001");
     renderEditor();
 
     fireEvent.change(screen.getByLabelText("Describe tu juego"), { target: { value: "Género: plataformas 2D." } });
-    fireEvent.click(screen.getByRole("button", { name: "Guardar mensaje" }));
+    await screen.findByRole("button", { name: "Enviar al agente" });
+    const submit = screen.getByRole("button", { name: "Enviar al agente" }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Confirmo que tengo 18 años/ }));
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    fireEvent.click(submit);
 
     await waitFor(() => expect(screen.getByText("Género: plataformas 2D.")).not.toBeNull());
-    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/messages`, expect.objectContaining({
       method: "POST",
       body: JSON.stringify({ requestId: "00000000-0000-4000-8000-000000000001", content: "Género: plataformas 2D." }),
     }));
-    expect((await screen.findByRole("status")).textContent).toContain("El agente todavía no ejecuta generación.");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/runs`, expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ idempotencyKey: "00000000-0000-4000-8000-000000000001", messageRequestId: message.requestId, contributorConsent: true }),
+    })));
+    expect(await screen.findByText("El prototipo quedó verificado.")).not.toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Mensaje guardado y ejecución en cola.");
   });
 
   it("persiste el cambio de nombre con el endpoint de ownership del proyecto", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
-      id: projectId,
-      name: "Nueva aventura",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }));
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === `/api/projects/${projectId}/runs`) return Response.json({ run: null, enabled: true });
+      return Response.json({
+        id: projectId,
+        name: "Nueva aventura",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
     renderEditor();
 
     fireEvent.click(screen.getByRole("button", { name: "Editar nombre de Aventura de prueba" }));

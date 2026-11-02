@@ -140,7 +140,7 @@ test.describe("editor de dos paneles", () => {
     });
   }
 
-  test("inserta una opción, permite editarla, guarda y conserva el transcript al recargar", async ({ page }) => {
+  test("envía el prompt, reconstruye progreso durable y conserva el transcript al recargar", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
     await page.getByRole("button", { name: "Opciones rápidas" }).click();
@@ -149,14 +149,68 @@ test.describe("editor de dos paneles", () => {
 
     const prompt = page.getByLabel("Describe tu juego");
     await prompt.fill("Género: RPG top-down. Con un mapa y misiones.");
-    await page.getByRole("button", { name: "Guardar mensaje" }).click();
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Enviar al agente" }).click();
     await expect(page.getByText("Género: RPG top-down. Con un mapa y misiones.", { exact: true })).toBeVisible();
-    await expect(page.getByRole("status")).toContainText("El agente todavía no ejecuta generación.");
+    await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
+
+    await page.getByRole("tab", { name: /Plan/ }).click();
+    await expect(page.getByText("Moverse hasta la meta.")).toBeVisible();
+    await page.getByRole("tab", { name: /Archivos/ }).click();
+    await expect(page.getByText("src/main.ts")).toBeVisible();
+    await page.getByRole("tab", { name: /Verificación/ }).click();
+    await expect(page.getByText("Build correcto.")).toBeVisible();
 
     await page.reload();
     await expect(page.getByText("Género: RPG top-down. Con un mapa y misiones.", { exact: true })).toBeVisible();
+    await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
+    await page.getByRole("tab", { name: /Archivos/ }).click();
+    await expect(page.getByText("src/main.ts")).toBeVisible();
     await expect(page.getByRole("button", { name: "Publish" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Share" })).toBeDisabled();
+  });
+
+  test("reconecta desde Last-Event-ID tras una caída del stream sin repetir progreso", async ({ page }) => {
+    await page.goto("/?stream-drop=1");
+    await page.getByLabel("Describe tu juego").fill("Crear un juego tras reconectar.");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Enviar al agente" }).click();
+    await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
+    await expect.poll(() => page.evaluate((id) => {
+      return JSON.parse(sessionStorage.getItem(`editor-e2e-stream-cursors-${id}`) ?? "[]") as number[];
+    }, projectId)).toEqual([0, 3]);
+    await page.getByRole("tab", { name: /Archivos/ }).click();
+    await expect(page.getByText("src/main.ts")).toHaveCount(1);
+  });
+
+  test("permite detener un run activo y entrega su estado terminal", async ({ page }) => {
+    await page.goto("/?run-active=1");
+    await page.getByLabel("Describe tu juego").fill("Crear un puzzle corto.");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Enviar al agente" }).click();
+    await page.getByRole("button", { name: "Detener" }).click();
+    await expect(page.getByText("Cancelado", { exact: true })).toBeVisible();
+    await expect(page.getByText("La ejecución se detuvo.")).toBeVisible();
+  });
+
+  test("una identidad distinta recibe 404 al suscribirse al run ajeno", async ({ page }) => {
+    await page.goto("/");
+    await page.getByLabel("Describe tu juego").fill("Crear un juego de prueba.");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Enviar al agente" }).click();
+    await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
+    const runId = await page.evaluate((id) => {
+      const stored = JSON.parse(sessionStorage.getItem(`editor-e2e-run-${id}`) ?? "null") as { run?: { id?: string } } | null;
+      return stored?.run?.id ?? "";
+    }, projectId);
+    expect(runId).toMatch(/^[0-9a-f-]{36}$/i);
+    await page.goto("/?identity=owner-b");
+    const response = await page.evaluate(async (id) => {
+      const result = await fetch(`/api/runs/${id}/events`, { headers: { accept: "text/event-stream" } });
+      return { status: result.status, body: await result.text() };
+    }, runId);
+    expect(response.status).toBe(404);
+    expect(response.body).not.toContain("Moverse hasta la meta.");
   });
 
   test("canjea una sesión y monta un iframe aislado con canvas, assets y HMR", async ({ page }) => {

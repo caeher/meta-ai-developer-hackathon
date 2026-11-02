@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Badge, Button, Dialog, Heading, Tabs, Text, TextField } from "@radix-ui/themes";
+import { Badge, Button, Checkbox, Dialog, Heading, Tabs, Text, TextField } from "@radix-ui/themes";
 import type { EditorProgress, EditorRunStatus, EditorStepStatus } from "@meta-game/contracts";
+import { useRunEvents } from "../../hooks/use-run-events";
 import { TextArea } from "../ui/text-area";
 import { appendPromptText, MAX_PROMPT_LENGTH } from "./prompt";
 import { PreviewFrame } from "./preview-frame";
@@ -27,6 +28,11 @@ interface DisplayMessage extends PersistedMessage {
 interface MessagePage {
   items: PersistedMessage[];
   nextCursor: string | null;
+}
+
+interface PendingRun {
+  messageRequestId: string;
+  idempotencyKey: string;
 }
 
 interface ProjectSummary {
@@ -157,6 +163,7 @@ export function EditorShell({
   previewBaseDomain?: string;
   versions?: readonly PreviewVersion[];
 }) {
+  const runEvents = useRunEvents(projectId);
   const [projectName, setProjectName] = useState(initialProjectName);
   const [messages, setMessages] = useState<DisplayMessage[]>(initialMessages);
   const [nextCursor, setNextCursor] = useState(initialCursor);
@@ -169,8 +176,52 @@ export function EditorShell({
   const [renameOpen, setRenameOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState(initialProjectName);
   const [renaming, setRenaming] = useState(false);
+  const [contributorConsent, setContributorConsent] = useState(false);
+  const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
+  const pendingRunRestored = useRef(false);
+  const displayProgress = runEvents.progress ?? progress;
+  const pendingRunStorageKey = `meta-game:pending-run:${projectId}`;
+
+  useEffect(() => {
+    if (runEvents.hydrating || pendingRunRestored.current) return;
+    pendingRunRestored.current = true;
+    try {
+      const raw = window.localStorage.getItem(pendingRunStorageKey);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+      const candidate = parsed as Partial<PendingRun>;
+      if (typeof candidate.messageRequestId !== "string" || typeof candidate.idempotencyKey !== "string") return;
+      if (runEvents.latestMessageRequestId === candidate.messageRequestId) {
+        window.localStorage.removeItem(pendingRunStorageKey);
+        return;
+      }
+      setPendingRun({ messageRequestId: candidate.messageRequestId, idempotencyKey: candidate.idempotencyKey });
+    } catch {
+      window.localStorage.removeItem(pendingRunStorageKey);
+    }
+  }, [pendingRunStorageKey, runEvents.hydrating, runEvents.latestMessageRequestId]);
+
+  useEffect(() => {
+    if (runEvents.active) setQuickOptionsOpen(false);
+  }, [runEvents.active]);
+
+  function rememberPendingRun(next: PendingRun | null) {
+    setPendingRun(next);
+    try {
+      if (next) window.localStorage.setItem(pendingRunStorageKey, JSON.stringify(next));
+      else window.localStorage.removeItem(pendingRunStorageKey);
+    } catch {
+      // The API remains idempotent for the current interaction if browser storage is unavailable.
+    }
+  }
 
   async function send(requestId: string, messageContent: string) {
+    if (!contributorConsent) {
+      setStatus("Confirma que tienes 18 años o más y acepta el uso de datos de Meta antes de iniciar.");
+      return;
+    }
+    if (runEvents.hydrating || runEvents.active) return;
     setSending(true);
     setStatus("");
     setMessages((current) => {
@@ -204,7 +255,15 @@ export function EditorShell({
           : [...reconciled, saved].sort((left, right) => left.sequence - right.sequence);
       });
       setContent((current) => current === messageContent ? "" : current);
-      setStatus("Mensaje guardado. El agente todavía no ejecuta generación.");
+      const nextPendingRun = { messageRequestId: saved.requestId, idempotencyKey: requestId };
+      rememberPendingRun(nextPendingRun);
+      try {
+        await runEvents.enqueue(nextPendingRun.messageRequestId, nextPendingRun.idempotencyKey);
+        rememberPendingRun(null);
+        setStatus("Mensaje guardado y ejecución en cola.");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "El mensaje quedó guardado, pero no se pudo encolar.");
+      }
     } catch (error) {
       setMessages((current) => current.map((message) => message.requestId === requestId ? { ...message, delivery: "failed" } : message));
       setStatus(error instanceof Error ? error.message : "No se pudo guardar el mensaje.");
@@ -216,8 +275,34 @@ export function EditorShell({
   function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = content.trim();
-    if (!trimmed || sending) return;
+    if (!trimmed || sending || runEvents.working || runEvents.hydrating || runEvents.active || !contributorConsent) return;
     void send(globalThis.crypto.randomUUID(), trimmed);
+  }
+
+  async function retryPendingRun() {
+    if (!pendingRun || !contributorConsent || runEvents.working || runEvents.active) return;
+    try {
+      await runEvents.enqueue(pendingRun.messageRequestId, pendingRun.idempotencyKey);
+      rememberPendingRun(null);
+      setStatus("Ejecución en cola.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "No se pudo reintentar la ejecución.");
+    }
+  }
+
+  async function retryLastRun() {
+    const lastUserMessage = [...messages].reverse().find((message) => message.role === "user");
+    const messageRequestId = runEvents.latestMessageRequestId ?? lastUserMessage?.requestId;
+    if (!messageRequestId || !contributorConsent || runEvents.active || runEvents.working) return;
+    const nextPendingRun = { messageRequestId, idempotencyKey: globalThis.crypto.randomUUID() };
+    rememberPendingRun(nextPendingRun);
+    try {
+      await runEvents.enqueue(nextPendingRun.messageRequestId, nextPendingRun.idempotencyKey);
+      rememberPendingRun(null);
+      setStatus("Nuevo intento en cola.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "No se pudo iniciar un nuevo intento.");
+    }
   }
 
   async function loadEarlier() {
@@ -286,7 +371,7 @@ export function EditorShell({
           </div>
           <Dialog.Root open={renameOpen} onOpenChange={(open) => { setRenameOpen(open); if (open) setNameDraft(projectName); }}>
             <Dialog.Trigger>
-              <Button variant="ghost" size="1" aria-label={`Editar nombre de ${projectName}`}>Editar nombre</Button>
+            <Button variant="ghost" size="1" aria-label={`Editar nombre de ${projectName}`} disabled={runEvents.active || runEvents.working}>Editar nombre</Button>
             </Dialog.Trigger>
             <Dialog.Content maxWidth="420px">
               <Dialog.Title>Renombrar proyecto</Dialog.Title>
@@ -336,7 +421,7 @@ export function EditorShell({
               </Tabs.List>
               <Dialog.Root open={quickOptionsOpen} onOpenChange={setQuickOptionsOpen}>
                 <Dialog.Trigger>
-                  <Button variant="soft" size="2">Opciones rápidas</Button>
+                  <Button variant="soft" size="2" disabled={runEvents.active || runEvents.working || runEvents.hydrating}>Opciones rápidas</Button>
                 </Dialog.Trigger>
                 <Dialog.Content className={styles.quickOptionsDialog} maxWidth="640px">
                   <Dialog.Title>Opciones rápidas</Dialog.Title>
@@ -351,6 +436,7 @@ export function EditorShell({
                               key={label}
                               variant="outline"
                               onClick={() => insertQuickOption(prompt)}
+                              disabled={runEvents.active || runEvents.working || runEvents.hydrating}
                               aria-label={`Insertar: ${label}`}
                             >
                               {label}
@@ -369,8 +455,30 @@ export function EditorShell({
 
             <Tabs.Content value="chat" className={styles.chatContent}>
               <div className={styles.agentNotice}>
-                <Badge color="orange" variant="soft">Generación deshabilitada</Badge>
-                <Text as="p" size="1">Guardar un mensaje no inicia una ejecución del agente.</Text>
+                <Badge color={runEvents.active ? "cyan" : runEvents.enabled === false ? "orange" : "gray"} variant="soft">
+                  {runEvents.run ? RUN_STATUS_LABELS[runEvents.run.status] : runEvents.hydrating ? "Recuperando ejecución" : runEvents.enabled === false ? "Generación deshabilitada" : "Agente listo"}
+                </Badge>
+                <Text as="p" size="1">
+                  {runEvents.active
+                    ? runEvents.run?.cancelRequested ? "Detención solicitada; esperando al worker." : "El agente está trabajando. Puedes revisar el plan y los cambios en las pestañas."
+                    : runEvents.enabled === false ? "El worker y el sandbox no están habilitados en este entorno. Los mensajes se conservan y el enqueue queda disponible para reintento."
+                      : `Progreso: ${runEvents.connection === "connected" ? "conectado" : runEvents.connection === "reconnecting" ? "reconectando" : runEvents.connection === "connecting" ? "conectando" : "en espera"}.`}
+                </Text>
+                {runEvents.active ? (
+                  <Button variant="soft" color="red" size="1" onClick={() => void runEvents.cancel()} disabled={runEvents.working || runEvents.run?.cancelRequested}>
+                    {runEvents.run?.cancelRequested ? "Deteniendo…" : "Detener"}
+                  </Button>
+                ) : null}
+                {pendingRun ? (
+                  <Button variant="soft" size="1" onClick={() => void retryPendingRun()} disabled={!contributorConsent || runEvents.working || runEvents.active}>
+                    Reintentar ejecución
+                  </Button>
+                ) : null}
+                {!pendingRun && runEvents.run && (runEvents.run.status === "failed" || runEvents.run.status === "cancelled") ? (
+                  <Button variant="soft" size="1" onClick={() => void retryLastRun()} disabled={!contributorConsent || runEvents.working || runEvents.active}>
+                    Reintentar generación
+                  </Button>
+                ) : null}
               </div>
               {nextCursor ? (
                 <div className={styles.earlierButton}>
@@ -385,11 +493,17 @@ export function EditorShell({
                     <div className={styles.messageMeta}>
                       <Text as="span" size="1">{message.role === "user" ? "Tú" : message.role === "assistant" ? "Agente" : "Herramienta"}</Text>
                       {message.delivery === "sending" ? <Text as="span" size="1" color="gray">Guardando…</Text> : null}
-                      {message.delivery === "failed" ? <Button variant="ghost" size="1" onClick={() => void send(message.requestId, message.content)}>Reintentar guardado</Button> : null}
+                      {message.delivery === "failed" ? <Button variant="ghost" size="1" onClick={() => void send(message.requestId, message.content)} disabled={runEvents.active || runEvents.working || !contributorConsent}>Reintentar guardado</Button> : null}
                     </div>
                     <p>{message.content}</p>
                   </li>
                 ))}
+                {runEvents.assistantSummary ? (
+                  <li key={`run-summary-${runEvents.run?.id ?? "latest"}`} className={styles.agentMessage}>
+                    <div className={styles.messageMeta}><Text as="span" size="1">Agente</Text></div>
+                    <p>{runEvents.assistantSummary}</p>
+                  </li>
+                ) : null}
                 {messages.length === 0 ? (
                   <li className={styles.emptyTranscript}><Text as="p" color="gray">Tus mensajes privados aparecerán aquí.</Text></li>
                 ) : null}
@@ -401,35 +515,47 @@ export function EditorShell({
                   value={content}
                   onChange={(event) => setContent(event.target.value)}
                   placeholder="Describe una idea para tu juego…"
+                  disabled={runEvents.active || runEvents.working || runEvents.hydrating || sending}
                   rows={3}
                   maxLength={MAX_PROMPT_LENGTH}
                   aria-describedby="editor-prompt-hint"
                   required
                 />
                 <div className={styles.composerFooter}>
-                  <Text id="editor-prompt-hint" as="span" size="1" color="gray">Máximo 100.000 caracteres. Se guarda como texto plano.</Text>
-                  <Button type="submit" disabled={sending || !content.trim()}>{sending ? "Guardando…" : "Guardar mensaje"}</Button>
+                  <Text id="editor-prompt-hint" as="span" size="1" color="gray">Máximo 100.000 caracteres. El mensaje queda privado y se envía a Meta al ejecutar.</Text>
+                  <Button type="submit" disabled={sending || runEvents.working || runEvents.active || runEvents.hydrating || !contributorConsent || !content.trim()}>
+                    {sending || runEvents.working ? "Encolando…" : runEvents.hydrating ? "Recuperando…" : "Enviar al agente"}
+                  </Button>
                 </div>
+                <label className={styles.consent} htmlFor="editor-contributor-consent">
+                  <Checkbox
+                    id="editor-contributor-consent"
+                    checked={contributorConsent}
+                    onCheckedChange={(checked) => setContributorConsent(checked === true)}
+                    disabled={runEvents.active || runEvents.working || runEvents.hydrating}
+                  />
+                  <span>Confirmo que tengo 18 años o más y acepto los términos de Meta Contributor: el proveedor puede usar las entradas para entrenamiento. No incluir datos personales, secretos ni información confidencial.</span>
+                </label>
               </form>
-              <p className={styles.chatStatus} role="status" aria-live="polite">{status}</p>
+              <p className={styles.chatStatus} role="status" aria-live="polite">{status || runEvents.error}</p>
             </Tabs.Content>
             <Tabs.Content value="plan" className={styles.progressContent}>
-              <ProgressView view="plan" progress={progress} />
+              <ProgressView view="plan" progress={displayProgress} />
             </Tabs.Content>
             <Tabs.Content value="steps" className={styles.progressContent}>
-              <ProgressView view="steps" progress={progress} />
+              <ProgressView view="steps" progress={displayProgress} />
             </Tabs.Content>
             <Tabs.Content value="files" className={styles.progressContent}>
-              <ProgressView view="files" progress={progress} />
+              <ProgressView view="files" progress={displayProgress} />
             </Tabs.Content>
             <Tabs.Content value="verification" className={styles.progressContent}>
-              <ProgressView view="verification" progress={progress} />
+              <ProgressView view="verification" progress={displayProgress} />
             </Tabs.Content>
           </Tabs.Root>
         </section>
 
         <section className={styles.previewPane} aria-label="Vista previa privada del juego">
-          <PreviewFrame projectId={projectId} baseDomain={previewBaseDomain} versions={versions} />
+          <PreviewFrame projectId={projectId} baseDomain={previewBaseDomain} versions={versions} refreshRevision={runEvents.previewRevision} />
         </section>
       </div>
     </section>
