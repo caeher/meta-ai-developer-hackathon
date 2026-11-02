@@ -32,19 +32,42 @@ function request(method: string, body?: unknown): Request {
 function makeHandlers(input: { enabled?: boolean; projectOwned?: boolean } = {}) {
   const enqueueRun = vi.fn(async () => ({ run, created: true }));
   const get = vi.fn(async () => run);
+  const latest = vi.fn<() => Promise<typeof run | undefined>>(async () => run);
   const cancelRun = vi.fn(async () => ({ ...run, status: "cancelled" }));
   const handlers = createRunHandlers({
     identity,
     projects: { get: async () => input.projectOwned === false ? undefined : ({ id: projectId }) },
-    runs: { enqueueRun, get, cancelRun } as never,
+    runs: { enqueueRun, get, latest, cancelRun } as never,
     allowedOrigins: ["https://app.example.test"],
     enabled: input.enabled ?? true,
     policy,
   });
-  return { handlers, enqueueRun, get, cancelRun };
+  return { handlers, enqueueRun, get, latest, cancelRun };
 }
 
 describe("run API handlers", () => {
+  it("recupera el run más reciente con ownership y devuelve null si no existe", async () => {
+    const { handlers, latest } = makeHandlers();
+    const context = { params: Promise.resolve({ projectId }) };
+    const found = await handlers.latest(new Request("https://app.example.test/api/projects/runs"), context);
+    expect(found.status).toBe(200);
+    expect((await found.json()).run.id).toBe(runId);
+    expect(latest).toHaveBeenCalledWith(identity, projectId);
+
+    latest.mockResolvedValueOnce(undefined);
+    const empty = await handlers.latest(new Request("https://app.example.test/api/projects/runs"), context);
+    expect((await empty.json()).run).toBeNull();
+  });
+
+  it("no revela el estado de un proyecto ajeno al recuperar el run más reciente", async () => {
+    const { handlers, latest } = makeHandlers({ projectOwned: false });
+    const response = await handlers.latest(new Request("https://app.example.test/api/projects/runs"), {
+      params: Promise.resolve({ projectId }),
+    });
+    expect(response.status).toBe(404);
+    expect(latest).not.toHaveBeenCalled();
+  });
+
   it("mantiene el payload de Redis limitado a IDs, clave idempotente y generación", () => {
     expect(RunQueueJobSchema.parse({
       runId,

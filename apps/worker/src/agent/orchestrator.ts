@@ -382,7 +382,7 @@ async function executeCachedTool(
     throw new RunProcessingError("sandbox_tool_failed", false, state.usage);
   }
   const compact = compactToolResult(result);
-  await appendBatch(state, options.store, claim, [
+  const completedEvents: AgentRunEvent[] = [
     {
       type: "agent.tool_completed",
       payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, result: compact.json },
@@ -391,7 +391,12 @@ async function executeCachedTool(
       type: "agent.action",
       payload: { callId: call.callId, toolName: call.name, summary: call.summary || call.name },
     },
-  ]);
+  ];
+  if (call.name === "start_dev_server" && isRecord(compact.value) && compact.value.status === "ready") {
+    // startDevServer returns only after the sandbox health check succeeds.
+    completedEvents.push({ type: "agent.preview_ready", payload: { state: "ready" } });
+  }
+  await appendBatch(state, options.store, claim, completedEvents);
   return compact.value;
 }
 

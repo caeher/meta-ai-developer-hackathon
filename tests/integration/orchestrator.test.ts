@@ -189,6 +189,28 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
     const charges = await database.db.select().from(usageLedger).where(eq(usageLedger.reservationId, reservation!.id));
     expect(charges).toHaveLength(1);
     expect(charges[0]).toMatchObject({ tokens: 60, images: 0 });
+
+    const retry = await repositories.runs.enqueueRun(identity, {
+      projectId: project.id,
+      idempotencyKey: `agent-retry-${randomUUID()}`,
+      messageRequestId: message.requestId,
+      contributorConsent: true,
+      policy: { maxConcurrentJobs: 2, runMaxTokens: 20_000, dailyTokenLimit: 30_000, dailyImageLimit: 10 },
+    });
+    expect(retry.created).toBe(true);
+    expect(retry.run.id).not.toBe(enqueued.run.id);
+    const latest = await repositories.runs.latest(identity, project.id);
+    expect(latest).toMatchObject({ id: retry.run.id, sourceMessageRequestId: message.requestId });
+    const originalAgain = await repositories.runs.enqueueRun(identity, {
+      projectId: project.id,
+      idempotencyKey: enqueued.run.idempotencyKey,
+      messageRequestId: message.requestId,
+      contributorConsent: true,
+      policy: { maxConcurrentJobs: 2, runMaxTokens: 20_000, dailyTokenLimit: 30_000, dailyImageLimit: 10 },
+    });
+    expect(originalAgain).toMatchObject({ created: false, run: { id: enqueued.run.id } });
+    await repositories.runs.cancelRun(identity, retry.run.id);
+
     await expect(appendClaimedRunAgentEvents(database.db, claim, [{
       type: "agent.completed",
       payload: { summary: "tarde", verification: "passed" },

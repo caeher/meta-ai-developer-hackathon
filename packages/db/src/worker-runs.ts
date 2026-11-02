@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, isNotNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, isNotNull, lte, or, sql } from "drizzle-orm";
 import type { GameDatabase } from "./database";
 import {
   StaleRunWorkerError,
@@ -412,9 +412,18 @@ export async function finishClaimedRun(
       updatedAt: now,
     }).where(and(eq(runs.ownerUserId, claim.ownerUserId), eq(runs.id, claim.runId))).returning();
     if (!updated) throw new StaleRunWorkerError();
+    const [completion] = await tx.select({ payload: runEvents.payload }).from(runEvents).where(and(
+      eq(runEvents.ownerUserId, claim.ownerUserId),
+      eq(runEvents.runId, claim.runId),
+      eq(runEvents.type, "agent.completed"),
+    )).orderBy(desc(runEvents.sequence)).limit(1);
+    const completionSummary = completion?.payload && typeof completion.payload === "object" && !Array.isArray(completion.payload)
+      ? (completion.payload as Record<string, unknown>).summary
+      : undefined;
     await tx.update(projectRunLocks).set({ runId: null, leaseExpiresAt: null, heartbeatAt: now, updatedAt: now })
       .where(and(eq(projectRunLocks.ownerUserId, claim.ownerUserId), eq(projectRunLocks.projectId, claim.projectId), eq(projectRunLocks.fencingToken, claim.fencingToken)));
     await appendRunEvent(tx, updated, `run.${updated.status}`, {
+      ...(updated.status === "succeeded" && typeof completionSummary === "string" ? { summary: completionSummary.slice(0, 600) } : {}),
       ...(updated.errorCode ? { errorCode: updated.errorCode } : {}),
       usage,
       ...(reservationExceeded ? { reservationExceeded: true } : {}),

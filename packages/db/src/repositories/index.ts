@@ -392,11 +392,20 @@ export function createRepositories(db: GameDatabase) {
           )).limit(1);
           if (existing) {
             if (existing.projectId !== parsed.projectId) throw new IdempotencyConflictError();
-            if (parsed.messageRequestId && sourceMessage?.runId !== existing.id) throw new IdempotencyConflictError();
+            if (sourceMessage && sourceMessage.runId !== existing.id) {
+              const [origin] = await tx.select({ payload: runEvents.payload }).from(runEvents).where(and(
+                eq(runEvents.ownerUserId, ownerUserId),
+                eq(runEvents.runId, existing.id),
+                eq(runEvents.sequence, 1),
+                eq(runEvents.type, "run.queued"),
+              )).limit(1);
+              const sourceMessageId = origin?.payload && typeof origin.payload === "object" && !Array.isArray(origin.payload)
+                ? (origin.payload as Record<string, unknown>).sourceMessageId
+                : undefined;
+              if (sourceMessageId !== sourceMessage.id) throw new IdempotencyConflictError();
+            }
             return { run: existing, created: false };
           }
-          if (sourceMessage?.runId) throw new IdempotencyConflictError();
-
           const [projectActive] = await tx.select({ count: sql<number>`count(*)` }).from(runs).where(and(
             eq(runs.ownerUserId, ownerUserId),
             eq(runs.projectId, parsed.projectId),
@@ -446,7 +455,6 @@ export function createRepositories(db: GameDatabase) {
               eq(messages.ownerUserId, ownerUserId),
               eq(messages.projectId, parsed.projectId),
               eq(messages.id, sourceMessage.id),
-              isNull(messages.runId),
             )).returning({ id: messages.id });
             if (!linked) throw new IdempotencyConflictError();
           }
@@ -473,7 +481,12 @@ export function createRepositories(db: GameDatabase) {
             runId: run.id,
             sequence: 1,
             type: "run.queued",
-            payload: { reservationId: reservation.id, outboxGeneration: 0, contributorConsent: parsed.contributorConsent },
+            payload: {
+              reservationId: reservation.id,
+              outboxGeneration: 0,
+              contributorConsent: parsed.contributorConsent,
+              ...(sourceMessage ? { sourceMessageId: sourceMessage.id } : {}),
+            },
           });
           return { run, created: true };
         });
@@ -578,6 +591,28 @@ export function createRepositories(db: GameDatabase) {
           .where(and(eq(runs.ownerUserId, ownerUserId), eq(runs.id, parsedRunId), isNull(projects.deletedAt)))
           .limit(1);
         return run?.runs;
+      },
+
+      async latest(identity: VerifiedIdentityContext, projectId: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedProjectId = uuidSchema.parse(projectId);
+        const [project] = await db.select({ id: projects.id }).from(projects).where(and(
+          eq(projects.ownerUserId, ownerUserId),
+          eq(projects.id, parsedProjectId),
+          isNull(projects.deletedAt),
+        )).limit(1);
+        if (!project) throw new OwnedResourceNotFoundError();
+        const [run] = await db.select().from(runs).where(and(
+          eq(runs.ownerUserId, ownerUserId),
+          eq(runs.projectId, parsedProjectId),
+        )).orderBy(desc(runs.createdAt), desc(runs.id)).limit(1);
+        if (!run) return undefined;
+        const [sourceMessage] = await db.select({ requestId: messages.requestId }).from(messages).where(and(
+          eq(messages.ownerUserId, ownerUserId),
+          eq(messages.projectId, parsedProjectId),
+          eq(messages.runId, run.id),
+        )).orderBy(desc(messages.createdAt)).limit(1);
+        return { ...run, sourceMessageRequestId: sourceMessage?.requestId };
       },
 
       async setStatus(

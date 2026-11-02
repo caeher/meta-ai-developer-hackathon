@@ -149,6 +149,21 @@ function codeCall(callId: string, name: string, argumentsValue: unknown): Extrac
 }
 
 describe("orquestador de runs", () => {
+  it("emite preview.ready solo cuando start_dev_server confirma estado ready", async () => {
+    const startServer = codeCall("call-start-server", "start_dev_server", {});
+    const { options, store } = makeOptions({
+      streams: [[startServer, completion([
+        { kind: "tool_call", callId: startServer.callId, name: startServer.name, arguments: startServer.arguments },
+        { kind: "message", role: "assistant", text: "Preview lista." },
+      ], "response-server")], [completion([], "response-final")]],
+    });
+    const handler = createAgentRunHandler(options);
+    await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    expect(store.events.filter((event) => event.type === "agent.preview_ready")).toEqual([
+      { sequence: expect.any(Number), type: "agent.preview_ready", payload: { state: "ready" } },
+    ]);
+  });
+
   it("persiste el plan antes de preparar el sandbox, escribir y verificar; cobra el uso medido", async () => {
     const trace: string[] = [];
     const writeCall = codeCall("call-write-1", "write_file", { path: "src/game.ts", content: "export const createGame = () => true;" });

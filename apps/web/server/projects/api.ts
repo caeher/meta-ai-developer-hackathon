@@ -20,13 +20,46 @@ export async function withProjectApi(action: (context: ProjectApiContext) => Pro
     );
   }
   let database: ReturnType<typeof createDatabaseFromEnvironment> | undefined;
+  let databaseTransferredToStream = false;
   try {
     const identity = await requireUser();
     database = createDatabaseFromEnvironment();
-    return await action({ identity, repositories: createRepositories(database.db), allowedOrigins: clerkConfiguration.authorizedParties });
+    const response = await action({ identity, repositories: createRepositories(database.db), allowedOrigins: clerkConfiguration.authorizedParties });
+    if (response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream") && response.body && database) {
+      const reader = response.body.getReader();
+      let released = false;
+      const release = async () => {
+        if (released) return;
+        released = true;
+        await database?.close();
+      };
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const chunk = await reader.read();
+            if (chunk.done) {
+              controller.close();
+              await release();
+            } else {
+              controller.enqueue(chunk.value);
+            }
+          } catch (error) {
+            controller.error(error);
+            await release();
+          }
+        },
+        async cancel(reason) {
+          try { await reader.cancel(reason); }
+          finally { await release(); }
+        },
+      }, { highWaterMark: 1 });
+      databaseTransferredToStream = true;
+      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    }
+    return response;
   } catch (error) {
     return apiErrorResponse(error);
   } finally {
-    await database?.close();
+    if (!databaseTransferredToStream) await database?.close();
   }
 }

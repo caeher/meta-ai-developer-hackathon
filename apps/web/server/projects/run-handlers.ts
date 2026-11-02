@@ -15,6 +15,7 @@ interface RunRepository {
     policy: RunQuotaPolicy;
   }): Promise<{ run: { id: string; projectId: string; status: string; errorCode: string | null; cancelRequestedAt: Date | null; createdAt: Date; updatedAt: Date }; created: boolean }>;
   get(identity: VerifiedIdentityContext, runId: string): Promise<{ id: string; projectId: string; status: string; errorCode: string | null; cancelRequestedAt: Date | null; createdAt: Date; updatedAt: Date } | undefined>;
+  latest(identity: VerifiedIdentityContext, projectId: string): Promise<{ id: string; projectId: string; status: string; errorCode: string | null; cancelRequestedAt: Date | null; createdAt: Date; updatedAt: Date; sourceMessageRequestId?: string } | undefined>;
   cancelRun(identity: VerifiedIdentityContext, runId: string): Promise<{ id: string; projectId: string; status: string; errorCode: string | null; cancelRequestedAt: Date | null; createdAt: Date; updatedAt: Date }>;
 }
 
@@ -47,6 +48,22 @@ export function createRunHandlers(options: {
   policy: RunQuotaPolicy;
 }) {
   return {
+    async latest(_request: Request, context: { params: Promise<{ projectId: string }> }): Promise<Response> {
+      try {
+        const { projectId } = await context.params;
+        const project = await options.projects.get(options.identity, projectId);
+        if (!project) return Response.json({ error: "not_found" }, { status: 404, headers: privateHeaders });
+        const run = await options.runs.latest(options.identity, projectId);
+        return Response.json({
+          run: run ? toRunResponse(run) : null,
+          sourceMessageRequestId: run?.sourceMessageRequestId ?? null,
+          enabled: options.enabled,
+        }, { headers: privateHeaders });
+      } catch (error) {
+        return apiErrorResponse(error);
+      }
+    },
+
     async POST(request: Request, context: { params: Promise<{ projectId: string }> }): Promise<Response> {
       try {
         assertSameOriginRequest(request, options.allowedOrigins);
