@@ -7,14 +7,17 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "dev": "node ../../scripts/check-node-version.mjs && tsx watch src/index.ts",
+    "dev": "node ../../scripts/check-node-version.mjs && node --conditions=react-server --import tsx --watch src/index.ts",
     "build": "node ../../scripts/check-node-version.mjs && tsc --noEmit -p tsconfig.json",
-    "start": "node ../../scripts/check-node-version.mjs && tsx src/index.ts"
+    "start": "node ../../scripts/check-node-version.mjs && node --conditions=react-server --import tsx src/index.ts"
   },
   "dependencies": {
     "@meta-game/config": "0.1.0",
     "@meta-game/contracts": "0.1.0",
     "@meta-game/db": "0.1.0",
+    "@meta-game/meta": "0.1.0",
+    "@meta-game/sandbox": "0.1.0",
+    "@meta-game/skills": "0.1.0",
     "bullmq": "5.81.5",
     "dotenv": "18.0.9",
     "ioredis": "5.11.1",

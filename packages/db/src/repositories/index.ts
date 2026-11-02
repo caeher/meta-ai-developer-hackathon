@@ -83,6 +83,8 @@ const runInputSchema = z.object({
 const enqueueRunInputSchema = z.object({
   projectId: uuidSchema,
   idempotencyKey: z.string().min(8).max(128),
+  messageRequestId: z.string().trim().min(8).max(128).optional(),
+  contributorConsent: z.boolean().default(false),
   reservedImages: z.number().int().nonnegative().max(100_000).default(0),
   policy: RunQuotaPolicySchema,
 });
@@ -374,14 +376,26 @@ export function createRepositories(db: GameDatabase) {
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
 
+          const [sourceMessage] = parsed.messageRequestId
+            ? await tx.select().from(messages).where(and(
+                eq(messages.ownerUserId, ownerUserId),
+                eq(messages.projectId, parsed.projectId),
+                eq(messages.requestId, parsed.messageRequestId),
+                eq(messages.role, "user"),
+              )).for("update").limit(1)
+            : [];
+          if (parsed.messageRequestId && !sourceMessage) throw new OwnedResourceNotFoundError();
+
           const [existing] = await tx.select().from(runs).where(and(
             eq(runs.ownerUserId, ownerUserId),
             eq(runs.idempotencyKey, parsed.idempotencyKey),
           )).limit(1);
           if (existing) {
             if (existing.projectId !== parsed.projectId) throw new IdempotencyConflictError();
+            if (parsed.messageRequestId && sourceMessage?.runId !== existing.id) throw new IdempotencyConflictError();
             return { run: existing, created: false };
           }
+          if (sourceMessage?.runId) throw new IdempotencyConflictError();
 
           const [projectActive] = await tx.select({ count: sql<number>`count(*)` }).from(runs).where(and(
             eq(runs.ownerUserId, ownerUserId),
@@ -424,8 +438,18 @@ export function createRepositories(db: GameDatabase) {
             ownerUserId,
             projectId: parsed.projectId,
             idempotencyKey: parsed.idempotencyKey,
+            contributorConsent: parsed.contributorConsent,
           }).returning();
           if (!run) throw new Error("No se pudo crear el run");
+          if (sourceMessage) {
+            const [linked] = await tx.update(messages).set({ runId: run.id }).where(and(
+              eq(messages.ownerUserId, ownerUserId),
+              eq(messages.projectId, parsed.projectId),
+              eq(messages.id, sourceMessage.id),
+              isNull(messages.runId),
+            )).returning({ id: messages.id });
+            if (!linked) throw new IdempotencyConflictError();
+          }
           const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
           const [reservation] = await tx.insert(usageReservations).values({
             ownerUserId,
@@ -449,7 +473,7 @@ export function createRepositories(db: GameDatabase) {
             runId: run.id,
             sequence: 1,
             type: "run.queued",
-            payload: { reservationId: reservation.id, outboxGeneration: 0 },
+            payload: { reservationId: reservation.id, outboxGeneration: 0, contributorConsent: parsed.contributorConsent },
           });
           return { run, created: true };
         });

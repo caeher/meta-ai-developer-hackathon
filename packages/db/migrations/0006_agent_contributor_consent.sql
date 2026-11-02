@@ -1,0 +1,1 @@
+ALTER TABLE "runs" ADD COLUMN "contributor_consent" boolean DEFAULT false NOT NULL;

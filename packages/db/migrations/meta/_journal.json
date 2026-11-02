@@ -43,6 +43,13 @@
       "when": 1793613730465,
       "tag": "0005_sandbox-dev-server",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793620463373,
+      "tag": "0006_agent_contributor_consent",
+      "breakpoints": true
     }
   ]
 }

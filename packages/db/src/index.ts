@@ -20,14 +20,17 @@ export {
 } from "./outbox";
 export type { ClaimedRunOutbox } from "./outbox";
 export {
+  appendClaimedRunAgentEvents,
   claimRun,
   finishClaimedRun,
+  getClaimedRunAgentContext,
+  persistClaimedRunPlan,
   reconcileExpiredRunLeases,
   releaseRunForRetry,
   renewRunLease,
   transitionClaimedRun,
 } from "./worker-runs";
-export type { RunUsage, RunWorkerClaim } from "./worker-runs";
+export type { ClaimedRunAgentContext, ClaimedRunAgentEvent, RunUsage, RunWorkerClaim } from "./worker-runs";
 export {
   createOrGetProjectSandbox,
   claimProjectDevServerStart,

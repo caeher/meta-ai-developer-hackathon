@@ -3,9 +3,11 @@ import type { GameDatabase } from "./database";
 import {
   StaleRunWorkerError,
 } from "./identity";
+import { AgentRunEventSchema, type AgentRunEvent, type MetaPlan } from "@meta-game/contracts";
 import { runChargeIdempotencyKey } from "./usage";
 import {
   projectRunLocks,
+  messages,
   projects,
   runEvents,
   runOutbox,
@@ -26,6 +28,18 @@ export type RunUsage = Readonly<{ tokens: number; images: number }>;
 const ACTIVE_STATUSES = ["planning", "running", "verifying"] as const;
 const FINAL_STATUSES = ["succeeded", "failed", "cancelled"] as const;
 
+export type ClaimedRunAgentEvent = Readonly<{
+  sequence: number;
+  type: string;
+  payload: Record<string, unknown>;
+}>;
+
+export type ClaimedRunAgentContext = Readonly<{
+  prompt: string;
+  plan: unknown | null;
+  events: ClaimedRunAgentEvent[];
+}>;
+
 async function appendRunEvent(
   tx: Parameters<Parameters<GameDatabase["transaction"]>[0]>[0],
   run: { id: string; ownerUserId: string; projectId: string },
@@ -43,6 +57,137 @@ async function appendRunEvent(
     sequence: sequence?.value ?? 1,
     type,
     payload,
+  });
+}
+
+async function currentClaimedRun(
+  tx: Parameters<Parameters<GameDatabase["transaction"]>[0]>[0],
+  claim: RunWorkerClaim,
+) {
+  const now = new Date();
+  const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
+    eq(projects.ownerUserId, claim.ownerUserId),
+    eq(projects.id, claim.projectId),
+    isNull(projects.deletedAt),
+  )).for("update").limit(1);
+  if (!project) throw new StaleRunWorkerError();
+
+  const [lock] = await tx.select({ runId: projectRunLocks.runId }).from(projectRunLocks).where(and(
+    eq(projectRunLocks.ownerUserId, claim.ownerUserId),
+    eq(projectRunLocks.projectId, claim.projectId),
+    eq(projectRunLocks.runId, claim.runId),
+    eq(projectRunLocks.fencingToken, claim.fencingToken),
+    sql`${projectRunLocks.leaseExpiresAt} > ${now}`,
+  )).for("update").limit(1);
+  if (!lock) throw new StaleRunWorkerError();
+
+  const [run] = await tx.select().from(runs).where(and(
+    eq(runs.ownerUserId, claim.ownerUserId),
+    eq(runs.projectId, claim.projectId),
+    eq(runs.id, claim.runId),
+    sql`${runs.status} in ('planning', 'running', 'verifying')`,
+  )).for("update").limit(1);
+  if (!run) throw new StaleRunWorkerError();
+  return run;
+}
+
+async function appendAgentEventTx(
+  tx: Parameters<Parameters<GameDatabase["transaction"]>[0]>[0],
+  claim: RunWorkerClaim,
+  event: AgentRunEvent,
+): Promise<void> {
+  const [sequence] = await tx.select({ value: sql<number>`coalesce(max(${runEvents.sequence}), 0) + 1` })
+    .from(runEvents)
+    .where(and(eq(runEvents.ownerUserId, claim.ownerUserId), eq(runEvents.runId, claim.runId)));
+  await tx.insert(runEvents).values({
+    ownerUserId: claim.ownerUserId,
+    projectId: claim.projectId,
+    runId: claim.runId,
+    sequence: sequence?.value ?? 1,
+    type: event.type,
+    payload: event.payload,
+  });
+}
+
+export async function getClaimedRunAgentContext(
+  database: GameDatabase,
+  claim: RunWorkerClaim,
+): Promise<ClaimedRunAgentContext> {
+  return database.transaction(async (tx) => {
+    const run = await currentClaimedRun(tx, claim);
+    if (!run.contributorConsent) throw new Error("run_contributor_consent_missing");
+    const [message] = await tx.select({ content: messages.content }).from(messages).where(and(
+      eq(messages.ownerUserId, claim.ownerUserId),
+      eq(messages.projectId, claim.projectId),
+      eq(messages.runId, claim.runId),
+      eq(messages.role, "user"),
+    )).orderBy(asc(messages.sequence)).limit(1);
+    const events = await tx.select({ sequence: runEvents.sequence, type: runEvents.type, payload: runEvents.payload })
+      .from(runEvents)
+      .where(and(eq(runEvents.ownerUserId, claim.ownerUserId), eq(runEvents.runId, claim.runId), sql`${runEvents.type} like 'agent.%'`))
+      .orderBy(asc(runEvents.sequence))
+      .limit(5_000);
+    if (!message) {
+      throw new Error("run_user_message_missing");
+    }
+    return { prompt: message.content, plan: run.plan, events };
+  });
+}
+
+export async function appendClaimedRunAgentEvents(
+  database: GameDatabase,
+  claim: RunWorkerClaim,
+  events: readonly AgentRunEvent[],
+): Promise<void> {
+  const parsed = events.map((event) => AgentRunEventSchema.parse(event));
+  await database.transaction(async (tx) => {
+    await currentClaimedRun(tx, claim);
+    for (const event of parsed) await appendAgentEventTx(tx, claim, event);
+  });
+}
+
+export async function persistClaimedRunPlan(
+  database: GameDatabase,
+  claim: RunWorkerClaim,
+  input: {
+    plan: MetaPlan;
+    model: string;
+    responseId: string;
+    requestId?: string;
+    usage: { tokens: number; images: 0 };
+  },
+): Promise<void> {
+  const plan = AgentRunEventSchema.parse({
+    type: "agent.plan",
+    payload: {
+      plan: input.plan,
+      model: input.model,
+      responseId: input.responseId,
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      usage: input.usage,
+    },
+  });
+  await database.transaction(async (tx) => {
+    const run = await currentClaimedRun(tx, claim);
+    if (run.plan !== null) {
+      if (JSON.stringify(run.plan) !== JSON.stringify(input.plan)) throw new StaleRunWorkerError();
+      return;
+    }
+    await tx.update(runs).set({ plan: input.plan, updatedAt: new Date() }).where(and(
+      eq(runs.ownerUserId, claim.ownerUserId), eq(runs.projectId, claim.projectId), eq(runs.id, claim.runId), isNull(runs.plan),
+    ));
+    await appendAgentEventTx(tx, claim, {
+      type: "agent.meta_response_completed",
+      payload: {
+        kind: "plan",
+        requestKey: "plan",
+        responseId: input.responseId,
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        model: input.model,
+        usage: input.usage,
+      },
+    });
+    await appendAgentEventTx(tx, claim, plan);
   });
 }
 

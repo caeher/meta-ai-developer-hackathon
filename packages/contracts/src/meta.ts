@@ -1,8 +1,15 @@
 import { z } from "zod";
 
+const expectedFilePath = z.string().min(1).max(512).refine((value) => {
+  if (value.startsWith("/") || value.includes("\\") || value.includes("\0")) return false;
+  return value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." &&
+    ![...part].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127));
+}, "Expected files must stay within the workspace");
+
 export const MetaPlanSchema = z
   .object({
     summary: z.string().trim().min(1).max(600),
+    objective: z.string().trim().min(1).max(300),
     steps: z
       .array(
         z
@@ -10,6 +17,8 @@ export const MetaPlanSchema = z
             id: z.string().trim().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
             title: z.string().trim().min(1).max(120),
             description: z.string().trim().min(1).max(400),
+            expectedFiles: z.array(expectedFilePath).max(24),
+            verifications: z.array(z.string().trim().min(1).max(180)).min(1).max(6),
           })
           .strict(),
       )

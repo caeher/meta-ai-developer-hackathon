@@ -22,59 +22,59 @@ export class SandboxControllerClient {
     if (token.length < 32 || /placeholder|replace-me|change-me/i.test(token)) throw new TypeError("Invalid sandbox controller token");
   }
 
-  create(projectId: string): Promise<PublicSandboxState> {
-    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox`, "POST");
+  create(projectId: string, signal?: AbortSignal): Promise<PublicSandboxState> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox`, "POST", undefined, signal);
   }
 
-  inspect(projectId: string): Promise<PublicSandboxState> {
-    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox`, "GET");
+  inspect(projectId: string, signal?: AbortSignal): Promise<PublicSandboxState> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox`, "GET", undefined, signal);
   }
 
-  stop(projectId: string): Promise<PublicSandboxState> {
-    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/stop`, "POST");
+  stop(projectId: string, signal?: AbortSignal): Promise<PublicSandboxState> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/stop`, "POST", undefined, signal);
   }
 
-  destroy(projectId: string): Promise<PublicSandboxState> {
-    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox`, "DELETE");
+  destroy(projectId: string, signal?: AbortSignal): Promise<PublicSandboxState> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox`, "DELETE", undefined, signal);
   }
 
-  exec(projectId: string, argv: readonly string[], cwd = "", timeoutMs?: number): Promise<SandboxToolCommandResult> {
-    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/exec`, "POST", { argv, cwd, ...(timeoutMs ? { timeoutMs } : {}) });
+  exec(projectId: string, argv: readonly string[], cwd = "", timeoutMs?: number, signal?: AbortSignal): Promise<SandboxToolCommandResult> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/exec`, "POST", { argv, cwd, ...(timeoutMs ? { timeoutMs } : {}) }, signal);
   }
 
-  readFile(projectId: string, path: string): Promise<{ path: string; content: string }> {
-    return this.tool(projectId, "read-file", { path });
+  readFile(projectId: string, path: string, signal?: AbortSignal): Promise<{ path: string; content: string }> {
+    return this.tool(projectId, "read-file", { path }, signal);
   }
 
-  writeFile(projectId: string, path: string, content: string): Promise<{ path: string; bytesWritten: number }> {
-    return this.tool(projectId, "write-file", { path, content });
+  writeFile(projectId: string, path: string, content: string, signal?: AbortSignal): Promise<{ path: string; bytesWritten: number }> {
+    return this.tool(projectId, "write-file", { path, content }, signal);
   }
 
-  listFiles(projectId: string, path = ""): Promise<{ path: string; files: SandboxFileEntry[] }> {
-    return this.tool(projectId, "list-files", { path });
+  listFiles(projectId: string, path = "", signal?: AbortSignal): Promise<{ path: string; files: SandboxFileEntry[] }> {
+    return this.tool(projectId, "list-files", { path }, signal);
   }
 
-  installDependencies(projectId: string, input: SandboxInstallDependenciesInput): Promise<SandboxToolCommandResult> {
-    return this.tool(projectId, "install-dependencies", input);
+  installDependencies(projectId: string, input: SandboxInstallDependenciesInput, signal?: AbortSignal): Promise<SandboxToolCommandResult> {
+    return this.tool(projectId, "install-dependencies", input, signal);
   }
 
-  runCommand(projectId: string, input: SandboxRunCommandInput): Promise<SandboxToolCommandResult> {
-    return this.tool(projectId, "run-command", input);
+  runCommand(projectId: string, input: SandboxRunCommandInput, signal?: AbortSignal): Promise<SandboxToolCommandResult> {
+    return this.tool(projectId, "run-command", input, signal);
   }
 
-  startDevServer(projectId: string): Promise<SandboxDevServerState> {
-    return this.tool(projectId, "start-dev-server", {});
+  startDevServer(projectId: string, signal?: AbortSignal): Promise<SandboxDevServerState> {
+    return this.tool(projectId, "start-dev-server", {}, signal);
   }
 
-  readLogs(projectId: string): Promise<SandboxDevServerLogs> {
-    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/tools/read-logs`, "GET");
+  readLogs(projectId: string, signal?: AbortSignal): Promise<SandboxDevServerLogs> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/tools/read-logs`, "GET", undefined, signal);
   }
 
-  private tool<T>(projectId: string, name: string, body: unknown): Promise<T> {
-    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/tools/${name}`, "POST", body);
+  private tool<T>(projectId: string, name: string, body: unknown, signal?: AbortSignal): Promise<T> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/tools/${name}`, "POST", body, signal);
   }
 
-  private async request<T>(path: string, method: string, body?: unknown): Promise<T> {
+  private async request<T>(path: string, method: string, body?: unknown, signal?: AbortSignal): Promise<T> {
     let response: Response;
     try {
       response = await this.fetcher(new URL(path, this.baseUrl), {
@@ -83,7 +83,7 @@ export class SandboxControllerClient {
         cache: "no-store",
         headers: { authorization: `Bearer ${this.token}`, ...(body ? { "content-type": "application/json" } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: AbortSignal.timeout(130_000),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(130_000)]) : AbortSignal.timeout(130_000),
       });
     } catch {
       throw new SandboxRuntimeError("sandbox_controller_unavailable");

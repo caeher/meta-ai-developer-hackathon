@@ -104,6 +104,12 @@ async function processRun(
   if (!claimed) return { status: "skipped" };
   const { claim, cancelRequested } = claimed;
   const controller = new AbortController();
+  let verifying = false;
+  const markVerifying = async () => {
+    if (verifying) return;
+    await transitionClaimedRun(database, claim, "verifying");
+    verifying = true;
+  };
   let heartbeatBusy = false;
   const heartbeat = setInterval(() => {
     if (heartbeatBusy) return;
@@ -130,21 +136,24 @@ async function processRun(
     }
     await transitionClaimedRun(database, claim, "running");
     const run: WorkerRun = { id: payload.runId, projectId: claim.projectId, idempotencyKey: payload.idempotencyKey };
-    const result = await handler(run, { signal: controller.signal });
+    const result = await handler(run, { signal: controller.signal, claim, markVerifying });
     if (controller.signal.aborted) {
       await finishClaimedRun(database, claim, { status: "cancelled", usage: result.usage });
       return { status: "processed" };
     }
-    await transitionClaimedRun(database, claim, "verifying");
+    await markVerifying();
     await finishClaimedRun(database, claim, { status: "succeeded", usage: result.usage });
     return { status: "processed" };
   } catch (error) {
     if (controller.signal.aborted) {
-      await finishClaimedRun(database, claim, { status: "cancelled" });
+      await finishClaimedRun(database, claim, {
+        status: "cancelled",
+        usage: error instanceof RunProcessingError ? error.usage : undefined,
+      });
       return { status: "processed" };
     }
     if (error instanceof RunProcessingError && !error.retryable) {
-      await finishClaimedRun(database, claim, { status: "failed", errorCode: error.code });
+      await finishClaimedRun(database, claim, { status: "failed", errorCode: error.code, usage: error.usage });
       return { status: "processed" };
     }
     const attempts = job.opts.attempts ?? MAX_JOB_ATTEMPTS;

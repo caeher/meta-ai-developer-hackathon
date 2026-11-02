@@ -1,5 +1,6 @@
 import {
   bigint,
+  boolean,
   check,
   foreignKey,
   index,
@@ -125,6 +126,7 @@ export const runs = pgTable(
     idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
     status: runStatus("status").notNull().default("queued"),
     plan: jsonb("plan").$type<Record<string, unknown> | null>(),
+    contributorConsent: boolean("contributor_consent").notNull().default(false),
     errorCode: varchar("error_code", { length: 100 }),
     cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
     createdAt: createdAt(),

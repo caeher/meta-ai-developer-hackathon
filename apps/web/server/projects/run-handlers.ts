@@ -10,6 +10,8 @@ interface RunRepository {
   enqueueRun(identity: VerifiedIdentityContext, input: {
     projectId: string;
     idempotencyKey: string;
+    messageRequestId: string;
+    contributorConsent: true;
     policy: RunQuotaPolicy;
   }): Promise<{ run: { id: string; projectId: string; status: string; errorCode: string | null; cancelRequestedAt: Date | null; createdAt: Date; updatedAt: Date }; created: boolean }>;
   get(identity: VerifiedIdentityContext, runId: string): Promise<{ id: string; projectId: string; status: string; errorCode: string | null; cancelRequestedAt: Date | null; createdAt: Date; updatedAt: Date } | undefined>;
@@ -55,7 +57,16 @@ export function createRunHandlers(options: {
         if (!options.enabled) {
           return Response.json({ error: "orchestrator_pending" }, { status: 503, headers: privateHeaders });
         }
-        const result = await options.runs.enqueueRun(options.identity, { projectId, idempotencyKey: body.idempotencyKey, policy: options.policy });
+        if (!body.messageRequestId || body.contributorConsent !== true) {
+          return Response.json({ error: !body.messageRequestId ? "message_required" : "contributor_consent_required" }, { status: 400, headers: privateHeaders });
+        }
+        const result = await options.runs.enqueueRun(options.identity, {
+          projectId,
+          idempotencyKey: body.idempotencyKey,
+          messageRequestId: body.messageRequestId,
+          contributorConsent: true,
+          policy: options.policy,
+        });
         return Response.json({ run: toRunResponse(result.run), duplicate: !result.created }, { status: result.created ? 202 : 200, headers: privateHeaders });
       } catch (error) {
         return apiErrorResponse(error);
