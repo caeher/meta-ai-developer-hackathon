@@ -11,6 +11,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -347,9 +348,12 @@ export const versions = pgTable(
     ownerUserId: uuid("owner_user_id").notNull(),
     projectId: uuid("project_id").notNull(),
     versionNumber: integer("version_number").notNull(),
+    runId: uuid("run_id"),
+    parentVersionId: uuid("parent_version_id"),
     snapshotKey: varchar("snapshot_key", { length: 700 }).notNull().unique(),
     sha256: varchar("sha256", { length: 64 }).notNull(),
     sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    manifest: jsonb("manifest").$type<Record<string, unknown>>().notNull().default({}),
     status: versionStatus("status").notNull().default("creating"),
     createdAt: createdAt(),
   },
@@ -361,6 +365,12 @@ export const versions = pgTable(
     }).onDelete("cascade"),
     unique("versions_owner_project_id_unique").on(table.ownerUserId, table.projectId, table.id),
     unique("versions_project_number_unique").on(table.ownerUserId, table.projectId, table.versionNumber),
+    uniqueIndex("versions_owner_project_run_unique").on(table.ownerUserId, table.projectId, table.runId).where(sql`${table.runId} is not null`),
+    foreignKey({
+      name: "versions_owner_project_run_fk",
+      columns: [table.ownerUserId, table.projectId, table.runId],
+      foreignColumns: [runs.ownerUserId, runs.projectId, runs.id],
+    }).onDelete("cascade"),
     index("versions_owner_project_created_idx").on(
       table.ownerUserId,
       table.projectId,

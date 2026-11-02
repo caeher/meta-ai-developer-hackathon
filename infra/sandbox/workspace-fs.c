@@ -165,6 +165,22 @@ static void write_file(const char *path) {
   (void)printf("%zu\n", total);
 }
 
+static void remove_file(const char *path) {
+  char leaf[NAME_MAX + 1];
+  int parent = open_parent(path, leaf, sizeof(leaf), 0);
+  struct stat existing;
+  if (fstatat(parent, leaf, &existing, AT_SYMLINK_NOFOLLOW) != 0) {
+    close(parent);
+    if (errno == ENOENT) { (void)puts("0"); return; }
+    fail("file_remove_failed");
+  }
+  if (S_ISLNK(existing.st_mode)) { close(parent); fail("symlink_not_allowed"); }
+  if (!S_ISREG(existing.st_mode)) { close(parent); fail("special_file_not_allowed"); }
+  if (unlinkat(parent, leaf, 0) != 0 || fsync(parent) != 0) { close(parent); fail("file_remove_failed"); }
+  close(parent);
+  (void)puts("1");
+}
+
 static void json_string(const char *value) {
   (void)putchar('"');
   for (const unsigned char *p = (const unsigned char *)value; *p; p++) {
@@ -204,6 +220,7 @@ int main(int argc, char **argv) {
   if (argc != 3) fail("invalid_arguments");
   if (strcmp(argv[1], "read") == 0) read_file(argv[2]);
   else if (strcmp(argv[1], "write") == 0) write_file(argv[2]);
+  else if (strcmp(argv[1], "remove") == 0) remove_file(argv[2]);
   else if (strcmp(argv[1], "list") == 0) list_files(argv[2]);
   else fail("invalid_operation");
   return 0;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Heading } from "@radix-ui/themes";
+import { Button, Dialog, Heading, Text } from "@radix-ui/themes";
 import { requestPreviewGrant } from "./preview-client";
 import { getPreviewOrigin, parsePreviewRouteMessage, parsePreviewRoutePath } from "./preview-protocol";
 import { PreviewToolbar, type PreviewStatus, type PreviewVersion } from "./preview-toolbar";
@@ -10,6 +10,16 @@ import styles from "./PreviewFrame.module.css";
 const frameLoadTimeoutMs = 15_000;
 
 type HistoryState = { entries: string[]; index: number };
+type VersionReview = {
+  id: string;
+  versionNumber: number;
+  parentVersionId: string | null;
+  manifest: {
+    gameSpec?: { genre?: string; objective?: string };
+    verification?: { checks?: Array<{ check: string; status: string; summary: string }> };
+    changes?: { added?: string[]; modified?: string[]; removed?: string[] };
+  };
+};
 
 class PreviewCookieUnavailableError extends Error {}
 
@@ -66,6 +76,13 @@ export function PreviewFrame({
   const [frameKey, setFrameKey] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
   const [history, setHistory] = useState<HistoryState>({ entries: ["/"], index: 0 });
+  const [availableVersions, setAvailableVersions] = useState<PreviewVersion[]>([...versions]);
+  const [selectedVersionId, setSelectedVersionId] = useState("latest");
+  const [versionReview, setVersionReview] = useState<VersionReview>();
+  const [versionLoading, setVersionLoading] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [versionMessage, setVersionMessage] = useState("");
+  const [localRefresh, setLocalRefresh] = useState(0);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const statusRef = useRef(status);
   const operationRef = useRef(0);
@@ -120,7 +137,7 @@ export function PreviewFrame({
         : error instanceof Error ? error.message : "No se pudo cargar la preview privada.");
       updateStatus("error");
     }
-  }, [clearTimers, origin, projectId, updateStatus]);
+  }, [clearTimers, localRefresh, origin, projectId, updateStatus]);
 
   useEffect(() => {
     if (origin) void startPreview();
@@ -128,7 +145,79 @@ export function PreviewFrame({
       operationRef.current += 1;
       clearTimers();
     };
-  }, [clearTimers, origin, refreshRevision, startPreview]);
+  }, [clearTimers, origin, refreshRevision, localRefresh, startPreview]);
+
+  useEffect(() => { setAvailableVersions([...versions]); }, [versions]);
+
+  useEffect(() => {
+    let active = true;
+    void fetch(`/api/projects/${encodeURIComponent(projectId)}/versions`, { cache: "no-store", credentials: "same-origin" })
+      .then(async (response) => response.ok ? await response.json() as unknown : undefined)
+      .then((payload) => {
+        if (!active || !isRecord(payload) || !Array.isArray(payload.items)) return;
+        const items = payload.items.filter((item): item is PreviewVersion => isRecord(item) &&
+          typeof item.id === "string" && Number.isSafeInteger(item.versionNumber) && item.status === "ready");
+        setAvailableVersions(items);
+        if (selectedVersionId !== "latest" && !items.some((item) => item.id === selectedVersionId)) {
+          setSelectedVersionId("latest");
+          setVersionReview(undefined);
+        }
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [localRefresh, projectId, refreshRevision, selectedVersionId]);
+
+  async function selectVersion(versionId: string) {
+    setSelectedVersionId(versionId);
+    setVersionMessage("");
+    if (versionId === "latest") { setVersionReview(undefined); return; }
+    setVersionLoading(true);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}`, {
+        cache: "no-store", credentials: "same-origin",
+      });
+      const payload = await response.json() as unknown;
+      if (!response.ok || !isRecord(payload) || !isRecord(payload.version) || !isRecord(payload.version.manifest)) {
+        throw new Error("No se pudo cargar el resumen privado de esta versión.");
+      }
+      const value = payload.version;
+      if (typeof value.id !== "string" || !Number.isSafeInteger(value.versionNumber)) throw new Error("La respuesta de versión no es válida.");
+      setVersionReview({
+        id: value.id,
+        versionNumber: value.versionNumber as number,
+        parentVersionId: typeof value.parentVersionId === "string" ? value.parentVersionId : null,
+        manifest: value.manifest as VersionReview["manifest"],
+      });
+    } catch (error) {
+      setSelectedVersionId("latest");
+      setVersionMessage(error instanceof Error ? error.message : "No se pudo revisar la versión.");
+    } finally { setVersionLoading(false); }
+  }
+
+  async function restoreVersion() {
+    if (!versionReview || restoreBusy) return;
+    setRestoreBusy(true);
+    setVersionMessage("");
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionReview.id)}/restore`, {
+        method: "POST", credentials: "same-origin", cache: "no-store",
+        headers: { "content-type": "application/json" }, body: "{}",
+      });
+      const payload = await response.json() as unknown;
+      if (!response.ok) {
+        const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "version_restore_failed";
+        throw new Error(code === "project_busy" ? "Espera a que termine la ejecución activa antes de restaurar." : "No se pudo restaurar la versión.");
+      }
+      const restored = isRecord(payload) && isRecord(payload.restored) ? payload.restored : undefined;
+      const versionNumber = restored && Number.isSafeInteger(restored.versionNumber) ? restored.versionNumber as number : undefined;
+      setVersionMessage(versionNumber ? `Restaurada como v${versionNumber}.` : "Versión restaurada.");
+      setVersionReview(undefined);
+      setSelectedVersionId("latest");
+      setLocalRefresh((value) => value + 1);
+    } catch (error) {
+      setVersionMessage(error instanceof Error ? error.message : "No se pudo restaurar la versión.");
+    } finally { setRestoreBusy(false); }
+  }
 
   useEffect(() => {
     if (!origin) return;
@@ -189,13 +278,42 @@ export function PreviewFrame({
         status={status}
         enabled={Boolean(origin)}
         openTabHref={openTabHref}
-        versions={versions}
+        versions={availableVersions}
+        selectedVersionId={selectedVersionId}
+        onVersionSelect={(value) => void selectVersion(value)}
         historyIndex={history.index}
         historyLength={history.entries.length}
         onBack={() => navigateHistory(-1)}
         onForward={() => navigateHistory(1)}
         onReload={() => void startPreview()}
       />
+      {versionMessage ? <div className={styles.versionMessage} role="status" aria-live="polite">{versionMessage}</div> : null}
+      <Dialog.Root open={Boolean(versionReview) || versionLoading} onOpenChange={(open) => {
+        if (!open) { setVersionReview(undefined); setSelectedVersionId("latest"); }
+      }}>
+        <Dialog.Content maxWidth="560px" aria-describedby="version-review-description">
+          <Dialog.Title>Revisar versión {versionReview ? `v${versionReview.versionNumber}` : ""}</Dialog.Title>
+          {versionLoading ? <Text id="version-review-description">Cargando el manifiesto privado…</Text> : null}
+          {versionReview ? <>
+            <Text id="version-review-description" as="p" color="gray">
+              Snapshot verificado. La vista jugable y el workspace siguen en Latest hasta confirmar la restauración.
+            </Text>
+            <div className={styles.versionReview}>
+              <Text as="p"><strong>Juego:</strong> {versionReview.manifest.gameSpec?.objective ?? "Sin resumen"}</Text>
+              <Text as="p"><strong>Archivos nuevos:</strong> {versionReview.manifest.changes?.added?.length ?? 0}</Text>
+              <Text as="p"><strong>Archivos modificados:</strong> {versionReview.manifest.changes?.modified?.length ?? 0}</Text>
+              <Text as="p"><strong>Archivos eliminados:</strong> {versionReview.manifest.changes?.removed?.length ?? 0}</Text>
+              {versionReview.manifest.verification?.checks?.map((check) => (
+                <Text as="p" key={`${check.check}-${check.summary}`}><strong>{check.check}:</strong> {check.summary}</Text>
+              ))}
+            </div>
+            <div className={styles.versionReviewActions}>
+              <Button variant="soft" onClick={() => { setVersionReview(undefined); setSelectedVersionId("latest"); }}>Cerrar</Button>
+              <Button onClick={() => void restoreVersion()} disabled={restoreBusy}>{restoreBusy ? "Restaurando…" : "Restaurar como nueva versión"}</Button>
+            </div>
+          </> : null}
+        </Dialog.Content>
+      </Dialog.Root>
       <div className={styles.stage}>
         {frameUrl ? (
           <iframe

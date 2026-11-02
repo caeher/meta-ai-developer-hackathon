@@ -57,6 +57,13 @@
       "when": 1793628122626,
       "tag": "0007_generated-asset-metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793633491460,
+      "tag": "0008_complete_galactus",
+      "breakpoints": true
     }
   ]
 }

@@ -39,6 +39,8 @@ export function PreviewToolbar({
   onBack,
   onForward,
   onReload,
+  selectedVersionId,
+  onVersionSelect,
 }: {
   status: PreviewStatus;
   enabled: boolean;
@@ -49,6 +51,8 @@ export function PreviewToolbar({
   onBack(): void;
   onForward(): void;
   onReload(): void;
+  selectedVersionId: string;
+  onVersionSelect(versionId: string): void;
 }) {
   const busy = status === "booting" || status === "loading";
 
@@ -63,13 +67,13 @@ export function PreviewToolbar({
         ) : <Button variant="ghost" size="1" disabled aria-label="Abrir vista previa en otra pestaña">↗</Button>}
       </div>
       <div className={styles.toolbarRight}>
-        <Select.Root value="latest" disabled={!enabled}>
+        <Select.Root value={selectedVersionId} disabled={versions.length === 0} onValueChange={onVersionSelect}>
           <Select.Trigger aria-label="Versión de la vista previa" />
           <Select.Content>
-            <Select.Item value="latest">Latest · espacio actual</Select.Item>
+            <Select.Item value="latest">Latest · última verificada</Select.Item>
             {versions.map((version) => (
-              <Select.Item key={version.id} value={version.id} disabled>
-                v{version.versionNumber} · {version.status === "ready" ? "guardada" : version.status}
+              <Select.Item key={version.id} value={version.id}>
+                v{version.versionNumber} · {version.status === "ready" ? "verificada" : version.status}
               </Select.Item>
             ))}
           </Select.Content>
@@ -80,7 +84,7 @@ export function PreviewToolbar({
       </div>
       {versions.length > 0 ? (
         <Text as="span" size="1" color="gray" className={styles.versionNote}>
-          Las versiones guardadas aparecen aquí; restaurarlas estará disponible cuando el gateway sirva snapshots.
+          Elige una versión para revisar sus cambios y restaurarla como una versión nueva.
         </Text>
       ) : null}
     </div>

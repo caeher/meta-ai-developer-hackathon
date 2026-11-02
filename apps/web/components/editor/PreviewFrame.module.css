@@ -31,6 +31,10 @@
 .toolbarRight { justify-content: flex-end; }
 .toolbarRight [data-radix-select-trigger] { max-width: min(230px, 40vw); }
 .versionNote { position: absolute; top: calc(100% + 4px); right: 10px; z-index: 1; max-width: min(400px, 90%); text-align: right; }
+.versionMessage { padding: 6px 10px; color: var(--app-text-muted); font-size: 12px; border-bottom: 1px solid var(--app-border); }
+.versionReview { display: grid; gap: 5px; max-height: min(45vh, 360px); overflow: auto; padding: 12px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-surface); }
+.versionReview p { margin: 0; line-height: 1.45; }
+.versionReviewActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .openTab {
   min-width: 28px;
   min-height: 28px;

@@ -4,6 +4,7 @@ export const SANDBOX_FILE_MAX_BYTES = 1_048_576;
 export const SANDBOX_BINARY_FILE_MAX_BYTES = 8 * 1024 * 1024;
 export const SANDBOX_FILE_OUTPUT_MAX_BYTES = 1_500_000;
 export const SANDBOX_COMMAND_OUTPUT_MAX_BYTES = 64_000;
+export const SANDBOX_BINARY_READ_OUTPUT_MAX_BYTES = 12 * 1024 * 1024;
 export const SANDBOX_LIST_MAX_ENTRIES = 32;
 export const SANDBOX_DEV_SERVER_PORT = 4173;
 
@@ -14,6 +15,11 @@ const workspacePath = z.string().min(1).max(512).refine((value) => {
 }, "Path must stay within the workspace");
 
 export const SandboxReadFileInputSchema = z.object({ path: workspacePath }).strict();
+export const SandboxReadBinaryFileInputSchema = z.object({ path: workspacePath.refine((path) =>
+  /^public\/assets\/.+\.(?:png|jpe?g|webp|gif|ico|mp3|ogg|wav|mp4|webm|wasm|woff2?|ttf|otf)$/i.test(path),
+  "Binary reads are restricted to known public asset paths",
+) }).strict();
+export const SandboxDeleteFileInputSchema = z.object({ path: workspacePath }).strict();
 export const SandboxListFilesInputSchema = z.object({
   path: z.string().max(512).default("").refine((value) => value === "" || workspacePath.safeParse(value).success),
 }).strict();
@@ -42,6 +48,7 @@ export const SandboxStartDevServerInputSchema = z.object({}).strict();
 export const SandboxReadLogsInputSchema = z.object({}).strict();
 
 export type SandboxReadFileInput = z.infer<typeof SandboxReadFileInputSchema>;
+export type SandboxReadBinaryFileInput = z.infer<typeof SandboxReadBinaryFileInputSchema>;
 export type SandboxListFilesInput = z.infer<typeof SandboxListFilesInputSchema>;
 export type SandboxWriteFileInput = z.infer<typeof SandboxWriteFileInputSchema>;
 export type SandboxDependency = z.infer<typeof SandboxDependencySchema>;

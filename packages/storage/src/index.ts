@@ -71,6 +71,7 @@ export interface PrivateObjectClient {
     body: Uint8Array;
     contentType: string;
     sha256: string;
+    ifAbsent?: boolean;
   }): Promise<void>;
   head(key: string): Promise<{ sizeBytes?: number; sha256?: string }>;
   get(key: string): Promise<Uint8Array>;
@@ -120,6 +121,7 @@ export function createS3PrivateObjectClient(
           ContentDisposition: "attachment",
           CacheControl: "private, no-store",
           ChecksumSHA256: checksum,
+          IfNoneMatch: input.ifAbsent ? "*" : undefined,
           Metadata: { sha256: input.sha256 },
         }),
       );
@@ -298,3 +300,5 @@ export function createPrivateStorageFromEnvironment(
 
 export { createPrivateCheckpointStorage, createPrivateCheckpointStorageFromEnvironment } from "./checkpoints";
 export type { PrivateCheckpointIdentity } from "./checkpoints";
+export { createPrivateSnapshotStorage, createPrivateSnapshotStorageFromEnvironment, decodeVersionSnapshot, readSnapshotEnvironment, snapshotBytes, snapshotObjectKey, VersionSnapshotSchema } from "./snapshots";
+export type { SnapshotLimits, VersionSnapshot, VersionSnapshotFile, VersionSnapshotIdentity, VersionSnapshotMetadata } from "./snapshots";

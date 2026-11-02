@@ -2,6 +2,8 @@ import type { PublicSandboxState } from "./service";
 import { SandboxRuntimeError } from "./driver";
 import {
   SandboxWriteBinaryFileInputSchema,
+  SandboxReadBinaryFileInputSchema,
+  SandboxDeleteFileInputSchema,
   type GameBrowserVerificationInput,
   type GameBrowserVerificationResult,
   type SandboxDevServerLogs,
@@ -49,8 +51,27 @@ export class SandboxControllerClient {
     return this.tool(projectId, "read-file", { path }, signal);
   }
 
+  async readBinaryFile(projectId: string, path: string, signal?: AbortSignal): Promise<Uint8Array> {
+    const parsed = SandboxReadBinaryFileInputSchema.safeParse({ path });
+    if (!parsed.success) throw new SandboxRuntimeError("invalid_tool_input");
+    const result = await this.tool<{ path: string; contentBase64: string; bytes: number }>(projectId, "read-binary-file", parsed.data, signal);
+    if (result.path !== parsed.data.path || !Number.isSafeInteger(result.bytes) || result.bytes < 1 || result.bytes > 8 * 1024 * 1024 ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(result.contentBase64)) {
+      throw new SandboxRuntimeError("file_read_failed");
+    }
+    const bytes = Buffer.from(result.contentBase64, "base64");
+    if (bytes.byteLength !== result.bytes || bytes.toString("base64") !== result.contentBase64) throw new SandboxRuntimeError("file_read_failed");
+    return Uint8Array.from(bytes);
+  }
+
   writeFile(projectId: string, path: string, content: string, signal?: AbortSignal): Promise<{ path: string; bytesWritten: number }> {
     return this.tool(projectId, "write-file", { path, content }, signal);
+  }
+
+  deleteFile(projectId: string, path: string, signal?: AbortSignal): Promise<{ path: string; deleted: boolean }> {
+    const parsed = SandboxDeleteFileInputSchema.safeParse({ path });
+    if (!parsed.success) throw new SandboxRuntimeError("invalid_tool_input");
+    return this.tool(projectId, "delete-file", parsed.data, signal);
   }
 
   writeBinaryFile(projectId: string, path: string, bytes: Uint8Array, signal?: AbortSignal): Promise<{ path: string; bytesWritten: number }> {

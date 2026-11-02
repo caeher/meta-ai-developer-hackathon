@@ -7,6 +7,7 @@ import {
   IdempotencyConflictError,
   OwnedResourceNotFoundError,
   ProjectRunBusyError,
+  StaleRunWorkerError,
   type VerifiedIdentityContext,
 } from "../identity";
 import { assertRunQuotaAvailable, RunQuotaPolicySchema, utcDayStart, type RunQuotaPolicy } from "../usage";
@@ -14,6 +15,7 @@ import {
   assets,
   messages,
   projects,
+  projectRunLocks,
   publications,
   projectCleanupTasks,
   runEvents,
@@ -51,11 +53,25 @@ const assetInputSchema = z.object({
     catch { return false; }
   }, "Asset metadata exceeds 64 KiB"),
 });
+const versionManifestSchema = z.record(z.string().max(100), z.unknown()).refine((value) => {
+  try { return Buffer.byteLength(JSON.stringify(value), "utf8") <= 128 * 1024; }
+  catch { return false; }
+}, "Version manifest exceeds 128 KiB");
 const versionInputSchema = z.object({
+  versionId: uuidSchema.optional(),
   projectId: uuidSchema,
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  parentVersionId: uuidSchema.nullable().optional(),
+  manifest: versionManifestSchema.optional(),
 });
+const runVersionInputSchema = z.object({
+  versionId: uuidSchema,
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  sizeBytes: z.number().int().positive().max(25 * 1024 * 1024),
+  parentVersionId: uuidSchema.nullable(),
+  manifest: versionManifestSchema,
+}).strict();
 const usageInputSchema = z.object({
   projectId: uuidSchema,
   idempotencyKey: z.string().min(8).max(128),
@@ -912,13 +928,210 @@ export function createRepositories(db: GameDatabase) {
     },
 
     versions: {
+      async ownerId(identity: VerifiedIdentityContext, projectId: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedProjectId = uuidSchema.parse(projectId);
+        await assertOwnedProject(db, ownerUserId, parsedProjectId);
+        return ownerUserId;
+      },
+
+      async reserveForRun(
+        identity: VerifiedIdentityContext,
+        claim: { runId: string; ownerUserId: string; projectId: string; fencingToken: number },
+        input: z.input<typeof runVersionInputSchema>,
+      ) {
+        const parsed = runVersionInputSchema.parse(input);
+        const ownerUserId = await resolveOwnerId(db, identity);
+        if (ownerUserId !== claim.ownerUserId) throw new StaleRunWorkerError();
+        const projectId = uuidSchema.parse(claim.projectId);
+        const runId = uuidSchema.parse(claim.runId);
+        return db.transaction(async (tx) => {
+          const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), isNull(projects.deletedAt),
+          )).for("update").limit(1);
+          if (!project) throw new OwnedResourceNotFoundError();
+          const now = new Date();
+          const [lock] = await tx.select({ runId: projectRunLocks.runId }).from(projectRunLocks).where(and(
+            eq(projectRunLocks.ownerUserId, ownerUserId), eq(projectRunLocks.projectId, projectId),
+            eq(projectRunLocks.runId, runId), eq(projectRunLocks.fencingToken, claim.fencingToken),
+            sql`${projectRunLocks.leaseExpiresAt} > ${now}`,
+          )).for("update").limit(1);
+          const [run] = await tx.select({ id: runs.id }).from(runs).where(and(
+            eq(runs.ownerUserId, ownerUserId), eq(runs.projectId, projectId), eq(runs.id, runId),
+            sql`${runs.status} in ('planning', 'running', 'verifying')`,
+          )).for("update").limit(1);
+          if (!lock || !run) throw new StaleRunWorkerError();
+
+          const [existing] = await tx.select().from(versions).where(and(
+            eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, projectId), eq(versions.runId, runId),
+          )).for("update").limit(1);
+          if (existing) {
+            if (existing.parentVersionId !== parsed.parentVersionId || existing.sha256 !== parsed.sha256 || existing.sizeBytes !== parsed.sizeBytes) {
+              throw new IdempotencyConflictError();
+            }
+            if (existing.id !== parsed.versionId) throw new IdempotencyConflictError();
+            return existing;
+          }
+          if (parsed.parentVersionId) {
+            const [parent] = await tx.select({ id: versions.id }).from(versions).where(and(
+              eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, projectId),
+              eq(versions.id, parsed.parentVersionId), eq(versions.status, "ready"),
+            )).limit(1);
+            if (!parent) throw new OwnedResourceNotFoundError();
+          }
+          const [next] = await tx.select({ value: sql<number>`coalesce(max(${versions.versionNumber}), 0) + 1` }).from(versions)
+            .where(and(eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, projectId)));
+          const id = parsed.versionId;
+          const [version] = await tx.insert(versions).values({
+            id, ownerUserId, projectId, versionNumber: next?.value ?? 1, runId,
+            parentVersionId: parsed.parentVersionId,
+            snapshotKey: `private/${ownerUserId}/projects/${projectId}/versions/${id}`,
+            sha256: parsed.sha256, sizeBytes: parsed.sizeBytes, manifest: parsed.manifest,
+            status: "creating",
+          }).returning();
+          if (!version) throw new Error("No se pudo reservar la versión");
+          return version;
+        });
+      },
+
+      async markRunSnapshotReady(
+        identity: VerifiedIdentityContext,
+        claim: { runId: string; ownerUserId: string; projectId: string; fencingToken: number },
+        versionId: string,
+      ) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedVersionId = uuidSchema.parse(versionId);
+        if (ownerUserId !== claim.ownerUserId) throw new StaleRunWorkerError();
+        return db.transaction(async (tx) => {
+          const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, claim.projectId), isNull(projects.deletedAt),
+          )).for("update").limit(1);
+          if (!project) throw new OwnedResourceNotFoundError();
+          const now = new Date();
+          const [lock] = await tx.select({ runId: projectRunLocks.runId }).from(projectRunLocks).where(and(
+            eq(projectRunLocks.ownerUserId, ownerUserId), eq(projectRunLocks.projectId, claim.projectId),
+            eq(projectRunLocks.runId, claim.runId), eq(projectRunLocks.fencingToken, claim.fencingToken),
+            sql`${projectRunLocks.leaseExpiresAt} > ${now}`,
+          )).for("update").limit(1);
+          if (!lock) throw new StaleRunWorkerError();
+          const [version] = await tx.update(versions).set({ status: "ready" }).where(and(
+            eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, claim.projectId),
+            eq(versions.id, parsedVersionId), eq(versions.runId, claim.runId),
+            sql`${versions.status} in ('creating', 'ready')`,
+          )).returning();
+          if (!version) throw new OwnedResourceNotFoundError();
+          return version;
+        });
+      },
+
+      async markRunSnapshotFailed(
+        identity: VerifiedIdentityContext,
+        claim: { runId: string; ownerUserId: string; projectId: string; fencingToken: number },
+        versionId: string,
+      ) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedVersionId = uuidSchema.parse(versionId);
+        if (ownerUserId !== claim.ownerUserId) throw new StaleRunWorkerError();
+        return db.transaction(async (tx) => {
+          const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, claim.projectId), isNull(projects.deletedAt),
+          )).for("update").limit(1);
+          if (!project) throw new OwnedResourceNotFoundError();
+          const now = new Date();
+          const [lock] = await tx.select({ runId: projectRunLocks.runId }).from(projectRunLocks).where(and(
+            eq(projectRunLocks.ownerUserId, ownerUserId), eq(projectRunLocks.projectId, claim.projectId),
+            eq(projectRunLocks.runId, claim.runId), eq(projectRunLocks.fencingToken, claim.fencingToken),
+            sql`${projectRunLocks.leaseExpiresAt} > ${now}`,
+          )).for("update").limit(1);
+          if (!lock) throw new StaleRunWorkerError();
+          const [version] = await tx.update(versions).set({ status: "failed" }).where(and(
+            eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, claim.projectId),
+            eq(versions.id, parsedVersionId), eq(versions.runId, claim.runId), eq(versions.status, "creating"),
+          )).returning();
+          if (!version) throw new OwnedResourceNotFoundError();
+          return version;
+        });
+      },
+
+      async get(identity: VerifiedIdentityContext, projectId: string, versionId: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const [version] = await db.select().from(versions).where(and(
+          eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, uuidSchema.parse(projectId)),
+          eq(versions.id, uuidSchema.parse(versionId)), eq(versions.status, "ready"),
+        )).limit(1);
+        return version;
+      },
+
+      async latest(identity: VerifiedIdentityContext, projectId: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedProjectId = uuidSchema.parse(projectId);
+        await assertOwnedProject(db, ownerUserId, parsedProjectId);
+        const [version] = await db.select().from(versions).where(and(
+          eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, parsedProjectId), eq(versions.status, "ready"),
+        )).orderBy(desc(versions.versionNumber)).limit(1);
+        return version;
+      },
+
+      async acquireRestoreLock(identity: VerifiedIdentityContext, projectId: string, leaseMs = 60_000) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedProjectId = uuidSchema.parse(projectId);
+        if (!Number.isSafeInteger(leaseMs) || leaseMs < 5_000 || leaseMs > 120_000) throw new RangeError("Lease de restauración inválido");
+        return db.transaction(async (tx) => {
+          const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsedProjectId), isNull(projects.deletedAt),
+          )).for("update").limit(1);
+          if (!project) throw new OwnedResourceNotFoundError();
+          const [activeRun] = await tx.select({ id: runs.id }).from(runs).where(and(
+            eq(runs.ownerUserId, ownerUserId), eq(runs.projectId, parsedProjectId),
+            inArray(runs.status, ["queued", "planning", "running", "verifying"]),
+          )).limit(1);
+          if (activeRun) throw new ProjectRunBusyError();
+          const now = new Date();
+          const [prior] = await tx.select().from(projectRunLocks).where(and(
+            eq(projectRunLocks.ownerUserId, ownerUserId), eq(projectRunLocks.projectId, parsedProjectId),
+          )).for("update").limit(1);
+          if (prior?.leaseExpiresAt && prior.leaseExpiresAt > now) throw new ProjectRunBusyError();
+          const fencingToken = (prior?.fencingToken ?? 0) + 1;
+          if (prior) {
+            await tx.update(projectRunLocks).set({ runId: null, fencingToken, leaseExpiresAt: new Date(now.getTime() + leaseMs), heartbeatAt: now, updatedAt: now })
+              .where(and(eq(projectRunLocks.ownerUserId, ownerUserId), eq(projectRunLocks.projectId, parsedProjectId)));
+          } else {
+            await tx.insert(projectRunLocks).values({ ownerUserId, projectId: parsedProjectId, runId: null, fencingToken, leaseExpiresAt: new Date(now.getTime() + leaseMs), heartbeatAt: now });
+          }
+          return { ownerUserId, projectId: parsedProjectId, fencingToken, leaseMs };
+        });
+      },
+
+      async renewRestoreLock(identity: VerifiedIdentityContext, lock: { ownerUserId: string; projectId: string; fencingToken: number; leaseMs: number }) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        if (ownerUserId !== lock.ownerUserId) throw new StaleRunWorkerError();
+        const now = new Date();
+        const [updated] = await db.update(projectRunLocks).set({
+          leaseExpiresAt: new Date(now.getTime() + lock.leaseMs), heartbeatAt: now, updatedAt: now,
+        }).where(and(
+          eq(projectRunLocks.ownerUserId, ownerUserId), eq(projectRunLocks.projectId, lock.projectId),
+          isNull(projectRunLocks.runId), eq(projectRunLocks.fencingToken, lock.fencingToken),
+          sql`${projectRunLocks.leaseExpiresAt} > ${now}`,
+        )).returning({ projectId: projectRunLocks.projectId });
+        if (!updated) throw new StaleRunWorkerError();
+      },
+
+      async releaseRestoreLock(identity: VerifiedIdentityContext, lock: { ownerUserId: string; projectId: string; fencingToken: number }) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        if (ownerUserId !== lock.ownerUserId) throw new StaleRunWorkerError();
+        await db.update(projectRunLocks).set({ leaseExpiresAt: null, heartbeatAt: new Date(), updatedAt: new Date() }).where(and(
+          eq(projectRunLocks.ownerUserId, ownerUserId), eq(projectRunLocks.projectId, lock.projectId),
+          isNull(projectRunLocks.runId), eq(projectRunLocks.fencingToken, lock.fencingToken),
+        ));
+      },
+
       async create(
         identity: VerifiedIdentityContext,
         input: z.input<typeof versionInputSchema>,
       ) {
         const parsed = versionInputSchema.parse(input);
         const ownerUserId = await resolveOwnerId(db, identity);
-        const id = randomUUID();
+        const id = parsed.versionId ?? randomUUID();
         return db.transaction(async (tx) => {
           const [project] = await tx
             .select({ id: projects.id })
@@ -927,6 +1140,13 @@ export function createRepositories(db: GameDatabase) {
             .for("update")
             .limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
+          if (parsed.parentVersionId) {
+            const [parent] = await tx.select({ id: versions.id }).from(versions).where(and(
+              eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, parsed.projectId),
+              eq(versions.id, parsed.parentVersionId), eq(versions.status, "ready"),
+            )).limit(1);
+            if (!parent) throw new OwnedResourceNotFoundError();
+          }
           const [next] = await tx
             .select({ value: sql<number>`coalesce(max(${versions.versionNumber}), 0) + 1` })
             .from(versions)
@@ -945,12 +1165,68 @@ export function createRepositories(db: GameDatabase) {
               ownerUserId,
               projectId: parsed.projectId,
               versionNumber,
+              parentVersionId: parsed.parentVersionId ?? null,
+              manifest: parsed.manifest ?? {},
               snapshotKey,
               sha256: parsed.sha256,
               sizeBytes: parsed.sizeBytes,
             })
             .returning();
           if (!version) throw new Error("No se pudo crear la versión");
+          return version;
+        });
+      },
+
+      async createRestored(
+        identity: VerifiedIdentityContext,
+        lock: { ownerUserId: string; projectId: string; fencingToken: number },
+        input: z.input<typeof versionInputSchema>,
+      ) {
+        const parsed = versionInputSchema.parse(input);
+        const ownerUserId = await resolveOwnerId(db, identity);
+        if (ownerUserId !== lock.ownerUserId || parsed.projectId !== lock.projectId) throw new StaleRunWorkerError();
+        const id = parsed.versionId ?? randomUUID();
+        return db.transaction(async (tx) => {
+          const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
+            eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), isNull(projects.deletedAt),
+          )).for("update").limit(1);
+          if (!project) throw new OwnedResourceNotFoundError();
+          const now = new Date();
+          const [activeLock] = await tx.select({ projectId: projectRunLocks.projectId }).from(projectRunLocks).where(and(
+            eq(projectRunLocks.ownerUserId, ownerUserId), eq(projectRunLocks.projectId, parsed.projectId),
+            isNull(projectRunLocks.runId), eq(projectRunLocks.fencingToken, lock.fencingToken),
+            sql`${projectRunLocks.leaseExpiresAt} > ${now}`,
+          )).for("update").limit(1);
+          if (!activeLock) throw new StaleRunWorkerError();
+          const [activeRun] = await tx.select({ id: runs.id }).from(runs).where(and(
+            eq(runs.ownerUserId, ownerUserId), eq(runs.projectId, parsed.projectId),
+            inArray(runs.status, ["queued", "planning", "running", "verifying"]),
+          )).limit(1);
+          if (activeRun) throw new ProjectRunBusyError();
+          const parentVersionId = parsed.parentVersionId ?? null;
+          if (parentVersionId) {
+            const [parent] = await tx.select({ id: versions.id }).from(versions).where(and(
+              eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, parsed.projectId),
+              eq(versions.id, parentVersionId), eq(versions.status, "ready"),
+            )).limit(1);
+            if (!parent) throw new OwnedResourceNotFoundError();
+          }
+          const [next] = await tx.select({ value: sql<number>`coalesce(max(${versions.versionNumber}), 0) + 1` }).from(versions)
+            .where(and(eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, parsed.projectId)));
+          const [version] = await tx.insert(versions).values({
+            id,
+            ownerUserId,
+            projectId: parsed.projectId,
+            versionNumber: next?.value ?? 1,
+            runId: null,
+            parentVersionId,
+            snapshotKey: `private/${ownerUserId}/projects/${parsed.projectId}/versions/${id}`,
+            sha256: parsed.sha256,
+            sizeBytes: parsed.sizeBytes,
+            manifest: parsed.manifest ?? {},
+            status: "ready",
+          }).returning();
+          if (!version) throw new Error("No se pudo confirmar la versión restaurada");
           return version;
         });
       },
@@ -992,17 +1268,21 @@ export function createRepositories(db: GameDatabase) {
           ? and(
               eq(versions.ownerUserId, ownerUserId),
               eq(versions.projectId, parsedProjectId),
+              eq(versions.status, "ready"),
               or(
                 lt(versions.createdAt, cursor.createdAt),
                 and(eq(versions.createdAt, cursor.createdAt), lt(versions.id, cursor.id)),
               ),
             )
-          : and(eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, parsedProjectId));
+          : and(eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, parsedProjectId), eq(versions.status, "ready"));
         const rows = await db
           .select({
             id: versions.id,
             projectId: versions.projectId,
             versionNumber: versions.versionNumber,
+            runId: versions.runId,
+            parentVersionId: versions.parentVersionId,
+            manifest: versions.manifest,
             sha256: versions.sha256,
             sizeBytes: versions.sizeBytes,
             status: versions.status,

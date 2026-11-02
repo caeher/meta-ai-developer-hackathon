@@ -2,6 +2,7 @@ import type { SandboxRecord, SandboxState } from "@meta-game/db";
 import type { SandboxEnvironment } from "@meta-game/config";
 import {
   SANDBOX_COMMAND_OUTPUT_MAX_BYTES,
+  SANDBOX_BINARY_READ_OUTPUT_MAX_BYTES,
   SANDBOX_DEV_SERVER_PORT,
   SANDBOX_FILE_OUTPUT_MAX_BYTES,
   SANDBOX_LIST_MAX_ENTRIES,
@@ -14,6 +15,8 @@ import {
   SANDBOX_BINARY_FILE_MAX_BYTES,
   SandboxListFilesInputSchema,
   SandboxReadFileInputSchema,
+  SandboxReadBinaryFileInputSchema,
+  SandboxDeleteFileInputSchema,
   SandboxRunCommandInputSchema,
   SandboxWriteFileInputSchema,
   validateSandboxNpmArgs,
@@ -262,6 +265,21 @@ export class SandboxService {
     } catch { throw new SandboxRuntimeError("file_not_utf8"); }
   }
 
+  async readBinaryFile(projectId: string, path: string): Promise<{ path: string; contentBase64: string; bytes: number }> {
+    const parsed = SandboxReadBinaryFileInputSchema.safeParse({ path });
+    if (!parsed.success) throw new SandboxRuntimeError("invalid_path");
+    const result = await this.executeSandboxCommand(
+      projectId, ["/usr/local/bin/workspace-fs", "read", parsed.data.path], "",
+      this.environment.SANDBOX_COMMAND_TIMEOUT_MS, SANDBOX_BINARY_READ_OUTPUT_MAX_BYTES,
+    );
+    if (result.exitCode !== 0) throw helperError(result.stderr);
+    const encoded = result.stdout.trim();
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw new SandboxRuntimeError("file_read_failed");
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.toString("base64") !== encoded || bytes.byteLength > SANDBOX_BINARY_FILE_MAX_BYTES) throw new SandboxRuntimeError("file_too_large");
+    return { path: parsed.data.path, contentBase64: encoded, bytes: bytes.byteLength };
+  }
+
   async writeFile(projectId: string, path: string, content: string): Promise<{ path: string; bytesWritten: number }> {
     const parsed = SandboxWriteFileInputSchema.safeParse({ path, content });
     if (!parsed.success) throw new SandboxRuntimeError("invalid_tool_input");
@@ -273,6 +291,19 @@ export class SandboxService {
     const bytesWritten = Number(result.stdout.trim());
     if (!Number.isSafeInteger(bytesWritten) || bytesWritten < 0 || bytesWritten > 1_048_576) throw new SandboxRuntimeError("file_write_failed");
     return { path: parsed.data.path, bytesWritten };
+  }
+
+  async deleteFile(projectId: string, path: string): Promise<{ path: string; deleted: boolean }> {
+    const parsed = SandboxDeleteFileInputSchema.safeParse({ path });
+    if (!parsed.success) throw new SandboxRuntimeError("invalid_path");
+    const result = await this.executeSandboxCommand(
+      projectId, ["/usr/local/bin/workspace-fs", "remove", parsed.data.path], "",
+      this.environment.SANDBOX_COMMAND_TIMEOUT_MS, 1024,
+    );
+    if (result.exitCode !== 0) throw helperError(result.stderr);
+    const deleted = result.stdout.trim();
+    if (deleted !== "0" && deleted !== "1") throw new SandboxRuntimeError("file_remove_failed");
+    return { path: parsed.data.path, deleted: deleted === "1" };
   }
 
   async writeBinaryFile(projectId: string, path: string, bytes: Uint8Array): Promise<{ path: string; bytesWritten: number }> {

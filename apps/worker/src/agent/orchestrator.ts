@@ -12,7 +12,7 @@ import {
   type GameSpec,
 } from "@meta-game/contracts";
 import { MetaApiError, type MetaClient } from "@meta-game/meta";
-import { UsageLimitExceededError, type RunUsage, type RunWorkerClaim } from "@meta-game/db";
+import { UsageLimitExceededError, type RunUsage, type RunWorkerClaim, type VerifiedIdentityContext } from "@meta-game/db";
 import type { SkillSelection } from "@meta-game/skills";
 import { RunProcessingError, type RunHandler, type RunHandlerContext, type WorkerRun } from "../handler";
 import type { AgentRunStore } from "./store";
@@ -56,6 +56,15 @@ export interface AgentOrchestratorOptions {
   skillTokenBudget?: number;
   dailyImageLimit?: number;
   imageGenerator?: AgentImageGenerator;
+  versions?: {
+    captureVerifiedRun(input: {
+      identity: VerifiedIdentityContext;
+      claim: RunWorkerClaim;
+      gameSpec: GameSpec;
+      checks: readonly { check: string; status: "passed" | "failed"; summary: string }[];
+      signal: AbortSignal;
+    }): Promise<unknown>;
+  };
 }
 
 type MutableRunEvent = { sequence: number; type: string; payload: Record<string, unknown> };
@@ -283,6 +292,27 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
         await handlerContext.markVerifying();
         const verification = await verifyProject(options, state, handlerContext.claim, run.projectId, state.gameSpec!, repairAttempts + 1);
         if (verification.status === "passed") {
+          if (options.versions) {
+            const checks: { check: string; status: "passed" | "failed"; summary: string }[] = [];
+            for (const event of state.events) {
+              if (event.type !== "agent.verification") continue;
+              const { check, status, summary } = event.payload;
+              if (typeof check === "string" && (status === "passed" || status === "failed") && typeof summary === "string") {
+                checks.push({ check, status, summary });
+              }
+            }
+            try {
+              await options.versions.captureVerifiedRun({
+                identity: await options.store.identity(handlerContext.claim),
+                claim: handlerContext.claim,
+                gameSpec: state.gameSpec!,
+                checks,
+                signal,
+              });
+            } catch {
+              throw new RunProcessingError("version_snapshot_failed", false, state.usage);
+            }
+          }
           if (!findEvent(state.events, "agent.preview_ready")) {
             await append(state, options.store, handlerContext.claim, { type: "agent.preview_ready", payload: { state: "ready" } });
           }

@@ -6,6 +6,8 @@ import { SandboxRuntimeError } from "./driver";
 import {
   SandboxInstallDependenciesInputSchema,
   SandboxReadFileInputSchema,
+  SandboxReadBinaryFileInputSchema,
+  SandboxDeleteFileInputSchema,
   SandboxRunCommandInputSchema,
   SandboxWriteFileInputSchema,
   SandboxWriteBinaryFileInputSchema,
@@ -15,7 +17,7 @@ import {
 const projectPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox$/i;
 const execPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/exec$/i;
 const stopPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/stop$/i;
-const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|write-file|write-binary-file|list-files|install-dependencies|run-command|start-dev-server|read-logs|verify-game)$/i;
+const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|read-binary-file|write-file|delete-file|write-binary-file|list-files|install-dependencies|run-command|start-dev-server|read-logs|verify-game)$/i;
 const projectIdSchema = z.uuid();
 const execSchema = z.object({
   argv: z.array(z.string()).min(1).max(64),
@@ -102,10 +104,22 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
         send(response, 200, await service.readFile(projectId, input.data.path));
         return;
       }
+      if (tool === "read-binary-file") {
+        const input = SandboxReadBinaryFileInputSchema.safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        send(response, 200, await service.readBinaryFile(projectId, input.data.path));
+        return;
+      }
       if (tool === "write-file") {
         const input = SandboxWriteFileInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
         send(response, 200, await service.writeFile(projectId, input.data.path, input.data.content));
+        return;
+      }
+      if (tool === "delete-file") {
+        const input = SandboxDeleteFileInputSchema.safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        send(response, 200, await service.deleteFile(projectId, input.data.path));
         return;
       }
       if (tool === "write-binary-file") {
