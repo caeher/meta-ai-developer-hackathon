@@ -1,8 +1,8 @@
 # Forja — plataforma de juegos 2D
 
-Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, identidad Clerk, persistencia Drizzle y storage privado S3. El controlador de sandbox rootless está implementado con ejecución deshabilitada hasta validar un host Linux dedicado; generación, previews privadas y publicación siguen pendientes.
+Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, identidad Clerk, persistencia Drizzle y storage privado S3. El controlador de sandbox rootless y el gateway de preview privada están implementados; ejecución y gateway permanecen apagados hasta configurar sus recursos externos y validar un host Linux dedicado. Generación y publicación siguen pendientes.
 
-Los proyectos privados abren un editor de dos paneles en `/projects/[projectId]`: chat persistido y opciones rápidas a la izquierda; preview vacía con navegación, Latest y Publish/Share deshabilitados a la derecha. Guardar un mensaje solo lo persiste; no inicia una llamada a Meta ni una ejecución.
+Los proyectos privados abren un editor de dos paneles en `/projects/[projectId]`: chat persistido y opciones rápidas a la izquierda; preview vacía con navegación, Latest y Publish/Share deshabilitados a la derecha. Guardar un mensaje solo lo persiste; no inicia una llamada a Meta ni una ejecución. La integración de iframe y renovación desde el editor pertenece a #15.
 
 ## Requisitos
 
@@ -95,7 +95,7 @@ La issue #3 incorpora el esquema Drizzle, migraciones y adaptador S3 privado. La
 
 Cada mensaje tiene `requestId` idempotente y secuencia por proyecto. Si un reintento repite la clave con el mismo rol/contenido, se devuelve el registro existente; si cambia el contenido, la API responde `409 idempotency_conflict`. Los transcript se sirven en orden de secuencia con cursor y texto plano, sin HTML activo.
 
-Eliminar un proyecto establece `deleted_at` en una transacción, oculta el proyecto y sus recursos, cancela runs activos, marca sandbox/assets/snapshots para limpieza, revoca publicaciones y crea una tarea `project_cleanup_tasks` en estado `queued`. Todavía no existe un worker de reconciliación; los objetos S3 y volúmenes no se destruyen desde la petición web. La generación del agente y la preview siguen deshabilitadas. Esta entrega no agrega variables de entorno: reutiliza Clerk, `DATABASE_URL` y el bucket privado existente.
+Eliminar un proyecto establece `deleted_at` en una transacción, oculta el proyecto y sus recursos, cancela runs activos, marca sandbox/assets/snapshots para limpieza, revoca publicaciones y crea una tarea `project_cleanup_tasks` en estado `queued`. La ruta incrementa también el epoch de preview antes del borrado para revocar sesiones y WebSockets. Todavía no existe un worker de reconciliación; los objetos S3 y volúmenes no se destruyen desde la petición web. La generación sigue deshabilitada. La preview requiere las nuevas variables documentadas en `.env.example`; su feature flag permanece apagado por defecto.
 
 Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQL de Drizzle y se puede repetir. `npm run db:seed` inserta dos usuarios, proyectos y actividad sintéticos; solo acepta PostgreSQL en loopback y es idempotente. `npm run test:integration` crea recursos temporales y verifica ownership, claves foráneas, paginación, idempotencia, ledger, sandboxes, almacenamiento y eliminación reconciliable de proyectos.
 
@@ -105,7 +105,7 @@ El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y ve
 
 ## Capacidades planificadas
 
-`dev:worker` ya existe; generación desde el chat, ejecución de juegos, aislamiento de runtime, preview y publicación siguen pendientes. El E2E actual cubre el shell del editor con una API de prueba; aún falta un recorrido E2E autenticado con dos cuentas Clerk reales. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue. El acceso real a Meta se informa por separado del resultado de los tests con fixtures.
+`dev:gateway` y `build:gateway` ya existen. El gateway resuelve únicamente sandboxes listos desde PostgreSQL, consume grants de un uso en Redis y autoriza cada HTTP/WebSocket; `npm run infra:up -- --preview` activa el perfil solo con claves válidas. Generación desde el chat y publicación siguen pendientes; el editor aún no monta el iframe hasta #15. Faltan dominio wildcard con TLS, prueba en navegadores objetivo y host Linux dedicado para validar el camino real. El E2E actual cubre el shell del editor con una API de prueba; aún falta un recorrido E2E autenticado con dos cuentas Clerk reales. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue. El acceso real a Meta se informa por separado del resultado de los tests con fixtures.
 
 ## Estructura
 
