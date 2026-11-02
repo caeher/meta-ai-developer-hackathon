@@ -1,9 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { identityFromAuthenticatedSession } from "@meta-game/db";
 import {
   createPrivateStorage,
   createPrivateCheckpointStorage,
+  createPrivateSnapshotStorage,
+  decodeVersionSnapshot,
+  snapshotBytes,
   type AssetRepository,
   type PrivateObjectClient,
   type StorageAsset,
@@ -67,6 +71,7 @@ function createHarness(options: { corruptHead?: boolean; failComplete?: boolean;
   };
   const client: PrivateObjectClient = {
     async put(input) {
+      if (input.ifAbsent && objects.has(input.key)) throw new Error("precondition failed");
       objects.set(input.key, Uint8Array.from(input.body));
     },
     async head(key) {
@@ -99,6 +104,50 @@ function createHarness(options: { corruptHead?: boolean; failComplete?: boolean;
 }
 
 describe("almacenamiento privado", () => {
+  it("guarda, verifica y lee snapshots versionados con clave derivada en servidor", async () => {
+    const harness = createHarness();
+    const snapshots = createPrivateSnapshotStorage(harness.client);
+    const versionId = randomUUID();
+    const content = "export const value = 1;\n";
+    const snapshot = {
+      schemaVersion: 1 as const,
+      projectId,
+      versionId,
+      runId: randomUUID(),
+      parentVersionId: null,
+      gameSpec: { schemaVersion: 1 as const, genre: "platformer" as const, intent: "create" as const, objective: "Juego verificable", changes: [], controls: { movement: "arrows" as const, action: "space" as const, touch: true as const } },
+      verification: { status: "passed" as const, checks: [{ check: "build", status: "passed" as const, summary: "build válido" }] },
+      files: [{ path: "src/main.ts", encoding: "utf8" as const, content, bytes: Buffer.byteLength(content), sha256: createHash("sha256").update(content).digest("hex") }],
+      totalBytes: Buffer.byteLength(content),
+    };
+    const metadata = await snapshots.write({ ownerUserId: "00000000-0000-4000-8000-000000000101", projectId, versionId }, snapshot);
+    const key = `private/00000000-0000-4000-8000-000000000101/projects/${projectId}/versions/${versionId}`;
+    expect(harness.objects.has(key)).toBe(true);
+    expect(metadata.created).toBe(true);
+    await expect(snapshots.read({ ownerUserId: "00000000-0000-4000-8000-000000000101", projectId, versionId }, metadata)).resolves.toEqual(snapshot);
+    await expect(snapshots.write({ ownerUserId: "00000000-0000-4000-8000-000000000101", projectId, versionId }, snapshot)).resolves.toMatchObject({ created: false });
+    const changedContent = "export const value = 2;\n";
+    const changed = { ...snapshot, files: [{ ...snapshot.files[0]!, content: changedContent, bytes: Buffer.byteLength(changedContent), sha256: createHash("sha256").update(changedContent).digest("hex") }], totalBytes: Buffer.byteLength(changedContent) };
+    await expect(snapshots.write({ ownerUserId: "00000000-0000-4000-8000-000000000101", projectId, versionId }, changed)).rejects.toThrow();
+    await expect(snapshots.read({ ownerUserId: "00000000-0000-4000-8000-000000000101", projectId, versionId }, metadata)).resolves.toEqual(snapshot);
+  });
+
+  it("rechaza traversal, secretos, contenido alterado y archivos expandido excesivos", () => {
+    const content = "x";
+    const base = {
+      schemaVersion: 1 as const, projectId, versionId: randomUUID(), runId: randomUUID(), parentVersionId: null,
+      gameSpec: { schemaVersion: 1 as const, genre: "platformer" as const, intent: "create" as const, objective: "Juego verificable", changes: [], controls: { movement: "arrows" as const, action: "space" as const, touch: true as const } },
+      verification: { status: "passed" as const, checks: [{ check: "build", status: "passed" as const, summary: "build válido" }] },
+      files: [{ path: "src/main.ts", encoding: "utf8" as const, content, bytes: 1, sha256: createHash("sha256").update(content).digest("hex") }], totalBytes: 1,
+    };
+    expect(() => snapshotBytes({ ...base, files: [{ ...base.files[0]!, path: "../.env.local" }] })).toThrow();
+    expect(() => snapshotBytes({ ...base, files: [{ ...base.files[0]!, path: ".env" }] })).toThrow();
+    expect(() => snapshotBytes({ ...base, files: [{ ...base.files[0]!, path: ".npmrc" }] })).toThrow();
+    expect(() => snapshotBytes({ ...base, files: [{ ...base.files[0]!, path: "src//main.ts" }] })).toThrow();
+    expect(() => snapshotBytes({ ...base, files: [{ ...base.files[0]!, content: "y" }] })).toThrow();
+    expect(() => decodeVersionSnapshot(gzipSync(Buffer.alloc(32 * 1024 * 1024 + 1)))).toThrow("límite expandido");
+  });
+
   it("guarda checkpoints privados acotados, los valida por checksum y los elimina", async () => {
     const harness = createHarness();
     const checkpoints = createPrivateCheckpointStorage(harness.client);

@@ -87,6 +87,26 @@ function installPrivateApiFixture() {
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
     const identity = new URLSearchParams(location.search).get("identity") ?? "owner-a";
 
+    if (url.pathname === `/api/projects/${projectId}/versions` && method === "GET") {
+      const items = new URLSearchParams(location.search).has("versions") ? [{
+        id: "c31d319e-831a-47e0-a1f3-e965c7b7a243", projectId, versionNumber: 3, status: "ready",
+      }] : [];
+      return Response.json({ items, latestVersionId: items[0]?.id ?? null, nextCursor: null });
+    }
+    if (url.pathname === `/api/projects/${projectId}/versions/c31d319e-831a-47e0-a1f3-e965c7b7a243` && method === "GET") {
+      return Response.json({ version: {
+        id: "c31d319e-831a-47e0-a1f3-e965c7b7a243", versionNumber: 3, parentVersionId: null,
+        manifest: {
+          gameSpec: { genre: "platformer", objective: "Juego fixture" },
+          verification: { checks: [{ check: "build", status: "passed", summary: "Build correcto" }] },
+          changes: { added: ["src/game.ts"], modified: ["src/main.ts"], removed: [] },
+        },
+      } });
+    }
+    if (url.pathname === `/api/projects/${projectId}/versions/c31d319e-831a-47e0-a1f3-e965c7b7a243/restore` && method === "POST") {
+      return Response.json({ restored: { versionId: crypto.randomUUID(), versionNumber: 4 } });
+    }
+
     if (url.pathname === `/api/projects/${projectId}/preview-grant` && method === "POST") {
       nextGrant += 1;
       const deniedIdentity = new URLSearchParams(location.search).get("grant-error");

@@ -234,9 +234,13 @@ test.describe("editor de dos paneles", () => {
     expect(fixture.state.cookieHeaders.every((cookie) => !cookie.includes("clerk_session"))).toBe(true);
 
     await page.getByRole("combobox", { name: "Versión de la vista previa" }).click();
-    await expect(page.getByRole("option", { name: "Latest · espacio actual" })).toBeVisible();
-    await expect(page.getByRole("option", { name: "v3 · guardada" })).toBeDisabled();
-    await page.keyboard.press("Escape");
+    await expect(page.getByRole("option", { name: "Latest · última verificada" })).toBeVisible();
+    const savedVersion = page.getByRole("option", { name: "v3 · verificada" });
+    await expect(savedVersion).toBeEnabled();
+    await savedVersion.click();
+    await expect(page.getByRole("dialog")).toContainText("Snapshot verificado");
+    await expect(page.getByRole("dialog")).toContainText("Build correcto");
+    await page.getByRole("button", { name: "Cerrar" }).click();
 
     const reload = page.getByRole("button", { name: "Recargar vista previa" });
     await reload.focus();

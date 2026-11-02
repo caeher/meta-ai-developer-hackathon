@@ -318,6 +318,7 @@ describe.skipIf(!integrationEnabled)("cola durable, cuotas y fencing con Postgre
       cwd: process.cwd(),
       env: {
         PATH: process.env.PATH,
+        NODE_ENV: "test",
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         DATABASE_URL: process.env.DATABASE_URL,
         REDIS_URL: process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
