@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createDatabaseFromEnvironment,
   createRepositories,
+  createOrGetProjectSandbox,
+  getProjectSandbox,
   identityFromAuthenticatedSession,
   IdempotencyConflictError,
   assets,
@@ -53,6 +55,27 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
       storage?.close();
       await database.close();
     }
+  });
+
+  it("registra un sandbox por proyecto con owner y UID aislados", async () => {
+    const [sandboxA, sandboxA2, sandboxB] = await Promise.all([
+      createOrGetProjectSandbox(database.db, projectA.id),
+      createOrGetProjectSandbox(database.db, projectASecond.id),
+      createOrGetProjectSandbox(database.db, projectB.id),
+    ]);
+    expect(sandboxA.ownerUserId).toBe(sandboxA2.ownerUserId);
+    expect(sandboxA.ownerUserId).not.toBe(sandboxB.ownerUserId);
+    expect(new Set([sandboxA.runtimeUid, sandboxA2.runtimeUid, sandboxB.runtimeUid]).size).toBe(3);
+    expect(await createOrGetProjectSandbox(database.db, projectA.id)).toMatchObject({
+      id: sandboxA.id,
+      ownerUserId: sandboxA.ownerUserId,
+      runtimeUid: sandboxA.runtimeUid,
+    });
+    expect(await getProjectSandbox(database.db, projectB.id)).toMatchObject({
+      id: sandboxB.id,
+      projectId: projectB.id,
+      ownerUserId: sandboxB.ownerUserId,
+    });
   });
 
   it("aplica ownership uniforme y rechaza relaciones con dueño inconsistente", async () => {
