@@ -1,0 +1,26 @@
+{
+  "name": "@meta-game/web",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "node ../../scripts/check-node-version.mjs && next dev",
+    "build": "node ../../scripts/check-node-version.mjs && next build",
+    "start": "node ../../scripts/check-node-version.mjs && next start"
+  },
+  "dependencies": {
+    "@meta-game/config": "0.1.0",
+    "@meta-game/contracts": "0.1.0",
+    "@radix-ui/themes": "3.3.0",
+    "next": "16.4.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0"
+  }
+}

@@ -1,0 +1,254 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--app-background);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--app-text);
+  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(ellipse at 75% 0%, rgb(122 162 247 / 10%), transparent 36rem),
+    var(--app-background);
+}
+
+.radix-themes {
+  color: var(--app-text);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 4px;
+}
+
+.shell {
+  width: min(100% - 48px, 1120px);
+  margin: 0 auto;
+}
+
+.topbar {
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  text-decoration: none;
+}
+
+.brand-mark {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--app-background);
+  background: var(--app-blue);
+}
+
+.status-label,
+.coming-soon,
+.phase-count {
+  color: var(--app-text-muted);
+  font-size: 13px;
+}
+
+.status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--app-green);
+}
+
+.intro {
+  max-width: 720px;
+  padding: 100px 0 92px;
+}
+
+.eyebrow {
+  margin: 0 0 14px;
+  color: var(--app-cyan);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+.intro-title {
+  max-width: 680px;
+  margin-bottom: 20px;
+  font-size: clamp(40px, 7vw, 68px);
+  line-height: 1.04;
+  letter-spacing: -0.055em;
+}
+
+.intro-copy {
+  max-width: 620px;
+  margin-bottom: 28px;
+  color: var(--app-text-muted);
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+.health-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  color: var(--app-text);
+  background: var(--app-surface);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.health-link:hover {
+  border-color: var(--app-blue);
+  background: var(--app-surface-raised);
+}
+
+.section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.section-heading .eyebrow {
+  margin-bottom: 8px;
+}
+
+.section-title {
+  margin-bottom: 0;
+  font-size: 25px;
+  letter-spacing: -0.035em;
+}
+
+.phase-count {
+  padding-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.capability-card {
+  min-height: 190px;
+  padding: 20px;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: rgb(36 40 59 / 78%);
+}
+
+.card-index {
+  display: block;
+  margin-bottom: 22px;
+  color: var(--app-purple);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.capability-title {
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.capability-card p {
+  min-height: 44px;
+  margin-bottom: 14px;
+  color: var(--app-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.coming-soon {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 26px 0 34px;
+  margin-top: 42px;
+  border-top: 1px solid var(--app-border);
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: min(100% - 32px, 560px);
+  }
+
+  .intro {
+    padding: 72px 0 64px;
+  }
+
+  .capability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .capability-card {
+    min-height: unset;
+  }
+
+  .capability-card p {
+    min-height: unset;
+  }
+
+  .footer {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .health-link {
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+}

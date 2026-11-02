@@ -1,0 +1,16 @@
+:root {
+  color-scheme: dark;
+  --app-background: #1a1b26;
+  --app-surface: #24283b;
+  --app-surface-raised: #292e42;
+  --app-text: #c0caf5;
+  --app-text-muted: #a9b1d6;
+  --app-blue: #7aa2f7;
+  --app-purple: #bb9af7;
+  --app-cyan: #7dcfff;
+  --app-green: #9ece6a;
+  --app-orange: #ff9e64;
+  --app-red: #f7768e;
+  --app-border: #414868;
+  --app-focus: #7dcfff;
+}

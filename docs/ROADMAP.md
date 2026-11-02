@@ -1,5 +1,7 @@
 # Orden de implementación
 
+Estado al implementar la issue #1: la base del monorepo, web mínima, contratos, CI y checks Node 24 están en el repositorio. La issue permanece abierta hasta revisión; las issues #2–#28 siguen pendientes y no se declaran operativas.
+
 Plan creado a partir de [PROJECT_BRIEF.md](PROJECT_BRIEF.md). Leer [AGENTS.md](../AGENTS.md) antes de tomar una issue. Cada entrega depende de la anterior; sus cuerpos en GitHub contienen tareas, archivos, variables, aceptación, pruebas y seguridad. Estado inicial: planificación; ninguna de estas capacidades se declara implementada.
 
 | Orden | Issue | Fase | Dependencia |
