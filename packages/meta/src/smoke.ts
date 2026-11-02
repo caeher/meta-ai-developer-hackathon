@@ -1,5 +1,7 @@
 import type { MetaConfig } from "./config.js";
-import { MetaApiError, MetaTransport, type MetaResponse } from "./transport.js";
+import { MetaApiError } from "./errors.js";
+import { MetaTransport } from "./transport.js";
+import { parseImageResponse, type ProviderResponse } from "./responses.js";
 
 const TEXT_PROMPT = "Reply with exactly META_SMOKE_OK.";
 const TOOL_OUTPUT = "META_SMOKE_OK";
@@ -40,7 +42,7 @@ export class MetaSmokeError extends Error {
   }
 }
 
-function outputText(response: MetaResponse): string {
+function outputText(response: ProviderResponse): string {
   if (response.output_text?.trim()) return response.output_text.trim();
 
   const chunks: string[] = [];
@@ -56,7 +58,7 @@ function outputText(response: MetaResponse): string {
   return chunks.join("\n").trim();
 }
 
-function assertCompleted(response: MetaResponse, model: string): void {
+function assertCompleted(response: ProviderResponse, model: string): void {
   if (response.model !== model) {
     throw new MetaSmokeError("Meta API response model did not match the configured model.");
   }
@@ -74,7 +76,7 @@ function textPreview(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").slice(0, 120);
 }
 
-function findFunctionCall(response: MetaResponse): { callId: string; name: string; arguments: string } {
+function findFunctionCall(response: ProviderResponse): { callId: string; name: string; arguments: string } {
   const item = response.output.find((candidate) => candidate.type === "function_call");
   if (!item || typeof item.call_id !== "string" || typeof item.name !== "string" || typeof item.arguments !== "string") {
     throw new MetaSmokeError("Meta API did not return a valid smoke function call.");
@@ -96,21 +98,22 @@ function findFunctionCall(response: MetaResponse): { callId: string; name: strin
   return { callId: item.call_id, name: item.name, arguments: item.arguments };
 }
 
-function hasImageResult(response: MetaResponse): boolean {
-  const call = response.output.find((item) => item.type === "image_generation_call");
-  if (!call || typeof call.result !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(call.result)) {
+function hasImageResult(response: ProviderResponse): boolean {
+  try {
+    parseImageResponse(response);
+    return true;
+  } catch {
     return false;
   }
-  const bytes = Buffer.from(call.result, "base64");
-  return bytes.length > 0 && bytes.length <= 20 * 1024 * 1024;
 }
 
 export async function runMetaSmoke(
   config: MetaConfig,
   options: MetaSmokeOptions = {},
   transport: MetaTransport = new MetaTransport(config),
+  signal?: AbortSignal,
 ): Promise<MetaSmokeResult> {
-  const listed = await transport.listModels();
+  const listed = await transport.listModels(signal);
   const configured = {
     plan: config.modelPlan,
     code: config.modelCode,
@@ -129,7 +132,7 @@ export async function runMetaSmoke(
     max_output_tokens: 256,
     reasoning: { effort: "low" },
     store: false,
-  });
+  }, signal);
   assertCompleted(textResult.response, config.modelPlan);
   const text = outputText(textResult.response);
   if (!text) throw new MetaSmokeError("Meta API response did not contain generated text.");
@@ -159,7 +162,7 @@ export async function runMetaSmoke(
         strict: true,
       }],
       tool_choice: "auto",
-    });
+    }, signal);
     assertCompleted(toolCallResult.response, config.modelCode);
     const functionCall = findFunctionCall(toolCallResult.response);
 
@@ -180,7 +183,7 @@ export async function runMetaSmoke(
       ],
       max_output_tokens: 64,
       store: false,
-    });
+    }, signal);
     assertCompleted(toolOutputResult.response, config.modelCode);
     if (!outputText(toolOutputResult.response)) {
       throw new MetaSmokeError("Meta API did not accept the smoke function output.");
@@ -193,7 +196,7 @@ export async function runMetaSmoke(
       model: config.modelImage,
       input: "Create one simple 16-bit pixel-art blue star on a plain transparent background; no text.",
       store: false,
-    });
+    }, signal);
     assertCompleted(imageResult.response, config.modelImage);
     if (!hasImageResult(imageResult.response)) {
       throw new MetaSmokeError("Meta API did not return a valid image-generation result.");

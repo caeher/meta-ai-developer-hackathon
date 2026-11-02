@@ -1,3 +1,4 @@
+import "server-only";
 import { z } from "zod";
 
 export const OFFICIAL_META_BASE_URL = "https://api.meta.ai/v1";

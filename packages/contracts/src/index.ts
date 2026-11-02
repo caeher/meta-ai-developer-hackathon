@@ -8,3 +8,4 @@ export type {
 } from "./http";
 export * from "./projects";
 export * from "./editor";
+export * from "./meta";
