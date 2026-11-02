@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "images": [
+    {
+      "service": "postgres",
+      "reference": "docker.io/library/postgres:17.11-alpine3.24@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b",
+      "version": "17.11-alpine3.24",
+      "digest": "sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b"
+    },
+    {
+      "service": "redis",
+      "reference": "docker.io/library/redis:8.10.2-alpine3.23@sha256:9f8d2d789b9a1d1e3f283f979aa9cbf393373806472e1ccd460e2f9c869b833b",
+      "version": "8.10.2-alpine3.23",
+      "digest": "sha256:9f8d2d789b9a1d1e3f283f979aa9cbf393373806472e1ccd460e2f9c869b833b"
+    },
+    {
+      "service": "s3",
+      "reference": "docker.io/pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7",
+      "version": "RELEASE.2026-10-26T00-00-00Z",
+      "digest": "sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7",
+      "note": "Fork compatible with MinIO. Community MinIO images are unavailable; see docs/local-development.md."
+    },
+    {
+      "service": "web-base",
+      "reference": "docker.io/library/node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c",
+      "version": "24.22.1-bookworm-slim",
+      "digest": "sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c"
+    }
+  ]
+}

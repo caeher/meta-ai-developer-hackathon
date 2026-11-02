@@ -1,6 +1,6 @@
 # Orden de implementación
 
-Estado al implementar la issue #1: la base del monorepo, web mínima, contratos, CI y checks Node 24 están en el repositorio. La issue permanece abierta hasta revisión; las issues #2–#28 siguen pendientes y no se declaran operativas.
+Estado al implementar la issue #2: la base del monorepo, web mínima, contratos, CI y servicios locales de Postgres, Redis y storage S3 compatible están en `main`. La issue #2 permanece abierta hasta revisión; las issues #3–#28 siguen pendientes y no se declaran operativas. El storage local usa Silo, fork compatible con MinIO, porque la distribución comunitaria de MinIO dejó de estar disponible.
 
 Plan creado a partir de [PROJECT_BRIEF.md](PROJECT_BRIEF.md). Leer [AGENTS.md](../AGENTS.md) antes de tomar una issue. Cada entrega depende de la anterior; sus cuerpos en GitHub contienen tareas, archivos, variables, aceptación, pruebas y seguridad. Estado inicial: planificación; ninguna de estas capacidades se declara implementada.
 

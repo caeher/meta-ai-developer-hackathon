@@ -1,0 +1,157 @@
+name: meta-ai-game-platform
+
+services:
+  postgres:
+    image: docker.io/library/postgres:17.11-alpine3.24@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-meta_game}
+      POSTGRES_USER: ${POSTGRES_USER:-meta_game}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}
+    ports:
+      - name: postgres-loopback
+        target: 5432
+        published: "${POSTGRES_PORT:-5432}"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - control
+
+  redis:
+    image: docker.io/library/redis:8.10.2-alpine3.23@sha256:9f8d2d789b9a1d1e3f283f979aa9cbf393373806472e1ccd460e2f9c869b833b
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+    ports:
+      - name: redis-loopback
+        target: 6379
+        published: "${REDIS_PORT:-6379}"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - control
+
+  s3:
+    image: docker.io/pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
+    restart: unless-stopped
+    command: [server, /data, --console-address, ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-meta_game_local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-local-only-s3-password-change-me-2026}
+    ports:
+      - name: s3-api-loopback
+        target: 9000
+        published: "${S3_API_PORT:-9000}"
+        host_ip: 127.0.0.1
+        protocol: tcp
+      - name: s3-console-loopback
+        target: 9001
+        published: "${S3_CONSOLE_PORT:-9001}"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - s3-data:/data
+    healthcheck:
+      test: [CMD, silo, healthcheck, ready]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    networks:
+      - control
+
+  web:
+    profiles: [web]
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+    init: true
+    restart: "no"
+    environment:
+      APP_ORIGIN: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - name: web-loopback
+        target: 3000
+        published: "3000"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - ../apps/web/app:/workspace/apps/web/app
+      - ../apps/web/styles:/workspace/apps/web/styles
+      - ../apps/web/next.config.ts:/workspace/apps/web/next.config.ts:ro
+      - ../apps/web/package.json:/workspace/apps/web/package.json:ro
+      - ../apps/web/tsconfig.json:/workspace/apps/web/tsconfig.json:ro
+      - ../packages/config/src:/workspace/packages/config/src
+      - ../packages/config/package.json:/workspace/packages/config/package.json:ro
+      - ../packages/contracts/src:/workspace/packages/contracts/src
+      - ../packages/contracts/package.json:/workspace/packages/contracts/package.json:ro
+      - ../package.json:/workspace/package.json:ro
+      - ../package-lock.json:/workspace/package-lock.json:ro
+      - ../.npmrc:/workspace/.npmrc:ro
+      - ../tsconfig.base.json:/workspace/tsconfig.base.json:ro
+      - ../scripts/check-node-version.mjs:/workspace/scripts/check-node-version.mjs:ro
+      - web-node-modules:/workspace/node_modules
+      - web-next-cache:/workspace/apps/web/.next
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      s3:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - control
+
+volumes:
+  postgres-data:
+  redis-data:
+  s3-data:
+  web-node-modules:
+  web-next-cache:
+
+networks:
+  control: {}

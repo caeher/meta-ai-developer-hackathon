@@ -10,7 +10,7 @@ Este commit inicial contiene planificación, no una aplicación implementada. La
 
 - **Node 24 en todos los proyectos Node**, incluidos plantillas, imágenes Docker, CI y servicios. `.nvmrc`: `24`; `engines.node`: `>=24 <25`; npm workspaces con `package-lock.json` versionado y `npm ci`. Comprobar compatibilidad y fijar versiones de dependencias al implementar, sin actualizar majors implícitamente.
 - **Next.js App Router + TypeScript estricto** para la aplicación y API de control. Usar Server Components por defecto y Client Components para interacción. **Radix Themes/Primitives** para las vistas; Clerk proporciona sus componentes de identidad, con apariencia coherente. El canvas del juego pertenece a Phaser.
-- **PostgreSQL + Drizzle**: relaciones, transacciones, migraciones SQL auditables y tipado cercano al esquema. **Redis + BullMQ** para trabajos durables, locks y límites atómicos. **S3 compatible** para assets y snapshots privados; MinIO en local. La base es la fuente de verdad, no el disco temporal ni Redis.
+- **PostgreSQL + Drizzle**: relaciones, transacciones, migraciones SQL auditables y tipado cercano al esquema. **Redis + BullMQ** para trabajos durables, locks y límites atómicos. **S3 compatible** para assets y snapshots privados; Silo, fork compatible con MinIO, para desarrollo local mientras MinIO Community no publique imágenes mantenidas. La base es la fuente de verdad, no el disco temporal ni Redis.
 - **Worker Node separado** de las peticiones Next: orquesta Meta, reserva cuotas y ejecuta herramientas mediante un servicio de sandbox. **SSE** para eventos durables con cursor y reconexión. Los procesos del juego nunca corren en el proceso de Next ni en el worker de confianza.
 - **Phaser 3**, con baseline de skills 3.90, TypeScript y Vite para los juegos generados. Ofrece escenas, carga de assets, input, audio y Arcade Physics con render WebGL/Canvas sin toolchain nativo. Fijar la versión compatible, no instalar una major distinta automáticamente. Frente a PixiJS reduce las piezas de gameplay a integrar; frente a Godot evita exportaciones y herramientas nativas. El game loop usa `Scene.update(time, delta)` y física del motor.
 - **Un sandbox por `(Clerk userId, projectId)`**, con un único escritor por proyecto y versiones independientes. Host Linux dedicado para ejecución, con contenedores rootless separados como mínimo. gVisor/microVM puede reforzar el driver mediante ADR, sin sustituir comprobaciones de ownership.
@@ -115,6 +115,10 @@ npm run dev                    # web; worker/gateway se añaden por etapas
 npm run dev:worker
 npm run dev:gateway
 docker compose -f infra/compose.yml up -d
+npm run infra:config
+npm run infra:up                 # Postgres, Redis y storage S3 local
+npm run infra:up -- --web        # agrega el perfil web existente
+npm run infra:down               # conserva volúmenes
 npm run db:migrate
 npm run db:seed                 # datos sintéticos, nunca prod
 npm run lint
@@ -127,6 +131,8 @@ npm run test:security           # host Linux desechable con runtime real
 npm run meta:smoke              # clave configurada por operador; coste explícito
 npm run skills:verify
 ```
+
+La issue #2 implementa Compose para Postgres, Redis y Silo, además del perfil web. No hay perfiles worker/gateway hasta que existan esos entrypoints. Las imágenes se fijan por digest en `infra/compose.yml` y `infra/images.lock.json`; el storage local sigue siendo únicamente de desarrollo y no es aislamiento de juegos. `infra:down` conserva los datos. El borrado de volúmenes requiere el comando de reset explícito de `docs/local-development.md`.
 
 No ejecutar las pruebas hostiles en una máquina personal o producción. CI normal usa fixtures y servicios efímeros; el aislamiento se valida además en runner Linux dedicado sin secretos de producción. Las llamadas reales a Meta son opt-in y con presupuesto acotado. Crear tests de comportamiento para autorización, contratos, estado, idempotencia y seguridad; no tests que solo copien la implementación.
 
