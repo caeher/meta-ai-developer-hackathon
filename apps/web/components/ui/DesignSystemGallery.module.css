@@ -1,0 +1,86 @@
+.gallery {
+  display: grid;
+  gap: 34px;
+  padding-bottom: 48px;
+}
+
+.section {
+  display: grid;
+  gap: 16px;
+}
+
+.sectionHeading {
+  display: grid;
+  gap: 6px;
+}
+
+.sectionHeading h2,
+.sectionHeading p {
+  margin-bottom: 0;
+}
+
+.panel {
+  min-width: 0;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+}
+
+.badges {
+  margin-top: 20px;
+}
+
+.label {
+  display: block;
+  margin: 0 0 7px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.label:not(:first-child) {
+  margin-top: 18px;
+}
+
+.dialogTrigger {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  color: var(--app-text);
+  background: var(--app-surface-raised);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dialogTrigger:hover {
+  border-color: var(--app-blue);
+}
+
+.tabs {
+  margin-top: 24px;
+}
+
+.tabContent {
+  min-height: 58px;
+  padding: 18px 4px 4px;
+  color: var(--app-text-muted);
+}
+
+.scrollArea {
+  height: 176px;
+}
+
+.eventList {
+  display: grid;
+  gap: 12px;
+  padding: 8px;
+}
+
+.eventList p {
+  margin-bottom: 0;
+}
+
+@media (max-width: 600px) {
+  .gallery {
+    gap: 28px;
+  }
+}

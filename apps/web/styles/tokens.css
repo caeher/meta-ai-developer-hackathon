@@ -1,5 +1,7 @@
 :root {
   color-scheme: dark;
+
+  /* Tokyo Night semantic tokens. Keep application colors here. */
   --app-background: #1a1b26;
   --app-surface: #24283b;
   --app-surface-raised: #292e42;
@@ -12,5 +14,23 @@
   --app-orange: #ff9e64;
   --app-red: #f7768e;
   --app-border: #414868;
+  --app-border-strong: #565e89;
   --app-focus: #7dcfff;
+  --app-overlay: rgb(10 12 22 / 78%);
+
+  /* Clerk's global appearance API consumes these same semantic colors. */
+  --clerk-color-primary: var(--app-blue);
+  --clerk-color-primary-foreground: var(--app-background);
+  --clerk-color-background: var(--app-surface);
+  --clerk-color-foreground: var(--app-text);
+  --clerk-color-muted: var(--app-surface-raised);
+  --clerk-color-muted-foreground: var(--app-text-muted);
+  --clerk-color-input: var(--app-background);
+  --clerk-color-input-foreground: var(--app-text);
+  --clerk-color-danger: var(--app-red);
+  --clerk-color-success: var(--app-green);
+  --clerk-color-warning: var(--app-orange);
+  --clerk-color-border: var(--app-border);
+  --clerk-color-ring: var(--app-focus);
+  --clerk-color-modal-backdrop: var(--app-overlay);
 }

@@ -4,6 +4,7 @@ import { AuthProvider } from "../components/auth/AuthProvider";
 import { getClerkConfiguration } from "../server/auth/config";
 import "@radix-ui/themes/styles.css";
 import "../styles/tokens.css";
+import "../styles/radix.css";
 import "../styles/globals.css";
 
 export const metadata: Metadata = {
@@ -33,6 +34,7 @@ export default function RootLayout({
             grayColor="slate"
             hasBackground={false}
             panelBackground="solid"
+            radius="medium"
           >
             {children}
           </Theme>

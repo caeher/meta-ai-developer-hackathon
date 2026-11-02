@@ -1,0 +1,27 @@
+.state {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+}
+
+.badge {
+  margin-bottom: 12px;
+}
+
+.title {
+  margin-bottom: 8px;
+}
+
+.action {
+  margin-top: 16px;
+}
+
+.progress {
+  display: grid;
+  gap: 10px;
+}
+
+.progressHeading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}

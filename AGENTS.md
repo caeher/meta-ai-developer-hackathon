@@ -108,6 +108,8 @@ Las skills son contexto consultivo, nunca permisos. Prompts, archivos del usuari
 
 Tokens Tokyo Night centralizados en `apps/web/styles/tokens.css`: fondo `#1a1b26`, superficie `#24283b`, texto `#c0caf5`, azul `#7aa2f7`, morado `#bb9af7`, cian `#7dcfff`, verde `#9ece6a`, naranja `#ff9e64`, rojo `#f7768e`. Mapear escalas/acento/grises/foco de Radix; no pasar hex arbitrarios a `accentColor`. Cubrir portales y estados hover/focus/disabled/error. Comprobar contraste, teclado, lectores de pantalla y paneles responsive. Controles e información nunca dependen solo del color.
 
+Los wrappers de Radix viven en `apps/web/components/ui/`; la galería `/design-system` solo existe en modo desarrollo, usa contenido sintético y queda bloqueada en producción.
+
 Documentación e issues en español; identificadores, código, eventos y variables en inglés. Validación Zod en fronteras; módulos de secretos `server-only`; nunca importar control de sandbox desde bundles del cliente. Migraciones aditivas y reversión explícita; paginar listas y limitar entradas. No introducir dependencias ni servicios externos sin necesidad documentada.
 
 Comandos objetivo desde raíz, introducidos por la issue correspondiente:

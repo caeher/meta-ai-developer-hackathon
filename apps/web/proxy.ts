@@ -33,6 +33,11 @@ const handleClerk = clerkMiddleware(
 );
 
 export default function proxy(request: NextRequest, event: NextFetchEvent) {
+  // The gallery contains synthetic examples only and is public in local development.
+  if (process.env.NODE_ENV === "development" && request.nextUrl.pathname === "/design-system") {
+    return NextResponse.next();
+  }
+
   if (!clerkConfiguration.configured) {
     if (isProtectedPath(request.nextUrl.pathname)) {
       if (request.nextUrl.pathname.startsWith("/api/")) {

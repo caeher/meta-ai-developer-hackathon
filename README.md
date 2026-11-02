@@ -24,6 +24,8 @@ La versión de Node debe mostrar `v24.x`. Abre <http://localhost:3000>. Sin clav
 
 Para habilitar Clerk, configura manualmente en un entorno local las variables Clerk de `.env.example` con claves de una instancia de desarrollo del operador. Configura `APP_ORIGIN` y `CLERK_AUTHORIZED_PARTIES` con los orígenes exactos de la app; no uses dominios recibidos desde una petición. Los flujos sign-in/sign-up redirigen de forma fija a `/editor`. Nunca compartas ni guardes `CLERK_SECRET_KEY` en Git, issues, logs o respuestas HTTP.
 
+El tema Tokyo Night usa tokens semánticos compartidos por Radix Themes y Clerk. En desarrollo local, `/design-system` muestra una galería con controles, portales y estados accesibles; esa ruta devuelve 404 fuera del modo de desarrollo y usa solo contenido sintético.
+
 Consulta [docs/authentication.md](docs/authentication.md) para límites locales, comportamiento de las APIs y validación con dos usuarios. Las pruebas actuales usan sesiones y proyectos sintéticos; la comprobación E2E con una instancia Clerk real requiere claves y usuarios de prueba del operador.
 
 Para levantar las dependencias locales:
@@ -73,6 +75,7 @@ Todavía no existen `dev:worker`, `dev:gateway`, smoke de Meta, pruebas E2E, eje
 ## Estructura
 
 - `apps/web`: Next.js App Router, Clerk, React, Radix Themes y TypeScript estricto.
+- `apps/web/components/ui`: wrappers Radix reutilizables y galería local del tema.
 - `packages/config`: validación de URLs públicas y configuración de infraestructura local.
 - `packages/contracts`: schemas Zod de liveness y errores HTTP.
 - `packages/db`: modelo PostgreSQL/Drizzle y repositorios que requieren identidad verificada.

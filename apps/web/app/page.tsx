@@ -30,6 +30,11 @@ export default function HomePage() {
           Consultar estado del servicio
           <span aria-hidden="true"> ↗</span>
         </Link>
+        {process.env.NODE_ENV === "development" ? (
+          <Link className="theme-gallery-link" href="/design-system">
+            Galería de componentes
+          </Link>
+        ) : null}
       </section>
 
       <section className="capabilities" aria-labelledby="capabilities-title">

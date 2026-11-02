@@ -14,7 +14,7 @@ body {
   color: var(--app-text);
   font-family: Arial, Helvetica, sans-serif;
   background:
-    radial-gradient(ellipse at 75% 0%, rgb(122 162 247 / 10%), transparent 36rem),
+    radial-gradient(ellipse at 75% 0%, var(--blue-a4), transparent 36rem),
     var(--app-background);
 }
 
@@ -30,6 +30,20 @@ a {
 a:focus-visible {
   outline: 2px solid var(--app-focus);
   outline-offset: 4px;
+}
+
+:where(button, input, textarea, select, [role="combobox"], [tabindex]):focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 2px;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+[aria-invalid="true"] {
+  border-color: var(--app-red);
 }
 
 .shell {
@@ -142,6 +156,26 @@ p {
   background: var(--app-surface-raised);
 }
 
+.theme-gallery-link {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  padding: 0 14px;
+  margin-left: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  color: var(--app-cyan);
+  background: var(--app-surface);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.theme-gallery-link:hover {
+  border-color: var(--app-cyan);
+  background: var(--app-surface-raised);
+}
+
 .section-heading {
   display: flex;
   align-items: end;
@@ -175,7 +209,7 @@ p {
   padding: 20px;
   border: 1px solid var(--app-border);
   border-radius: 12px;
-  background: rgb(36 40 59 / 78%);
+  background: var(--color-panel-translucent);
 }
 
 .card-index {
@@ -227,6 +261,10 @@ p {
 
   .intro {
     padding: 72px 0 64px;
+  }
+
+  .theme-gallery-link {
+    margin: 12px 0 0;
   }
 
   .capability-grid {

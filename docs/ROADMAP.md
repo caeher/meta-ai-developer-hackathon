@@ -6,6 +6,8 @@ Plan creado a partir de [PROJECT_BRIEF.md](PROJECT_BRIEF.md). Leer [AGENTS.md](.
 
 Estado de issue #4 actualizado el 2 de noviembre de 2026: la integración de Clerk, las rutas privadas, el contexto de owner y los fixtures de autorización ya están implementados. La issue sigue abierta hasta verificar sign-in, expiración y acceso cruzado con una instancia y dos usuarios Clerk de prueba; no hay credenciales de esa instancia configuradas en este entorno.
 
+Estado de issue #5 actualizado el 2 de noviembre de 2026: tokens Tokyo Night, overrides de Radix, variables de Clerk, wrappers accesibles y galería local ya están implementados. La inspección visual y las capturas a 390 y 1440 px quedan pendientes porque BrowserOS no está conectado en este entorno; la issue permanece abierta hasta esa revisión.
+
 | Orden | Issue | Fase | Dependencia |
 | --- | --- | --- | --- |
 | 01 | [#1 [01] Inicializar el monorepo Next.js y fijar Node 24](https://github.com/caeher/meta-ai-developer-hackathon/issues/1) | Fundaciones | Ninguna |
