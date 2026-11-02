@@ -19,6 +19,15 @@ import {
 } from "./driver";
 
 type DockerInfo = { SecurityOptions?: string[]; CgroupVersion?: string; CgroupDriver?: string; Driver?: string };
+type DockerVolume = { Driver: string; Labels?: Record<string, string>; Options?: Record<string, string> | null };
+
+const hostCheckUid = 60_000;
+const hostCheckDiskMb = 16;
+
+function assertHostCheckUid(uid: number): number {
+  if (uid !== hostCheckUid) throw new SandboxRuntimeError("invalid_sandbox_uid");
+  return uid;
+}
 type DockerInspect = {
   Id: string;
   State: { Status: string; Running: boolean };
@@ -41,7 +50,6 @@ type DockerInspect = {
     Devices?: unknown[];
     CapAdd?: string[] | null;
     Tmpfs?: Record<string, string>;
-    StorageOpt?: Record<string, string>;
     RestartPolicy?: { Name?: string };
   };
   Mounts: Array<{ Type: string; Name?: string; Source?: string; Destination: string; RW: boolean }>;
@@ -111,13 +119,14 @@ async function collectResponse(stream: IncomingMessage, maxBytes: number): Promi
   return Buffer.concat(chunks, size);
 }
 
-function assertContainerSecurity(inspect: DockerInspect, spec: SandboxCreateSpec): number {
-  const uid = assertSandboxUid(spec.uid);
+function assertContainerSecurity(inspect: DockerInspect, spec: SandboxCreateSpec, hostCheck = false): number {
+  const uid = hostCheck ? assertHostCheckUid(spec.uid) : assertSandboxUid(spec.uid);
   const expectedCpu = Math.round(spec.limits.cpu * 1_000_000_000);
   const workspace = inspect.Mounts.filter((mount) => mount.Destination === "/workspace");
   const safe = inspect.Config.Labels?.["com.meta-game.sandbox-id"] === spec.sandboxId &&
     inspect.Config.Labels?.["com.meta-game.managed"] === "true" &&
     inspect.Config.Labels?.["com.meta-game.project-id"] === spec.projectId &&
+    inspect.Config.Labels?.["com.meta-game.workspace-limit-mb"] === String(spec.limits.diskMb) &&
     inspect.Config.Image === spec.image &&
     inspect.Config.User === `${uid}:${uid}` &&
     inspect.Config.WorkingDir === "/workspace" &&
@@ -135,7 +144,6 @@ function assertContainerSecurity(inspect: DockerInspect, spec: SandboxCreateSpec
     (inspect.HostConfig.CapAdd?.length ?? 0) === 0 &&
     inspect.HostConfig.SecurityOpt?.includes("no-new-privileges:true") === true &&
     !inspect.HostConfig.SecurityOpt?.some((option) => option.toLowerCase().includes("seccomp=unconfined")) &&
-    inspect.HostConfig.StorageOpt?.size === `${spec.limits.diskMb}m` &&
     inspect.HostConfig.Tmpfs?.["/tmp"] === "rw,noexec,nosuid,nodev,size=64m,mode=1777" &&
     inspect.HostConfig.Tmpfs?.["/run"] === "rw,noexec,nosuid,nodev,size=8m,mode=1777" &&
     inspect.HostConfig.RestartPolicy?.Name === "no" &&
@@ -149,13 +157,13 @@ function assertContainerSecurity(inspect: DockerInspect, spec: SandboxCreateSpec
   return uid;
 }
 
-export function buildRootlessContainerConfig(spec: SandboxCreateSpec): {
+function buildContainerConfig(spec: SandboxCreateSpec, hostCheck: boolean): {
   containerName: string;
   volumeName: string;
   labels: Record<string, string>;
   body: Record<string, unknown>;
 } {
-  const uid = assertSandboxUid(spec.uid);
+  const uid = hostCheck ? assertHostCheckUid(spec.uid) : assertSandboxUid(spec.uid);
   const containerName = sandboxContainerName(spec.sandboxId);
   const volumeName = sandboxVolumeName(spec.sandboxId);
   if (!spec.image.includes("@sha256:")) throw new SandboxRuntimeError("sandbox_image_must_be_digest_pinned");
@@ -163,6 +171,7 @@ export function buildRootlessContainerConfig(spec: SandboxCreateSpec): {
     "com.meta-game.managed": "true",
     "com.meta-game.sandbox-id": spec.sandboxId,
     "com.meta-game.project-id": spec.projectId,
+    "com.meta-game.workspace-limit-mb": String(spec.limits.diskMb),
   };
   return {
     containerName,
@@ -187,7 +196,6 @@ export function buildRootlessContainerConfig(spec: SandboxCreateSpec): {
         MemorySwap: spec.limits.memoryMb * 1024 * 1024,
         NanoCpus: Math.round(spec.limits.cpu * 1_000_000_000),
         PidsLimit: spec.limits.pids,
-        StorageOpt: { size: `${spec.limits.diskMb}m` },
         Tmpfs: {
           "/tmp": "rw,noexec,nosuid,nodev,size=64m,mode=1777",
           "/run": "rw,noexec,nosuid,nodev,size=8m,mode=1777",
@@ -197,7 +205,6 @@ export function buildRootlessContainerConfig(spec: SandboxCreateSpec): {
           Source: volumeName,
           Target: "/workspace",
           ReadOnly: false,
-          VolumeOptions: { NoCopy: true },
         }],
         Devices: [],
         PortBindings: {},
@@ -205,6 +212,10 @@ export function buildRootlessContainerConfig(spec: SandboxCreateSpec): {
       },
     },
   };
+}
+
+export function buildRootlessContainerConfig(spec: SandboxCreateSpec): ReturnType<typeof buildContainerConfig> {
+  return buildContainerConfig(spec, false);
 }
 
 function dockerState(state: DockerInspect["State"]): SandboxRuntimeState {
@@ -220,10 +231,11 @@ const cgroupProbeProgram = [
   "const row=map.find(([inside,,length])=>uid>=inside&&uid<inside+length);const hostUid=row&&row[1]+uid-row[0];",
   "const maxRow=map.find(([inside,,length])=>59999>=inside&&59999<inside+length);const maxHostUid=maxRow&&maxRow[1]+59999-maxRow[0];",
   "const memory=Number(read('memory.max'));const pids=Number(read('pids.max'));const cpu=read('cpu.max').split(/\\s+/).map(Number);",
-  "if(uid!==12345||!hostUid||hostUid===0||!maxHostUid||maxHostUid===0||memory!==134217728||pids!==16||!Number.isFinite(cpu[0])||!Number.isFinite(cpu[1])||cpu[1]<=0||cpu[0]/cpu[1]>0.25||stat.blocks*stat.bsize>16777216)process.exit(30);",
+  "const probeRow=map.find(([inside,,length])=>60000>=inside&&60000<inside+length);const probeHostUid=probeRow&&probeRow[1]+60000-probeRow[0];",
+  "if(uid!==60000||!hostUid||hostUid===0||!maxHostUid||maxHostUid===0||!probeHostUid||probeHostUid===0||probeHostUid===maxHostUid||memory!==134217728||pids!==16||!Number.isFinite(cpu[0])||!Number.isFinite(cpu[1])||cpu[1]<=0||cpu[0]/cpu[1]>0.25||![0xef53,0x58465342].includes(stat.type))process.exit(30);",
   "try{fs.writeFileSync('/etc/rootless-probe','x');process.exit(31)}catch(e){if(e.code!=='EROFS'&&e.code!=='EACCES')process.exit(32)}",
-  "let full=false;for(let i=0;i<32&&!full;i++){try{fs.writeFileSync('/workspace/probe-'+i,Buffer.alloc(1024*1024))}catch(e){if(e.code==='ENOSPC')full=true;else process.exit(33)}}",
-  "if(!full)process.exit(34);for(const name of fs.readdirSync('/workspace'))fs.unlinkSync('/workspace/'+name);",
+  "let full=false,written=0;for(let i=0;i<32&&!full;i++){try{fs.writeFileSync('/workspace/probe-'+i,Buffer.alloc(1024*1024));written+=1024*1024}catch(e){if(e.code==='ENOSPC')full=true;else process.exit(33)}}",
+  "if(!full||written<15*1024*1024||written>17*1024*1024)process.exit(34);for(const name of fs.readdirSync('/workspace'))fs.unlinkSync('/workspace/'+name);",
   "const kids=[];let denied=false;for(let i=0;i<64;i++){const child=cp.spawn('/bin/sleep',['10']);child.on('error',e=>{if(e.code==='EAGAIN')denied=true});kids.push(child)}",
   "setTimeout(()=>{for(const child of kids)child.kill('SIGKILL');setTimeout(()=>process.exit(denied?0:35),100)},500)",
 ].join("");
@@ -254,28 +266,32 @@ export class RootlessDockerDriver implements SandboxDriver {
     const spec: SandboxCreateSpec = {
       sandboxId: randomUUID(),
       projectId: randomUUID(),
-      uid: 12_345,
+      uid: hostCheckUid,
       image: this.image,
-      limits: { cpu: 0.25, memoryMb: 128, diskMb: 16, pids: 16, commandTimeoutMs: 10_000 },
+      limits: { cpu: 0.25, memoryMb: 128, diskMb: hostCheckDiskMb, pids: 16, commandTimeoutMs: 10_000 },
     };
     try {
-      await this.create(spec);
-      const limitsProbe = await this.execWithSpec(spec, ["node", "-e", cgroupProbeProgram], "", 10_000);
+      await this.createWithSpec(spec, true);
+      const limitsProbe = await this.execWithSpec(spec, ["node", "-e", cgroupProbeProgram], "", 10_000, true);
       if (limitsProbe.exitCode !== 0) throw new SandboxRuntimeError("sandbox_limits_probe_failed");
-      const memoryProbe = await this.execWithSpec(spec, ["node", "-e", memoryProbeProgram], "", 15_000);
+      const memoryProbe = await this.execWithSpec(spec, ["node", "-e", memoryProbeProgram], "", 15_000, true);
       if (memoryProbe.exitCode !== 137) throw new SandboxRuntimeError("sandbox_memory_probe_failed");
     } catch (error) {
       throw error instanceof SandboxRuntimeError ? error : new SandboxRuntimeError("sandbox_host_probe_failed");
     } finally {
-      await this.destroyWithSpec(spec).catch(() => {
+      await this.destroyWithSpec(spec, true).catch(() => {
         throw new SandboxRuntimeError("sandbox_host_probe_cleanup_failed");
       });
     }
   }
 
   async create(spec: SandboxCreateSpec): Promise<SandboxInspection> {
+    return this.createWithSpec(spec, false);
+  }
+
+  private async createWithSpec(spec: SandboxCreateSpec, hostCheck: boolean): Promise<SandboxInspection> {
     if (spec.image !== this.image) throw new SandboxRuntimeError("sandbox_image_mismatch");
-    const config = buildRootlessContainerConfig(spec);
+    const config = buildContainerConfig(spec, hostCheck);
     await this.ensureWorkspaceVolume(config.volumeName, config.labels, spec.limits.diskMb);
     let runtime: { Id: string };
     try {
@@ -284,13 +300,13 @@ export class RootlessDockerDriver implements SandboxDriver {
       if (!(error instanceof SandboxRuntimeError) || error.code !== "runtime_conflict") throw error;
       const existing = await this.inspectByName(config.containerName);
       if (!existing) throw error;
-      assertContainerSecurity(existing, spec);
+      assertContainerSecurity(existing, spec, hostCheck);
       runtime = { Id: existing.Id };
     }
 
     try {
       await this.client.request("POST", `/containers/${encodeURIComponent(runtime.Id)}/start`, undefined, [204, 304]);
-      return await this.inspectAndVerify(spec, runtime.Id);
+      return await this.inspectAndVerify(spec, runtime.Id, hostCheck);
     } catch (error) {
       throw error instanceof SandboxRuntimeError ? error : new SandboxRuntimeError("runtime_operation_failed");
     }
@@ -299,7 +315,7 @@ export class RootlessDockerDriver implements SandboxDriver {
   async inspect(sandboxId: string, projectId: string, uid: number): Promise<SandboxInspection> {
     const runtime = await this.inspectByName(sandboxContainerName(sandboxId));
     if (!runtime) return { sandboxId, state: "missing", uid: assertSandboxUid(uid), limits: this.defaultLimits };
-    await this.verifyWorkspaceVolume(sandboxId, this.defaultLimits.diskMb);
+    await this.verifyWorkspaceVolume(sandboxId, projectId, this.defaultLimits.diskMb);
     const spec = { sandboxId, projectId, uid, image: this.image, limits: this.defaultLimits };
     assertContainerSecurity(runtime, spec);
     return {
@@ -314,11 +330,11 @@ export class RootlessDockerDriver implements SandboxDriver {
     await this.stopWithSpec({ sandboxId, projectId, uid, image: this.image, limits: this.defaultLimits });
   }
 
-  private async stopWithSpec(spec: SandboxCreateSpec): Promise<void> {
+  private async stopWithSpec(spec: SandboxCreateSpec, hostCheck = false): Promise<void> {
     const runtime = await this.inspectByName(sandboxContainerName(spec.sandboxId));
     if (!runtime) return;
-    await this.verifyWorkspaceVolume(spec.sandboxId, spec.limits.diskMb);
-    assertContainerSecurity(runtime, spec);
+    await this.verifyWorkspaceVolume(spec.sandboxId, spec.projectId, spec.limits.diskMb);
+    assertContainerSecurity(runtime, spec, hostCheck);
     await this.client.request("POST", `/containers/${encodeURIComponent(runtime.Id)}/stop?t=5`, undefined, [204, 304]);
   }
 
@@ -326,18 +342,21 @@ export class RootlessDockerDriver implements SandboxDriver {
     await this.destroyWithSpec({ sandboxId, projectId, uid, image: this.image, limits: this.defaultLimits });
   }
 
-  private async destroyWithSpec(spec: SandboxCreateSpec): Promise<void> {
+  private async destroyWithSpec(spec: SandboxCreateSpec, hostCheck = false): Promise<void> {
     const runtime = await this.inspectByName(sandboxContainerName(spec.sandboxId));
     if (runtime) {
-      await this.verifyWorkspaceVolume(spec.sandboxId, spec.limits.diskMb);
-      assertContainerSecurity(runtime, spec);
-      if (runtime.State.Running) await this.stopWithSpec(spec);
+      await this.verifyWorkspaceVolume(spec.sandboxId, spec.projectId, spec.limits.diskMb);
+      assertContainerSecurity(runtime, spec, hostCheck);
+      if (runtime.State.Running) await this.stopWithSpec(spec, hostCheck);
       await this.client.request("DELETE", `/containers/${encodeURIComponent(runtime.Id)}?force=true&v=1`, undefined, [204, 404]);
     }
     const volumeName = sandboxVolumeName(spec.sandboxId);
     try {
-      const volume = await this.client.request<{ Labels?: Record<string, string> }>("GET", `/volumes/${encodeURIComponent(volumeName)}`);
-      if (volume.Labels?.["com.meta-game.sandbox-id"] !== spec.sandboxId || volume.Labels?.["com.meta-game.managed"] !== "true") {
+      const volume = await this.client.request<DockerVolume>("GET", `/volumes/${encodeURIComponent(volumeName)}`);
+      if (volume.Labels?.["com.meta-game.sandbox-id"] !== spec.sandboxId ||
+        volume.Labels?.["com.meta-game.managed"] !== "true" ||
+        volume.Labels?.["com.meta-game.project-id"] !== spec.projectId ||
+        volume.Labels?.["com.meta-game.workspace-limit-mb"] !== String(spec.limits.diskMb)) {
         throw new SandboxRuntimeError("sandbox_volume_identity_mismatch");
       }
       await this.client.request("DELETE", `/volumes/${encodeURIComponent(volumeName)}?force=false`, undefined, [204, 404]);
@@ -350,14 +369,14 @@ export class RootlessDockerDriver implements SandboxDriver {
     return this.execWithSpec({ sandboxId, projectId, uid, image: this.image, limits: this.defaultLimits }, argv, cwd, timeoutMs);
   }
 
-  private async execWithSpec(spec: SandboxCreateSpec, argv: readonly string[], cwd: string, timeoutMs: number): Promise<SandboxExecResult> {
+  private async execWithSpec(spec: SandboxCreateSpec, argv: readonly string[], cwd: string, timeoutMs: number, hostCheck = false): Promise<SandboxExecResult> {
     const safeArgv = validateSandboxArgv(argv);
     const workingDir = resolveWorkspaceCwd(cwd);
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > spec.limits.commandTimeoutMs) throw new SandboxRuntimeError("invalid_timeout");
     const runtime = await this.inspectByName(sandboxContainerName(spec.sandboxId));
     if (!runtime || !runtime.State.Running) throw new SandboxRuntimeError("sandbox_not_running");
-    await this.verifyWorkspaceVolume(spec.sandboxId, spec.limits.diskMb);
-    assertContainerSecurity(runtime, spec);
+    await this.verifyWorkspaceVolume(spec.sandboxId, spec.projectId, spec.limits.diskMb);
+    assertContainerSecurity(runtime, spec, hostCheck);
     const createdAt = performance.now();
     const exec = await this.client.request<{ Id: string }>("POST", `/containers/${encodeURIComponent(runtime.Id)}/exec`, {
       AttachStdout: true,
@@ -382,11 +401,11 @@ export class RootlessDockerDriver implements SandboxDriver {
       stream = response.body;
     } catch (error) {
       if (timedOut) {
-        await this.stopWithSpec(spec).catch(() => undefined);
+        await this.stopWithSpec(spec, hostCheck).catch(() => undefined);
         throw new SandboxRuntimeError("execution_timeout");
       }
       if (error instanceof SandboxRuntimeError && error.code === "runtime_output_limit") {
-        await this.stopWithSpec(spec).catch(() => undefined);
+        await this.stopWithSpec(spec, hostCheck).catch(() => undefined);
       }
       throw error instanceof SandboxRuntimeError ? error : new SandboxRuntimeError("sandbox_exec_failed");
     } finally {
@@ -402,28 +421,26 @@ export class RootlessDockerDriver implements SandboxDriver {
       await this.client.request("POST", "/volumes/create", {
         Name: name,
         Driver: "local",
-        DriverOpts: {
-          type: "tmpfs",
-          device: "tmpfs",
-          o: `size=${diskMb}m,mode=1777,nosuid,nodev,noexec`,
-        },
         Labels: labels,
       }, [201]);
     } catch (error) {
       if (!(error instanceof SandboxRuntimeError) || error.code !== "runtime_conflict") throw error;
     }
     const sandboxId = labels["com.meta-game.sandbox-id"];
-    if (!sandboxId) throw new SandboxRuntimeError("sandbox_volume_identity_mismatch");
-    await this.verifyWorkspaceVolume(sandboxId, diskMb);
+    const projectId = labels["com.meta-game.project-id"];
+    if (!sandboxId || !projectId) throw new SandboxRuntimeError("sandbox_volume_identity_mismatch");
+    await this.verifyWorkspaceVolume(sandboxId, projectId, diskMb);
   }
 
-  private async verifyWorkspaceVolume(sandboxId: string, diskMb: number): Promise<void> {
-    const volume = await this.client.request<{ Driver: string; Labels?: Record<string, string>; Options?: Record<string, string> }>(
+  private async verifyWorkspaceVolume(sandboxId: string, projectId: string, diskMb: number): Promise<void> {
+    const volume = await this.client.request<DockerVolume>(
       "GET", `/volumes/${encodeURIComponent(sandboxVolumeName(sandboxId))}`,
     );
     if (volume.Driver !== "local" || volume.Labels?.["com.meta-game.sandbox-id"] !== sandboxId ||
       volume.Labels?.["com.meta-game.managed"] !== "true" ||
-      volume.Options?.o !== `size=${diskMb}m,mode=1777,nosuid,nodev,noexec`) {
+      volume.Labels?.["com.meta-game.project-id"] !== projectId ||
+      volume.Labels?.["com.meta-game.workspace-limit-mb"] !== String(diskMb) ||
+      Object.keys(volume.Options ?? {}).length !== 0) {
       throw new SandboxRuntimeError("sandbox_volume_identity_mismatch");
     }
   }
@@ -437,9 +454,9 @@ export class RootlessDockerDriver implements SandboxDriver {
     }
   }
 
-  private async inspectAndVerify(spec: SandboxCreateSpec, runtimeId: string): Promise<SandboxInspection> {
+  private async inspectAndVerify(spec: SandboxCreateSpec, runtimeId: string, hostCheck = false): Promise<SandboxInspection> {
     const inspect = await this.client.request<DockerInspect>("GET", `/containers/${encodeURIComponent(runtimeId)}/json`);
-    const uid = assertContainerSecurity(inspect, spec);
+    const uid = assertContainerSecurity(inspect, spec, hostCheck);
     return { sandboxId: spec.sandboxId, state: dockerState(inspect.State), uid, limits: spec.limits };
   }
 

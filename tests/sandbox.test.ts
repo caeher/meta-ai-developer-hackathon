@@ -139,6 +139,10 @@ describe("sandbox rootless contract", () => {
     const host = config.body.HostConfig as Record<string, unknown>;
     expect(config.body.User).toBe("23451:23451");
     expect(config.volumeName).toBe(`mg-workspace-${SANDBOX_ID}`);
+    expect(config.labels).toMatchObject({
+      "com.meta-game.sandbox-id": SANDBOX_ID,
+      "com.meta-game.workspace-limit-mb": "2048",
+    });
     expect(host).toMatchObject({
       Privileged: false,
       ReadonlyRootfs: true,
@@ -150,12 +154,17 @@ describe("sandbox rootless contract", () => {
       MemorySwap: 1024 * 1024 * 1024,
       NanoCpus: 1_000_000_000,
       PidsLimit: 128,
-      StorageOpt: { size: "2048m" },
       CapDrop: ["ALL"],
       SecurityOpt: ["no-new-privileges:true"],
       Devices: [],
       PortBindings: {},
     });
+    expect(host.Mounts).toEqual([{
+      Type: "volume",
+      Source: `mg-workspace-${SANDBOX_ID}`,
+      Target: "/workspace",
+      ReadOnly: false,
+    }]);
     expect(host.Binds).toBeUndefined();
     expect(() => buildRootlessContainerConfig({
       sandboxId: SANDBOX_ID,

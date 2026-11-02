@@ -9,6 +9,9 @@ type DockerInfo = {
   Driver?: string;
 };
 
+const quotaProbeUid = 60_000;
+const quotaProbeMb = 16;
+
 function fail(code: string): never {
   process.stderr.write(`${code}\n`);
   process.exit(1);
@@ -71,30 +74,31 @@ async function main(): Promise<void> {
   "const mapped=uidMap.find(([inside,,length])=>process.getuid()>=inside&&process.getuid()<inside+length);",
   "const maxRow=uidMap.find(([inside,,length])=>59999>=inside&&59999<inside+length);",
   "const maxHostUid=maxRow&&maxRow[1]+59999-maxRow[0];",
-  "const result={uid:process.getuid(),mapped:!!mapped&&mapped[1]+process.getuid()-mapped[0],memory:read('memory.max'),pids:read('pids.max'),cpu:read('cpu.max'),bytes:stat.blocks*stat.bsize};",
-  "if(result.uid<10000)process.exit(20);",
+  `const probeRow=uidMap.find(([inside,,length])=>${quotaProbeUid}>=inside&&${quotaProbeUid}<inside+length);`,
+  `const probeHostUid=probeRow&&probeRow[1]+${quotaProbeUid}-probeRow[0];`,
+  "const result={uid:process.getuid(),mapped:!!mapped&&mapped[1]+process.getuid()-mapped[0],memory:read('memory.max'),pids:read('pids.max'),cpu:read('cpu.max'),filesystem:stat.type};",
+  `if(result.uid!==${quotaProbeUid})process.exit(20);`,
   "if(!result.mapped||result.mapped===0)process.exit(29);",
   "if(!maxHostUid||maxHostUid===0)process.exit(30);",
+  "if(!probeHostUid||probeHostUid===0||probeHostUid===maxHostUid)process.exit(31);",
   "if(Number(result.memory)>134217728)process.exit(21);",
   "if(Number(result.pids)>16)process.exit(22);",
-  "if(Number(result.bytes)>16777216)process.exit(23);",
+  "if(![0xef53,0x58465342].includes(result.filesystem))process.exit(23);",
   "const cpu=read('cpu.max').split(' ').map(Number);if(!Number.isFinite(cpu[0])||!Number.isFinite(cpu[1])||cpu[1]<=0||cpu[0]/cpu[1]>0.25)process.exit(28);",
   "try{fs.writeFileSync('/etc/sandbox-probe','x');process.exit(24)}catch(e){if(e.code!=='EROFS'&&e.code!=='EACCES')process.exit(25)}",
-  "let full=false;for(let n=0;n<32&&!full;n++){try{fs.writeFileSync('/workspace/p'+n,Buffer.alloc(1024*1024))}catch(e){if(e.code==='ENOSPC')full=true;else process.exit(26)}}",
-  "if(!full)process.exit(27);",
+  "let full=false,written=0;for(let n=0;n<32&&!full;n++){try{fs.writeFileSync('/workspace/p'+n,Buffer.alloc(1024*1024));written+=1024*1024}catch(e){if(e.code==='ENOSPC')full=true;else process.exit(26)}}",
+  `if(!full||written<${(quotaProbeMb - 1) * 1024 * 1024}||written>${(quotaProbeMb + 1) * 1024 * 1024})process.exit(27);`,
+  "for(const name of fs.readdirSync('/workspace'))fs.unlinkSync('/workspace/'+name);",
   ].join("");
   const volumeName = `mg-host-check-${process.pid}-${randomUUID().slice(0, 8)}`;
-  const volumeCreate = await run("docker", [
-  "volume", "create", "--driver", "local", "--opt", "type=tmpfs", "--opt", "device=tmpfs",
-  "--opt", "o=size=16m,mode=1777,nosuid,nodev,noexec", volumeName,
-  ], 16_000);
+  const volumeCreate = await run("docker", ["volume", "create", "--driver", "local", volumeName], 16_000);
   if (volumeCreate.code !== 0) fail("sandbox_quota_volume_unavailable");
   let probeCode = 1;
   try {
     const probe = await run("docker", [
-    "run", "--rm", "--network", "none", "--read-only", "--storage-opt", "size=16m", "--memory", "128m", "--memory-swap", "128m",
+    "run", "--rm", "--network", "none", "--read-only", "--memory", "128m", "--memory-swap", "128m",
     "--cpus", "0.25", "--pids-limit", "16", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
-    "--user", "12345:12345", "--tmpfs", "/tmp:size=8m,noexec,nosuid,nodev",
+    "--user", `${quotaProbeUid}:${quotaProbeUid}`, "--tmpfs", "/tmp:size=8m,noexec,nosuid,nodev",
     "--mount", `type=volume,source=${volumeName},target=/workspace`, "--entrypoint", "node", environment.SANDBOX_IMAGE,
     "-e", probeProgram,
     ], 256_000);
@@ -121,7 +125,7 @@ async function main(): Promise<void> {
   if (pidsProbe.code !== 0) fail("sandbox_pids_limit_probe_failed");
   const inspectResult = await run("docker", ["image", "inspect", environment.SANDBOX_IMAGE, "--format", "{{json .Config}}"], 100_000);
   if (inspectResult.code !== 0) fail("sandbox_image_unavailable");
-  process.stdout.write("sandbox_host_ready linux cgroups=v2 rootless=yes seccomp=yes limits=verified\n");
+  process.stdout.write("sandbox_host_ready linux cgroups=v2 rootless=yes seccomp=yes workspace_quota=hard-user ENOSPC\n");
 }
 
 void main().catch(() => fail("sandbox_host_check_failed"));

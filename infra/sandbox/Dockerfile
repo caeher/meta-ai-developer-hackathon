@@ -9,7 +9,8 @@ ENV HOME=/tmp \
 RUN addgroup -S -g 10000 sandbox \
     && adduser -S -D -H -u 10000 -G sandbox sandbox \
     && mkdir -p /workspace \
-    && chown 10000:10000 /workspace
+    && chown 0:0 /workspace \
+    && chmod 1777 /workspace
 
 USER 10000:10000
 WORKDIR /workspace
