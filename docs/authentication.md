@@ -22,3 +22,11 @@ Sin credenciales Clerk reales, la página de inicio y `/api/health` siguen dispo
 `npm test` ejecuta fixtures sintéticos para sesión ausente, identities A/B, lectura y mutación cruzadas, campos `userId` falsificados, CSRF/origen y errores sin detalles sensibles. `npm run test:integration` además prueba el filtro de owner de PostgreSQL cuando Postgres/S3 locales están arriba.
 
 La comprobación de sign-in real, expiración de sesión y dos cuentas en una instancia Clerk requiere credenciales y usuarios de prueba del operador. No hay claves Clerk en este entorno, así que esa evidencia queda pendiente; no se cuentan los fixtures como prueba de la integración externa.
+
+## Registro de verificación local (2 de noviembre de 2026)
+
+En Node 24.22.1 se ejecutaron `npm test` (28 pasaron; 5 pruebas de integración omitidas por la suite unitaria), `npm run test:integration` (5 pasaron), `npm run lint`, `npm run typecheck` y `npm run build`; todos terminaron correctamente. La suite de integración creó y eliminó su base PostgreSQL y bucket S3 temporales.
+
+El smoke de producción devolvió `200` para `/api/health` y `/sign-in`, `307` para `/editor` sin sesión, y `503 authentication_not_configured` para la API privada sin credenciales Clerk. La revisión de los chunks JavaScript no encontró valores con formato de clave secreta Clerk (`sk_test_`/`sk_live_`).
+
+Esto verifica el comportamiento local fail-closed y los contratos con identidades sintéticas. Sigue pendiente usar una instancia Clerk real para validar sign-in/sign-out, expiración de sesión y lecturas/escrituras cruzadas entre dos cuentas; no se considera completada esa prueba externa.
