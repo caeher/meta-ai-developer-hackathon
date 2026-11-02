@@ -22,6 +22,7 @@ const MAX_FILE_COUNT = 512;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_DIRECTORIES = 512;
+const SNAPSHOT_RECONCILIATION_AGE_MS = 30 * 60_000;
 const versionSummarySchema = z.object({
   schemaVersion: z.literal(1),
   runId: z.string().uuid().nullable(),
@@ -99,13 +100,8 @@ export function createVersionService(input: {
       };
       const body = snapshotBytes(snapshot);
       const sha256 = digest(body);
-      let version: Awaited<ReturnType<typeof input.versions.reserveForRun>> | undefined;
-      let objectCreated = false;
       try {
-        const stored = await snapshots.write(identity, snapshot);
-        objectCreated = stored.created;
-        if (stored.sha256 !== sha256 || stored.sizeBytes !== body.byteLength) throw new Error("snapshot_checksum_mismatch");
-        version = await input.versions.reserveForRun(args.identity, args.claim, {
+        const version = await input.versions.reserveForRun(args.identity, args.claim, {
           versionId,
           sha256,
           sizeBytes: body.byteLength,
@@ -113,23 +109,74 @@ export function createVersionService(input: {
           manifest: summary as unknown as Record<string, unknown>,
         });
         if (version.status === "ready") return version;
+        const stored = await snapshots.write(identity, snapshot);
+        if (stored.sha256 !== sha256 || stored.sizeBytes !== body.byteLength) throw new Error("snapshot_checksum_mismatch");
         return await input.versions.markRunSnapshotReady(args.identity, args.claim, version.id);
       } catch (error) {
-        let readyVersion: Awaited<ReturnType<typeof input.versions.get>> | undefined;
-        let lookupSucceeded = false;
+        let candidate: Awaited<ReturnType<typeof input.versions.getSnapshotCandidate>> | undefined;
         try {
-          readyVersion = await input.versions.get(args.identity, args.claim.projectId, versionId);
-          lookupSucceeded = true;
-        } catch { /* Keep the object when SQL outcome is unknown. */ }
-        if (readyVersion?.sha256 === sha256 && readyVersion.sizeBytes === body.byteLength) return readyVersion;
-        if (objectCreated && lookupSucceeded) {
-          await snapshots.delete(identity).catch(() => undefined);
-        }
-        if (!readyVersion && lookupSucceeded) {
-          await input.versions.markRunSnapshotFailed(args.identity, args.claim, versionId).catch(() => undefined);
+          candidate = await input.versions.getSnapshotCandidate(args.identity, args.claim.projectId, versionId);
+        } catch { /* Keep the reservation and object when SQL outcome is unknown. */ }
+        if (candidate?.sha256 === sha256 && candidate.sizeBytes === body.byteLength && candidate.status === "ready") return candidate;
+        if (candidate?.sha256 === sha256 && candidate.sizeBytes === body.byteLength && candidate.status === "creating") {
+          let state: Awaited<ReturnType<typeof snapshots.inspectForReconciliation>>;
+          try { state = await snapshots.inspectForReconciliation(identity, candidate); }
+          catch { throw error; }
+          if (state === "valid") {
+            try { return await input.versions.markRunSnapshotReady(args.identity, args.claim, versionId); }
+            catch { throw error; }
+          }
+          try {
+            if (state === "invalid") await snapshots.delete(identity);
+            await input.versions.markRunSnapshotFailed(args.identity, args.claim, versionId);
+          } catch { /* The stale reservation is left for the automatic reconciler. */ }
         }
         throw error;
       }
+    },
+
+    async reconcilePendingSnapshots(options: { now?: number; limit?: number } = {}) {
+      const now = options.now ?? Date.now();
+      const limit = options.limit ?? 100;
+      if (!Number.isSafeInteger(now) || now < 0 || !Number.isInteger(limit) || limit < 1 || limit > 250) {
+        throw new RangeError("Límites de reconciliación inválidos");
+      }
+      const cutoff = new Date(now - SNAPSHOT_RECONCILIATION_AGE_MS);
+      const candidates = await input.versions.listSnapshotReconciliationCandidates(cutoff, limit);
+      const result = { scanned: candidates.length, recovered: 0, failed: 0, deferred: 0 };
+      for (const candidate of candidates) {
+        const identity = { ownerUserId: candidate.ownerUserId, projectId: candidate.projectId, versionId: candidate.id };
+        let state: Awaited<ReturnType<typeof snapshots.inspectForReconciliation>>;
+        try {
+          state = await snapshots.inspectForReconciliation(identity, candidate);
+        } catch {
+          result.deferred += 1;
+          continue;
+        }
+        if (state === "invalid") {
+          try { await snapshots.delete(identity); }
+          catch { result.deferred += 1; continue; }
+        }
+        try {
+          const changed = await input.versions.reconcileSnapshotCandidate({
+            id: candidate.id,
+            ownerUserId: candidate.ownerUserId,
+            projectId: candidate.projectId,
+            sha256: candidate.sha256,
+            sizeBytes: candidate.sizeBytes,
+            createdAt: candidate.createdAt,
+            cutoff,
+            status: state === "valid" ? "ready" : "failed",
+          });
+          if (changed) {
+            if (state === "valid") result.recovered += 1;
+            else result.failed += 1;
+          }
+        } catch {
+          result.deferred += 1;
+        }
+      }
+      return result;
     },
 
     async read(identity: VerifiedIdentityContext, projectId: string, versionId: string) {
@@ -186,26 +233,56 @@ export function createVersionService(input: {
           const newIdentity = { ownerUserId, projectId, versionId: newVersionId };
           let objectCreated = false;
           try {
-            const stored = await snapshots.write(newIdentity, restoredSnapshot);
-            objectCreated = stored.created;
-            const version = await input.versions.createRestored(identity, lock, {
+            const reserved = await input.versions.createRestored(identity, lock, {
               versionId: newVersionId,
               projectId,
               ...metadata,
               parentVersionId: source.id,
               manifest: manifest as unknown as Record<string, unknown>,
             });
+            const stored = await snapshots.write(newIdentity, restoredSnapshot);
+            objectCreated = stored.created;
+            if (stored.sha256 !== metadata.sha256 || stored.sizeBytes !== metadata.sizeBytes) throw new Error("snapshot_checksum_mismatch");
+            const version = await input.versions.markRestoredSnapshotReady(identity, lock, reserved.id);
             return { versionId: newVersionId, versionNumber: version.versionNumber };
           } catch (error) {
-            let committed: Awaited<ReturnType<typeof input.versions.get>> | undefined;
+            let candidate: Awaited<ReturnType<typeof input.versions.getSnapshotCandidate>> | undefined;
             let lookupSucceeded = false;
             try {
-              committed = await input.versions.get(identity, projectId, newVersionId);
+              candidate = await input.versions.getSnapshotCandidate(identity, projectId, newVersionId);
               lookupSucceeded = true;
             } catch { /* Preserve the object and applied files until SQL can be reconciled. */ }
-            if (committed) {
-              if (committed.sha256 !== metadata.sha256 || committed.sizeBytes !== metadata.sizeBytes) throw new RestoreCommitUnknownError();
-              return { versionId: newVersionId, versionNumber: committed.versionNumber };
+            if (candidate) {
+              if (candidate.sha256 !== metadata.sha256 || candidate.sizeBytes !== metadata.sizeBytes) throw new RestoreCommitUnknownError();
+              if (candidate.status === "ready") return { versionId: newVersionId, versionNumber: candidate.versionNumber };
+              if (candidate.status === "creating") {
+                let state: Awaited<ReturnType<typeof snapshots.inspectForReconciliation>>;
+                try { state = await snapshots.inspectForReconciliation(newIdentity, candidate); }
+                catch { throw new RestoreCommitUnknownError(); }
+                if (state === "valid") {
+                  try {
+                    const version = await input.versions.markRestoredSnapshotReady(identity, lock, newVersionId);
+                    return { versionId: newVersionId, versionNumber: version.versionNumber };
+                  } catch { throw new RestoreCommitUnknownError(); }
+                }
+                const cutoff = new Date(Math.max(Date.now(), candidate.createdAt.getTime()) + 1);
+                if (state === "invalid") {
+                  try { await snapshots.delete(newIdentity); }
+                  catch { throw new RestoreCommitUnknownError(); }
+                }
+                const failed = await input.versions.reconcileSnapshotCandidate({
+                  id: candidate.id,
+                  ownerUserId: candidate.ownerUserId,
+                  projectId: candidate.projectId,
+                  sha256: candidate.sha256,
+                  sizeBytes: candidate.sizeBytes,
+                  createdAt: candidate.createdAt,
+                  cutoff,
+                  status: "failed",
+                });
+                if (!failed && state === "invalid") throw new RestoreCommitUnknownError();
+                throw error;
+              }
             }
             if (!lookupSucceeded) throw new RestoreCommitUnknownError();
             if (objectCreated) await snapshots.delete(newIdentity).catch(() => undefined);

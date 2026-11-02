@@ -1224,11 +1224,78 @@ export function createRepositories(db: GameDatabase) {
             sha256: parsed.sha256,
             sizeBytes: parsed.sizeBytes,
             manifest: parsed.manifest ?? {},
-            status: "ready",
+            status: "creating",
           }).returning();
-          if (!version) throw new Error("No se pudo confirmar la versión restaurada");
+          if (!version) throw new Error("restore_version_reservation_failed");
           return version;
         });
+      },
+
+      async markRestoredSnapshotReady(
+        identity: VerifiedIdentityContext,
+        lock: { ownerUserId: string; projectId: string; fencingToken: number },
+        versionId: string,
+      ) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const parsedVersionId = uuidSchema.parse(versionId);
+        if (ownerUserId !== lock.ownerUserId) throw new StaleRunWorkerError();
+        return db.transaction(async (tx) => {
+          const now = new Date();
+          const [activeLock] = await tx.select({ projectId: projectRunLocks.projectId }).from(projectRunLocks).where(and(
+            eq(projectRunLocks.ownerUserId, ownerUserId), eq(projectRunLocks.projectId, lock.projectId),
+            isNull(projectRunLocks.runId), eq(projectRunLocks.fencingToken, lock.fencingToken),
+            sql`${projectRunLocks.leaseExpiresAt} > ${now}`,
+          )).for("update").limit(1);
+          if (!activeLock) throw new StaleRunWorkerError();
+          const [version] = await tx.update(versions).set({ status: "ready" }).where(and(
+            eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, lock.projectId),
+            eq(versions.id, parsedVersionId), eq(versions.status, "creating"),
+          )).returning();
+          if (!version) throw new OwnedResourceNotFoundError();
+          return version;
+        });
+      },
+
+      async getSnapshotCandidate(identity: VerifiedIdentityContext, projectId: string, versionId: string) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const [version] = await db.select().from(versions).where(and(
+          eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, uuidSchema.parse(projectId)),
+          eq(versions.id, uuidSchema.parse(versionId)),
+        )).limit(1);
+        return version;
+      },
+
+      async listSnapshotReconciliationCandidates(cutoff: Date, limit = 50) {
+        if (!(cutoff instanceof Date) || !Number.isFinite(cutoff.getTime()) || !Number.isInteger(limit) || limit < 1 || limit > 250) {
+          throw new RangeError("Límites de reconciliación inválidos");
+        }
+        return db.select().from(versions).where(and(eq(versions.status, "creating"), lt(versions.createdAt, cutoff)))
+          .orderBy(asc(versions.createdAt), asc(versions.id)).limit(limit);
+      },
+
+      async reconcileSnapshotCandidate(input: {
+        id: string;
+        ownerUserId: string;
+        projectId: string;
+        sha256: string;
+        sizeBytes: number;
+        createdAt: Date;
+        cutoff: Date;
+        status: "ready" | "failed";
+      }) {
+        const candidate = z.object({
+          id: uuidSchema, ownerUserId: uuidSchema, projectId: uuidSchema,
+          sha256: z.string().regex(/^[a-f0-9]{64}$/), sizeBytes: z.number().int().positive(),
+          createdAt: z.date(), cutoff: z.date(), status: z.enum(["ready", "failed"]),
+        }).strict().parse(input);
+        if (!Number.isFinite(candidate.createdAt.getTime()) || !Number.isFinite(candidate.cutoff.getTime())) throw new TypeError("Fecha de reconciliación inválida");
+        const [updated] = await db.update(versions).set({ status: candidate.status }).where(and(
+          eq(versions.id, candidate.id), eq(versions.ownerUserId, candidate.ownerUserId),
+          eq(versions.projectId, candidate.projectId), eq(versions.status, "creating"),
+          eq(versions.sha256, candidate.sha256), eq(versions.sizeBytes, candidate.sizeBytes),
+          lt(versions.createdAt, candidate.cutoff),
+        )).returning({ id: versions.id });
+        return Boolean(updated);
       },
 
       async setStatus(

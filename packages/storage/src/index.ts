@@ -127,13 +127,18 @@ export function createS3PrivateObjectClient(
       );
     },
     async head(key) {
-      const result = await client.send(
-        new HeadObjectCommand({ Bucket: config.S3_BUCKET_PRIVATE, Key: key }),
-      );
-      return {
-        sizeBytes: result.ContentLength,
-        sha256: result.Metadata?.sha256,
-      };
+      try {
+        const result = await client.send(
+          new HeadObjectCommand({ Bucket: config.S3_BUCKET_PRIVATE, Key: key }),
+        );
+        return {
+          sizeBytes: result.ContentLength,
+          sha256: result.Metadata?.sha256,
+        };
+      } catch (error) {
+        if (isMissingObject(error)) return {};
+        throw error;
+      }
     },
     async get(key) {
       const result = await client.send(
@@ -149,6 +154,13 @@ export function createS3PrivateObjectClient(
       client.destroy();
     },
   };
+}
+
+function isMissingObject(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return value.name === "NotFound" || value.name === "NoSuchKey" ||
+    (value.$metadata?.httpStatusCode === 404 && value.name !== "NoSuchBucket");
 }
 
 function sha256Hex(value: Uint8Array): string {

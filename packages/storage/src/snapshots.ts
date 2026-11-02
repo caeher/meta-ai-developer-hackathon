@@ -70,6 +70,7 @@ export type VersionSnapshotIdentity = Readonly<{ ownerUserId: string; projectId:
 export type VersionSnapshotMetadata = Readonly<{ sha256: string; sizeBytes: number }>;
 export type VersionSnapshotWriteResult = VersionSnapshotMetadata & Readonly<{ created: boolean }>;
 export type SnapshotLimits = Readonly<{ maxFiles: number; maxFileBytes: number; maxTotalBytes: number; maxArchiveBytes: number }>;
+export type SnapshotReconciliationState = "valid" | "missing" | "invalid";
 const snapshotLimitsSchema = z.object({
   maxFiles: z.number().int().min(1).max(MAX_FILE_COUNT).default(MAX_FILE_COUNT),
   maxFileBytes: z.number().int().min(1).max(MAX_BINARY_FILE_BYTES).default(MAX_BINARY_FILE_BYTES),
@@ -166,6 +167,25 @@ export function createPrivateSnapshotStorage(client: PrivateObjectClient, limits
         assertWithinSnapshotLimits(snapshot, limits);
         return snapshot;
       } catch { throw new PrivateStorageError("No se pudo leer y verificar el snapshot privado"); }
+    },
+
+    async inspectForReconciliation(identity: VersionSnapshotIdentity, expected: VersionSnapshotMetadata): Promise<SnapshotReconciliationState> {
+      const key = snapshotObjectKey(identity);
+      if (!/^[a-f0-9]{64}$/.test(expected.sha256) || !Number.isSafeInteger(expected.sizeBytes) || expected.sizeBytes < 1 || expected.sizeBytes > limits.maxArchiveBytes) {
+        throw new TypeError("Metadata de snapshot inv\u00e1lida");
+      }
+      const stored = await client.head(key);
+      if (stored.sizeBytes === undefined && stored.sha256 === undefined) return "missing";
+      if (stored.sizeBytes !== expected.sizeBytes || stored.sha256 !== expected.sha256) return "invalid";
+      const body = await client.get(key);
+      if (body.byteLength !== expected.sizeBytes || sha256(body) !== expected.sha256) return "invalid";
+      let snapshot: VersionSnapshot;
+      try { snapshot = decodeVersionSnapshot(body); }
+      catch { return "invalid"; }
+      if (snapshot.projectId !== identity.projectId || snapshot.versionId !== identity.versionId) return "invalid";
+      try { assertWithinSnapshotLimits(snapshot, limits); }
+      catch { return "invalid"; }
+      return "valid";
     },
 
     async delete(identity: VersionSnapshotIdentity): Promise<void> {

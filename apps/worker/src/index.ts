@@ -31,6 +31,23 @@ const service = startRunWorkerService({
   handler,
 });
 
+let snapshotReconciler: NodeJS.Timeout | undefined;
+if (versionService) {
+  const reconcile = async () => {
+    try {
+      const result = await versionService!.reconcilePendingSnapshots();
+      if (result.recovered || result.failed) {
+        process.stdout.write(`snapshot_reconciliation scanned=${result.scanned} recovered=${result.recovered} failed=${result.failed} deferred=${result.deferred}\n`);
+      }
+    } catch {
+      process.stderr.write("snapshot_reconciliation_failed\n");
+    }
+  };
+  void reconcile();
+  snapshotReconciler = setInterval(() => { void reconcile(); }, 60_000);
+  snapshotReconciler.unref();
+}
+
 let versionServer: ReturnType<typeof createWorkerVersionServer> | undefined;
 if (environment.RUNS_ENABLED) {
   const token = process.env.WORKER_INTERNAL_TOKEN;
@@ -87,6 +104,7 @@ let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  if (snapshotReconciler) clearInterval(snapshotReconciler);
   await service.close();
   if (versionServer) await new Promise<void>((resolve, reject) => versionServer!.close((error) => error ? reject(error) : resolve()));
   closeGeneratedAssetStorage?.();
