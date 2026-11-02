@@ -1,0 +1,71 @@
+.dashboard {
+  width: min(100% - 48px, 960px);
+  margin: 0 auto;
+  padding: 64px 0 88px;
+}
+
+.heading,
+.listHeading,
+.projectCard,
+.createForm,
+.renameForm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.heading h1,
+.heading p,
+.listHeading h2,
+.projectCard h3,
+.projectCard p,
+.empty h3,
+.empty p {
+  margin: 0;
+}
+
+.heading h1 { margin-bottom: 8px; }
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--app-cyan);
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.createCard,
+.projectCard,
+.empty {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+}
+
+.createCard { margin-top: 34px; }
+.createForm { align-items: end; }
+.field { display: grid; flex: 1; gap: 8px; }
+.field label { color: var(--app-text); font-size: 13px; }
+.listHeading { margin: 42px 0 16px; }
+.projectList { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; }
+.projectCard { min-height: 92px; }
+.projectMain { min-width: 0; }
+.projectName { overflow-wrap: anywhere; }
+.projectName a { color: var(--app-text); text-decoration: none; }
+.projectName a:hover { color: var(--app-blue); text-decoration: underline; }
+.projectActions { flex-shrink: 0; }
+.renameForm { justify-content: flex-start; flex-wrap: wrap; }
+.renameForm :global(input) { min-width: min(280px, 55vw); }
+.empty { display: grid; gap: 8px; padding: 28px; }
+.more { display: flex; justify-content: center; margin-top: 20px; }
+.status { min-height: 24px; margin: 18px 0 0; color: var(--app-cyan); font-size: 13px; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .dashboard { width: min(100% - 32px, 960px); padding-top: 38px; }
+  .heading, .projectCard, .createForm { align-items: stretch; flex-direction: column; }
+  .heading { gap: 14px; }
+  .heading > :last-child { align-self: flex-start; }
+  .createForm > button { width: 100%; }
+  .projectActions { width: 100%; }
+  .projectActions button { flex: 1; }
+}

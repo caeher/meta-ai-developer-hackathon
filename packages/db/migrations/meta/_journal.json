@@ -15,6 +15,13 @@
       "when": 1793600632681,
       "tag": "0001_dazzling_red_skull",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793604306970,
+      "tag": "0002_lying_brother_voodoo",
+      "breakpoints": true
     }
   ]
 }

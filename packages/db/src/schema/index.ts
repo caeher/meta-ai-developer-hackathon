@@ -44,7 +44,7 @@ export const assetStatus = pgEnum("asset_status", [
   "delete_requested",
   "failed",
 ]);
-export const versionStatus = pgEnum("version_status", ["creating", "ready", "failed"]);
+export const versionStatus = pgEnum("version_status", ["creating", "ready", "failed", "delete_requested"]);
 export const publicationStatus = pgEnum("publication_status", [
   "building",
   "published",
@@ -58,6 +58,7 @@ export const reservationStatus = pgEnum("reservation_status", [
   "expired",
 ]);
 export const usageKind = pgEnum("usage_kind", ["charge", "refund", "adjustment"]);
+export const cleanupStatus = pgEnum("cleanup_status", ["queued", "running", "succeeded", "failed"]);
 
 export const users = pgTable(
   "users",
@@ -78,13 +79,40 @@ export const projects = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 120 }).notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     unique("projects_owner_id_id_unique").on(table.ownerUserId, table.id),
     index("projects_owner_created_idx").on(table.ownerUserId, table.createdAt, table.id),
+    index("projects_owner_active_created_idx").on(table.ownerUserId, table.deletedAt, table.createdAt, table.id),
     check("projects_name_nonempty_check", sql`length(trim(${table.name})) > 0`),
+  ],
+);
+
+export const projectCleanupTasks = pgTable(
+  "project_cleanup_tasks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerUserId: uuid("owner_user_id").notNull(),
+    projectId: uuid("project_id").notNull(),
+    status: cleanupStatus("status").notNull().default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    lastErrorCode: varchar("last_error_code", { length: 100 }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      name: "project_cleanup_tasks_owner_project_fk",
+      columns: [table.ownerUserId, table.projectId],
+      foreignColumns: [projects.ownerUserId, projects.id],
+    }).onDelete("cascade"),
+    unique("project_cleanup_tasks_owner_project_unique").on(table.ownerUserId, table.projectId),
+    index("project_cleanup_tasks_status_created_idx").on(table.status, table.createdAt),
+    check("project_cleanup_tasks_attempts_nonnegative_check", sql`${table.attempts} >= 0`),
   ],
 );
 export const runs = pgTable(
@@ -127,6 +155,8 @@ export const messages = pgTable(
     runId: uuid("run_id"),
     role: messageRole("role").notNull(),
     content: text("content").notNull(),
+    requestId: varchar("request_id", { length: 128 }).notNull(),
+    sequence: integer("sequence").notNull(),
     createdAt: createdAt(),
   },
   (table) => [
@@ -146,6 +176,9 @@ export const messages = pgTable(
       table.createdAt,
       table.id,
     ),
+    unique("messages_owner_project_request_unique").on(table.ownerUserId, table.projectId, table.requestId),
+    unique("messages_owner_project_sequence_unique").on(table.ownerUserId, table.projectId, table.sequence),
+    check("messages_sequence_positive_check", sql`${table.sequence} > 0`),
   ],
 );
 

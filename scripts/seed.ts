@@ -108,6 +108,8 @@ async function main() {
           runId: run.id,
           role: "user",
           content: fixture.message,
+          requestId: `fixture-message-${fixture.clerkUserId}`,
+          sequence: 1,
         })
         .onConflictDoNothing({ target: messages.id });
       await tx
