@@ -5,11 +5,14 @@ import {
   createDatabaseFromEnvironment,
   createRepositories,
   createOrGetProjectSandbox,
+  claimProjectDevServerStart,
   getProjectSandbox,
   identityFromAuthenticatedSession,
   IdempotencyConflictError,
   assets,
   messages,
+  touchProjectSandbox,
+  updateProjectSandbox,
   users,
   type VerifiedIdentityContext,
 } from "@meta-game/db";
@@ -76,6 +79,35 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
       projectId: projectB.id,
       ownerUserId: sandboxB.ownerUserId,
     });
+  });
+
+  it("reclama el inicio de Vite una sola vez y renueva el lease junto al sandbox", async () => {
+    const sandbox = await createOrGetProjectSandbox(database.db, projectA.id);
+    const initialLease = new Date(Date.now() + 60_000);
+    await updateProjectSandbox(database.db, sandbox, { status: "ready", leaseExpiresAt: initialLease });
+    const ready = await getProjectSandbox(database.db, projectA.id);
+    expect(ready).toBeDefined();
+    if (!ready) throw new Error("sandbox fixture missing");
+
+    const serverLease = new Date(Date.now() + 90_000);
+    const claim = { port: 4173, serverLeaseExpiresAt: serverLease, sandboxLeaseExpiresAt: serverLease };
+    await expect(claimProjectDevServerStart(database.db, ready, claim)).resolves.toBe(true);
+    await expect(claimProjectDevServerStart(database.db, ready, claim)).resolves.toBe(false);
+    const starting = await getProjectSandbox(database.db, projectA.id);
+    expect(starting).toMatchObject({ devServerStatus: "starting", devServerPort: 4173 });
+    if (!starting) throw new Error("sandbox fixture missing after claim");
+
+    const renewedLease = new Date(Date.now() + 180_000);
+    await updateProjectSandbox(database.db, starting, {
+      status: "ready", leaseExpiresAt: renewedLease,
+      devServerStatus: "ready", devServerPort: 4173, devServerLeaseExpiresAt: renewedLease,
+    });
+    await expect(touchProjectSandbox(database.db, starting, new Date(Date.now() + 240_000))).resolves.toBe(true);
+    await expect(getProjectSandbox(database.db, projectA.id)).resolves.toMatchObject({
+      leaseExpiresAt: expect.any(Date), devServerLeaseExpiresAt: expect.any(Date),
+    });
+    const renewed = await getProjectSandbox(database.db, projectA.id);
+    expect(renewed?.devServerLeaseExpiresAt?.getTime()).toBe(renewed?.leaseExpiresAt?.getTime());
   });
 
   it("aplica ownership uniforme y rechaza relaciones con dueño inconsistente", async () => {

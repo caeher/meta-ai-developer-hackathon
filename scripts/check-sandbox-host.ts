@@ -1,12 +1,14 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { parseSandboxEnvironment } from "@meta-game/config";
+import { RootlessDockerDriver } from "@meta-game/sandbox";
 
 type DockerInfo = {
   SecurityOptions?: string[];
   CgroupVersion?: string;
   CgroupDriver?: string;
   Driver?: string;
+  ServerVersion?: string;
 };
 
 const quotaProbeUid = 60_000;
@@ -59,6 +61,8 @@ async function main(): Promise<void> {
   let info: DockerInfo;
   try { info = JSON.parse(infoResult.stdout) as DockerInfo; }
   catch { fail("rootless_docker_info_invalid"); }
+  const engineMajor = Number(/^([0-9]+)\./.exec(info.ServerVersion ?? "")?.[1] ?? 0);
+  if (engineMajor < 28) fail("docker_engine_28_required_for_isolated_gateway");
   const options = (info.SecurityOptions ?? []).map((option) => option.toLowerCase());
   if (!options.some((option) => option.includes("rootless"))) fail("rootless_docker_required");
   if (info.CgroupVersion !== "2") fail("cgroups_v2_required");
@@ -125,6 +129,15 @@ async function main(): Promise<void> {
   if (pidsProbe.code !== 0) fail("sandbox_pids_limit_probe_failed");
   const inspectResult = await run("docker", ["image", "inspect", environment.SANDBOX_IMAGE, "--format", "{{json .Config}}"], 100_000);
   if (inspectResult.code !== 0) fail("sandbox_image_unavailable");
+  const driver = new RootlessDockerDriver(environment.SANDBOX_DOCKER_SOCKET, environment.SANDBOX_IMAGE, {
+    cpu: environment.SANDBOX_CPU_LIMIT,
+    memoryMb: environment.SANDBOX_MEMORY_MB,
+    diskMb: environment.SANDBOX_DISK_MB,
+    pids: environment.SANDBOX_PIDS_LIMIT,
+    commandTimeoutMs: environment.SANDBOX_COMMAND_TIMEOUT_MS,
+  }, environment.SANDBOX_EGRESS_ALLOWLIST);
+  try { await driver.verifyHost(); }
+  catch { fail("sandbox_rootless_driver_probe_failed"); }
   process.stdout.write("sandbox_host_ready linux cgroups=v2 rootless=yes seccomp=yes workspace_quota=hard-user ENOSPC\n");
 }
 

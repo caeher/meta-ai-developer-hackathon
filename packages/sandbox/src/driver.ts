@@ -12,6 +12,7 @@ export type SandboxCreateSpec = Readonly<{
   uid: number;
   image: string;
   limits: SandboxLimits;
+  egressAllowlist?: readonly string[];
 }>;
 
 export type SandboxRuntimeState = "created" | "running" | "stopped" | "missing";
@@ -28,6 +29,12 @@ export type SandboxExecResult = Readonly<{
   stderr: string;
   exitCode: number;
   durationMs: number;
+  truncated?: boolean;
+}>;
+
+export type SandboxExecOptions = Readonly<{
+  stdin?: string;
+  maxOutputBytes?: number;
 }>;
 
 export interface SandboxDriver {
@@ -36,7 +43,7 @@ export interface SandboxDriver {
   inspect(sandboxId: string, projectId: string, uid: number): Promise<SandboxInspection>;
   stop(sandboxId: string, projectId: string, uid: number): Promise<void>;
   destroy(sandboxId: string, projectId: string, uid: number): Promise<void>;
-  exec(sandboxId: string, projectId: string, uid: number, argv: readonly string[], cwd: string, timeoutMs: number): Promise<SandboxExecResult>;
+  exec(sandboxId: string, projectId: string, uid: number, argv: readonly string[], cwd: string, timeoutMs: number, options?: SandboxExecOptions): Promise<SandboxExecResult>;
 }
 
 export class SandboxRuntimeError extends Error {
@@ -59,6 +66,16 @@ export function sandboxVolumeName(sandboxId: string): string {
 export function sandboxContainerName(sandboxId: string): string {
   if (!/^[0-9a-f-]{36}$/i.test(sandboxId)) throw new SandboxRuntimeError("invalid_sandbox_id");
   return `mg-sandbox-${sandboxId}`;
+}
+
+export function sandboxNetworkName(sandboxId: string): string {
+  if (!/^[0-9a-f-]{36}$/i.test(sandboxId)) throw new SandboxRuntimeError("invalid_sandbox_id");
+  return `mg-sandbox-net-${sandboxId}`;
+}
+
+export function egressProxyContainerName(sandboxId: string): string {
+  if (!/^[0-9a-f-]{36}$/i.test(sandboxId)) throw new SandboxRuntimeError("invalid_sandbox_id");
+  return `mg-egress-${sandboxId}`;
 }
 
 export function resolveWorkspaceCwd(cwd: string): string {

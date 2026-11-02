@@ -1,5 +1,5 @@
 export * from "./driver";
-export { RootlessDockerDriver, buildRootlessContainerConfig } from "./rootless";
+export { RootlessDockerDriver, buildRootlessContainerConfig, buildSandboxNetworkConfig } from "./rootless";
 export { SandboxService, SandboxBusyError, SandboxNotFoundError } from "./service";
 export type { PublicSandboxState } from "./service";
 export { createSandboxRegistry } from "./registry";

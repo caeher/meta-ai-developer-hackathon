@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { GameDatabase } from "./database";
 import { projects, sandboxes } from "./schema/index";
 
@@ -11,6 +11,9 @@ export type SandboxRecord = Readonly<{
   runtimeId: string | null;
   status: SandboxState;
   leaseExpiresAt: Date | null;
+  devServerStatus: "stopped" | "starting" | "ready" | "failed";
+  devServerPort: number | null;
+  devServerLeaseExpiresAt: Date | null;
   updatedAt: Date;
 }>;
 
@@ -59,12 +62,22 @@ export async function getProjectSandbox(database: GameDatabase, projectId: strin
 export async function updateProjectSandbox(
   database: GameDatabase,
   record: Pick<SandboxRecord, "id" | "ownerUserId" | "projectId">,
-  patch: { status: SandboxState; runtimeId?: string | null; leaseExpiresAt?: Date | null },
+  patch: {
+    status: SandboxState;
+    runtimeId?: string | null;
+    leaseExpiresAt?: Date | null;
+    devServerStatus?: SandboxRecord["devServerStatus"];
+    devServerPort?: number | null;
+    devServerLeaseExpiresAt?: Date | null;
+  },
 ): Promise<void> {
   const [updated] = await database.update(sandboxes).set({
     status: patch.status,
     ...(patch.runtimeId !== undefined ? { runtimeId: patch.runtimeId } : {}),
     ...(patch.leaseExpiresAt !== undefined ? { leaseExpiresAt: patch.leaseExpiresAt } : {}),
+    ...(patch.devServerStatus !== undefined ? { devServerStatus: patch.devServerStatus } : {}),
+    ...(patch.devServerPort !== undefined ? { devServerPort: patch.devServerPort } : {}),
+    ...(patch.devServerLeaseExpiresAt !== undefined ? { devServerLeaseExpiresAt: patch.devServerLeaseExpiresAt } : {}),
     updatedAt: new Date(),
   }).where(and(
     eq(sandboxes.id, record.id),
@@ -80,10 +93,45 @@ export async function touchProjectSandbox(
   leaseExpiresAt: Date,
 ): Promise<boolean> {
   const now = new Date();
-  const [updated] = await database.update(sandboxes).set({ leaseExpiresAt, updatedAt: now }).where(and(
+  const [updated] = await database.update(sandboxes).set({
+    leaseExpiresAt,
+    devServerLeaseExpiresAt: sql`case when ${sandboxes.devServerStatus} = 'ready' then ${leaseExpiresAt} else ${sandboxes.devServerLeaseExpiresAt} end`,
+    updatedAt: now,
+  }).where(and(
     eq(sandboxes.id, record.id), eq(sandboxes.ownerUserId, record.ownerUserId), eq(sandboxes.projectId, record.projectId),
     eq(sandboxes.status, "ready"),
     gt(sandboxes.leaseExpiresAt, now),
+  )).returning({ id: sandboxes.id });
+  return Boolean(updated);
+}
+
+export async function claimProjectDevServerStart(
+  database: GameDatabase,
+  record: Pick<SandboxRecord, "id" | "ownerUserId" | "projectId">,
+  input: { port: number; serverLeaseExpiresAt: Date; sandboxLeaseExpiresAt: Date },
+): Promise<boolean> {
+  const now = new Date();
+  const reclaimableServer = or(
+    inArray(sandboxes.devServerStatus, ["stopped", "failed"]),
+    and(eq(sandboxes.devServerStatus, "ready"), or(
+      isNull(sandboxes.devServerLeaseExpiresAt), lte(sandboxes.devServerLeaseExpiresAt, now),
+    )),
+    and(eq(sandboxes.devServerStatus, "starting"), lte(sandboxes.devServerLeaseExpiresAt, now)),
+  );
+  const [updated] = await database.update(sandboxes).set({
+    status: "ready",
+    leaseExpiresAt: input.sandboxLeaseExpiresAt,
+    devServerStatus: "starting",
+    devServerPort: input.port,
+    devServerLeaseExpiresAt: input.serverLeaseExpiresAt,
+    updatedAt: now,
+  }).where(and(
+    eq(sandboxes.id, record.id),
+    eq(sandboxes.ownerUserId, record.ownerUserId),
+    eq(sandboxes.projectId, record.projectId),
+    eq(sandboxes.status, "ready"),
+    gt(sandboxes.leaseExpiresAt, now),
+    reclaimableServer,
   )).returning({ id: sandboxes.id });
   return Boolean(updated);
 }

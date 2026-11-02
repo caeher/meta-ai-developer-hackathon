@@ -21,6 +21,22 @@ const imageDigest = z.string().min(1).max(300).regex(
   "SANDBOX_IMAGE must be pinned to a sha256 digest",
 );
 
+const egressAllowlist = z.string().max(2048).default("registry.npmjs.org").transform((value) =>
+  value.split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
+).pipe(z.array(z.string().min(1).max(253)).min(1).max(16).refine((hosts) => {
+  if (new Set(hosts).size !== hosts.length) return false;
+  return hosts.every((host) => {
+    const labels = host.split(".");
+    return labels.length >= 2 && labels.every((label) => label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)) &&
+      !["localhost", "local", "internal", "test", "example", "invalid", "home.arpa", "lan", "corp"].some((suffix) =>
+        host === suffix || host.endsWith(`.${suffix}`)) &&
+      !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
+  });
+}, "SANDBOX_EGRESS_ALLOWLIST must contain exact public DNS names").refine(
+  (hosts) => hosts.includes("registry.npmjs.org"),
+  "SANDBOX_EGRESS_ALLOWLIST must include registry.npmjs.org",
+));
+
 export const SandboxEnvironmentSchema = z.object({
   SANDBOX_DRIVER: z.enum(["disabled", "rootless"]).default("disabled"),
   SANDBOX_IMAGE: imageDigest,
@@ -36,6 +52,7 @@ export const SandboxEnvironmentSchema = z.object({
   SANDBOX_DISK_MB: boundedInteger(2048, 128, 16_384),
   SANDBOX_PIDS_LIMIT: boundedInteger(128, 16, 1024),
   SANDBOX_COMMAND_TIMEOUT_MS: boundedInteger(60_000, 1_000, 120_000),
+  SANDBOX_EGRESS_ALLOWLIST: egressAllowlist,
   SANDBOX_IDLE_TTL_SECONDS: boundedInteger(900, 60, 86_400),
 }).strict();
 

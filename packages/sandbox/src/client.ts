@@ -1,6 +1,13 @@
-import type { SandboxExecResult } from "./driver";
 import type { PublicSandboxState } from "./service";
 import { SandboxRuntimeError } from "./driver";
+import type {
+  SandboxDevServerLogs,
+  SandboxDevServerState,
+  SandboxFileEntry,
+  SandboxInstallDependenciesInput,
+  SandboxRunCommandInput,
+  SandboxToolCommandResult,
+} from "@meta-game/contracts";
 
 export class SandboxControllerClient {
   private readonly baseUrl: URL;
@@ -31,8 +38,40 @@ export class SandboxControllerClient {
     return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox`, "DELETE");
   }
 
-  exec(projectId: string, argv: readonly string[], cwd = "", timeoutMs?: number): Promise<SandboxExecResult> {
+  exec(projectId: string, argv: readonly string[], cwd = "", timeoutMs?: number): Promise<SandboxToolCommandResult> {
     return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/exec`, "POST", { argv, cwd, ...(timeoutMs ? { timeoutMs } : {}) });
+  }
+
+  readFile(projectId: string, path: string): Promise<{ path: string; content: string }> {
+    return this.tool(projectId, "read-file", { path });
+  }
+
+  writeFile(projectId: string, path: string, content: string): Promise<{ path: string; bytesWritten: number }> {
+    return this.tool(projectId, "write-file", { path, content });
+  }
+
+  listFiles(projectId: string, path = ""): Promise<{ path: string; files: SandboxFileEntry[] }> {
+    return this.tool(projectId, "list-files", { path });
+  }
+
+  installDependencies(projectId: string, input: SandboxInstallDependenciesInput): Promise<SandboxToolCommandResult> {
+    return this.tool(projectId, "install-dependencies", input);
+  }
+
+  runCommand(projectId: string, input: SandboxRunCommandInput): Promise<SandboxToolCommandResult> {
+    return this.tool(projectId, "run-command", input);
+  }
+
+  startDevServer(projectId: string): Promise<SandboxDevServerState> {
+    return this.tool(projectId, "start-dev-server", {});
+  }
+
+  readLogs(projectId: string): Promise<SandboxDevServerLogs> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/tools/read-logs`, "GET");
+  }
+
+  private tool<T>(projectId: string, name: string, body: unknown): Promise<T> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/tools/${name}`, "POST", body);
   }
 
   private async request<T>(path: string, method: string, body?: unknown): Promise<T> {

@@ -282,6 +282,9 @@ export const sandboxes = pgTable(
     runtimeUid: integer("runtime_uid").notNull().default(sql`nextval('sandboxes_runtime_uid_seq')`),
     status: sandboxStatus("status").notNull().default("provisioning"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    devServerStatus: varchar("dev_server_status", { length: 16 }).notNull().default("stopped"),
+    devServerPort: integer("dev_server_port"),
+    devServerLeaseExpiresAt: timestamp("dev_server_lease_expires_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -295,6 +298,9 @@ export const sandboxes = pgTable(
     unique("sandboxes_runtime_uid_unique").on(table.runtimeUid),
     index("sandboxes_owner_status_idx").on(table.ownerUserId, table.status),
     check("sandboxes_runtime_uid_range_check", sql`${table.runtimeUid} between 10000 and 59999`),
+    check("sandboxes_dev_server_status_check", sql`${table.devServerStatus} in ('stopped', 'starting', 'ready', 'failed')`),
+    check("sandboxes_dev_server_port_check", sql`${table.devServerPort} is null or ${table.devServerPort} between 1024 and 65535`),
+    check("sandboxes_dev_server_ready_check", sql`(${table.devServerStatus} in ('starting', 'ready')) = (${table.devServerPort} is not null and ${table.devServerLeaseExpiresAt} is not null)`),
   ],
 );
 

@@ -1,6 +1,7 @@
 import type { GameDatabase, SandboxRecord, SandboxState } from "@meta-game/db";
 import {
   claimExpiredSandboxes,
+  claimProjectDevServerStart,
   createOrGetProjectSandbox,
   getProjectSandbox,
   touchProjectSandbox,
@@ -10,8 +11,16 @@ import {
 export interface SandboxRegistry {
   createOrGet(projectId: string): Promise<SandboxRecord>;
   get(projectId: string): Promise<SandboxRecord | undefined>;
-  update(record: SandboxRecord, patch: { status: SandboxState; runtimeId?: string | null; leaseExpiresAt?: Date | null }): Promise<void>;
+  update(record: SandboxRecord, patch: {
+    status: SandboxState;
+    runtimeId?: string | null;
+    leaseExpiresAt?: Date | null;
+    devServerStatus?: SandboxRecord["devServerStatus"];
+    devServerPort?: number | null;
+    devServerLeaseExpiresAt?: Date | null;
+  }): Promise<void>;
   touch(record: SandboxRecord, leaseExpiresAt: Date): Promise<boolean>;
+  claimDevServerStart(record: SandboxRecord, input: { port: number; serverLeaseExpiresAt: Date; sandboxLeaseExpiresAt: Date }): Promise<boolean>;
   claimExpired(limit?: number): Promise<SandboxRecord[]>;
 }
 
@@ -21,6 +30,7 @@ export function createSandboxRegistry(database: GameDatabase): SandboxRegistry {
     get: (projectId) => getProjectSandbox(database, projectId),
     update: (record, patch) => updateProjectSandbox(database, record, patch),
     touch: (record, expiresAt) => touchProjectSandbox(database, record, expiresAt),
+    claimDevServerStart: (record, input) => claimProjectDevServerStart(database, record, input),
     claimExpired: (limit) => claimExpiredSandboxes(database, limit),
   };
 }

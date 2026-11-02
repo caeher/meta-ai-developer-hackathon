@@ -5,6 +5,7 @@ import type { SandboxRecord, SandboxState } from "@meta-game/db";
 import {
   assertSandboxUid,
   buildRootlessContainerConfig,
+  buildSandboxNetworkConfig,
   createSandboxControllerServer,
   SandboxControllerClient,
   SandboxRuntimeError,
@@ -14,6 +15,7 @@ import {
   validateSandboxArgv,
   type SandboxCreateSpec,
   type SandboxDriver,
+  type SandboxExecOptions,
   type SandboxExecResult,
   type SandboxInspection,
   type SandboxRegistry,
@@ -60,7 +62,32 @@ function fixture() {
     })),
     stop: vi.fn(async (sandboxId: string) => { driverState.set(sandboxId, "stopped"); }),
     destroy: vi.fn(async (sandboxId: string) => { driverState.set(sandboxId, "missing"); }),
-    exec: vi.fn(async (): Promise<SandboxExecResult> => ({ stdout: "ok", stderr: "", exitCode: 0, durationMs: 3 })),
+    exec: vi.fn(async (
+      _sandboxId: string,
+      _projectId: string,
+      _uid: number,
+      argv: readonly string[],
+      _cwd: string,
+      _timeoutMs: number,
+      options: SandboxExecOptions = {},
+    ): Promise<SandboxExecResult> => {
+      if (argv[0] === "/usr/local/bin/workspace-fs" && argv[1] === "write") {
+        return { stdout: `${Buffer.byteLength(options.stdin ?? "", "utf8")}\n`, stderr: "", exitCode: 0, durationMs: 2 };
+      }
+      if (argv[0] === "/usr/local/bin/workspace-fs" && argv[1] === "read") {
+        return { stdout: `${Buffer.from("export {};", "utf8").toString("base64")}\n`, stderr: "", exitCode: 0, durationMs: 2 };
+      }
+      if (argv[0] === "/usr/local/bin/workspace-fs" && argv[1] === "list") {
+        return { stdout: "[]", stderr: "", exitCode: 0, durationMs: 2 };
+      }
+      if (argv[0] === "node" && argv[2] === "logs") {
+        return { stdout: JSON.stringify({ status: "running", stdout: "vite ready", stderr: "" }), stderr: "", exitCode: 0, durationMs: 2 };
+      }
+      if (argv[0] === "node" && argv[2] === "health") {
+        return { stdout: "healthy", stderr: "", exitCode: 0, durationMs: 2 };
+      }
+      return { stdout: "ok", stderr: "", exitCode: 0, durationMs: 3 };
+    }),
   };
   const registry: SandboxRegistry = {
     createOrGet: vi.fn(async (projectId: string) => {
@@ -79,18 +106,51 @@ function fixture() {
           runtimeId: null,
           status: "provisioning",
           leaseExpiresAt: null,
+      devServerStatus: "stopped",
+      devServerPort: null,
+      devServerLeaseExpiresAt: null,
           updatedAt: new Date(now),
         };
       }
       return record;
     }),
     get: vi.fn(async (projectId: string) => record?.projectId === projectId ? record : undefined),
-    update: vi.fn(async (_record: SandboxRecord, patch: { status: SandboxState; runtimeId?: string | null; leaseExpiresAt?: Date | null }) => {
+    update: vi.fn(async (_record: SandboxRecord, patch: {
+      status: SandboxState;
+      runtimeId?: string | null;
+      leaseExpiresAt?: Date | null;
+      devServerStatus?: SandboxRecord["devServerStatus"];
+      devServerPort?: number | null;
+      devServerLeaseExpiresAt?: Date | null;
+    }) => {
       if (record) record = { ...record, ...patch };
     }),
     touch: vi.fn(async (_record: SandboxRecord, leaseExpiresAt: Date) => {
       if (!record || record.status !== "ready" || !record.leaseExpiresAt || record.leaseExpiresAt.getTime() <= now) return false;
-      record = { ...record, leaseExpiresAt };
+      record = {
+        ...record,
+        leaseExpiresAt,
+        ...(record.devServerStatus === "ready" ? { devServerLeaseExpiresAt: leaseExpiresAt } : {}),
+      };
+      return true;
+    }),
+    claimDevServerStart: vi.fn(async (_record: SandboxRecord, input: {
+      port: number;
+      serverLeaseExpiresAt: Date;
+      sandboxLeaseExpiresAt: Date;
+    }) => {
+      if (!record || record.status !== "ready" || !record.leaseExpiresAt || record.leaseExpiresAt.getTime() <= now) return false;
+      const available = record.devServerStatus === "stopped" || record.devServerStatus === "failed" ||
+        ((record.devServerStatus === "ready" || record.devServerStatus === "starting") &&
+          (!record.devServerLeaseExpiresAt || record.devServerLeaseExpiresAt.getTime() <= now));
+      if (!available) return false;
+      record = {
+        ...record,
+        leaseExpiresAt: input.sandboxLeaseExpiresAt,
+        devServerStatus: "starting",
+        devServerPort: input.port,
+        devServerLeaseExpiresAt: input.serverLeaseExpiresAt,
+      };
       return true;
     }),
     claimExpired: vi.fn(async () => {
@@ -136,6 +196,22 @@ describe("sandbox rootless contract", () => {
       image: IMAGE,
       limits,
     });
+    expect(buildSandboxNetworkConfig({
+      sandboxId: SANDBOX_ID,
+      projectId: PROJECT_ID,
+      uid: 23451,
+      image: IMAGE,
+      limits,
+    })).toMatchObject({
+      Name: `mg-sandbox-net-${SANDBOX_ID}`,
+      Driver: "bridge",
+      Internal: true,
+      EnableIPv6: true,
+      Options: {
+        "com.docker.network.bridge.gateway_mode_ipv4": "isolated",
+        "com.docker.network.bridge.gateway_mode_ipv6": "isolated",
+      },
+    });
     const host = config.body.HostConfig as Record<string, unknown>;
     expect(config.body.User).toBe("23451:23451");
     expect(config.volumeName).toBe(`mg-workspace-${SANDBOX_ID}`);
@@ -146,7 +222,8 @@ describe("sandbox rootless contract", () => {
     expect(host).toMatchObject({
       Privileged: false,
       ReadonlyRootfs: true,
-      NetworkMode: "none",
+      Dns: ["127.0.0.1"],
+      NetworkMode: `mg-sandbox-net-${SANDBOX_ID}`,
       PidMode: "private",
       IpcMode: "private",
       CgroupnsMode: "private",
@@ -159,6 +236,7 @@ describe("sandbox rootless contract", () => {
       Devices: [],
       PortBindings: {},
     });
+    expect(config.body.ExtraHosts).toEqual(["npm-proxy:172.16.0.2"]);
     expect(host.Mounts).toEqual([{
       Type: "volume",
       Source: `mg-workspace-${SANDBOX_ID}`,
@@ -173,6 +251,13 @@ describe("sandbox rootless contract", () => {
       image: "node:24",
       limits,
     })).toThrow("sandbox_image_must_be_digest_pinned");
+    expect(() => buildRootlessContainerConfig({
+      sandboxId: SANDBOX_ID,
+      projectId: PROJECT_ID,
+      uid: 23451,
+      image: IMAGE,
+      limits,
+    }, "8.8.8.8")).toThrow("egress_proxy_address_invalid");
   });
 
   it("rechaza wildcard hosts, digest mutable y token placeholder", () => {
@@ -187,6 +272,59 @@ describe("sandbox rootless contract", () => {
       SANDBOX_IMAGE: IMAGE,
       SANDBOX_CONTROLLER_TOKEN: "placeholder-secret-token-value-123456",
     })).toThrow("Invalid sandbox environment fields");
+  });
+
+  it("confina archivos, npm y comandos a sus contratos tipados", async () => {
+    const f = fixture();
+    await f.service.create(PROJECT_ID);
+    await expect(f.service.writeFile(PROJECT_ID, "src/main.ts", "export {};"))
+      .resolves.toEqual({ path: "src/main.ts", bytesWritten: 10 });
+    await expect(f.service.readFile(PROJECT_ID, "src/main.ts"))
+      .resolves.toEqual({ path: "src/main.ts", content: "export {};" });
+    await expect(f.service.listFiles(PROJECT_ID)).resolves.toEqual({ path: "", files: [] });
+    await expect(f.service.installDependencies(PROJECT_ID, { packages: [{ name: "phaser", version: "3.90.0" }] }))
+      .resolves.toMatchObject({ exitCode: 0, truncated: false });
+    await expect(f.service.runCommand(PROJECT_ID, { command: "npm", args: ["run", "build"] }))
+      .resolves.toMatchObject({ stdout: "ok", exitCode: 0 });
+    await expect(f.service.installDependencies(PROJECT_ID, { packages: [{ name: "https://evil.example/x.tgz", version: "latest" }] }))
+      .rejects.toThrow("invalid_dependency_specification");
+    await expect(f.service.runCommand(PROJECT_ID, { command: "npm", args: ["exec", "--", "node", "-e", "bad"] }))
+      .rejects.toThrow("sandbox_command_not_allowed");
+    await expect(f.service.exec(PROJECT_ID, ["sh", "-c", "id"]))
+      .rejects.toThrow("sandbox_command_not_allowed");
+    expect(f.driver.exec).toHaveBeenCalledWith(
+      SANDBOX_ID,
+      PROJECT_ID,
+      23451,
+      ["/usr/local/bin/workspace-fs", "write", "src/main.ts"],
+      "",
+      60_000,
+      expect.objectContaining({ stdin: "export {};" }),
+    );
+  });
+
+  it("registra el servidor dev con health check y logs acotados", async () => {
+    const f = fixture();
+    await f.service.create(PROJECT_ID);
+    const starts = await Promise.allSettled([
+      f.service.startDevServer(PROJECT_ID),
+      f.service.startDevServer(PROJECT_ID),
+    ]);
+    expect(starts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(starts.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(vi.mocked(f.driver.exec).mock.calls.filter((call) => call[3][2] === "start")).toHaveLength(1);
+    await expect(f.service.inspect(PROJECT_ID)).resolves.toMatchObject({
+      state: "ready",
+      devServer: { status: "ready", port: 4173 },
+    });
+    await expect(f.service.readLogs(PROJECT_ID)).resolves.toMatchObject({
+      status: "ready", port: 4173, stdout: "vite ready", stderr: "",
+    });
+    f.advance(60_000);
+    await expect(f.service.startDevServer(PROJECT_ID)).resolves.toMatchObject({
+      status: "ready", port: 4173, leaseExpiresAt: new Date(1_800_000_000_000 + 960_000).toISOString(),
+    });
+    expect(vi.mocked(f.driver.exec).mock.calls.filter((call) => call[3][2] === "start")).toHaveLength(1);
   });
 
   it("autentica worker, resuelve projectId sin aceptar owner y confina las operaciones", async () => {
@@ -208,7 +346,7 @@ describe("sandbox rootless contract", () => {
     expect(created.state).toBe("ready");
     expect(f.driver.create).toHaveBeenCalledWith(expect.objectContaining({ projectId: PROJECT_ID, uid: 23451 }));
 
-    await expect(client.exec(PROJECT_ID, ["node", "-e", "process.stdout.write('ok')"])).resolves.toMatchObject({ stdout: "ok", exitCode: 0 });
+    await expect(client.exec(PROJECT_ID, ["npm", "run", "build"])).resolves.toMatchObject({ stdout: "ok", exitCode: 0, truncated: false });
     await expect(client.inspect(PROJECT_ID)).resolves.toMatchObject({ sandboxId: SANDBOX_ID, state: "ready" });
     await expect(client.stop(PROJECT_ID)).resolves.toMatchObject({ state: "stopped" });
     await expect(client.destroy(PROJECT_ID)).resolves.toMatchObject({ state: "stopped" });
@@ -244,7 +382,7 @@ describe("sandbox rootless contract", () => {
     const f = fixture();
     await f.service.create(PROJECT_ID);
     vi.mocked(f.registry.touch).mockResolvedValueOnce(false);
-    await expect(f.service.exec(PROJECT_ID, ["node", "game.js"])).rejects.toThrow(SandboxBusyError);
+    await expect(f.service.exec(PROJECT_ID, ["npm", "run", "build"])).rejects.toThrow(SandboxBusyError);
     expect(f.driver.exec).not.toHaveBeenCalled();
   });
 
@@ -252,7 +390,7 @@ describe("sandbox rootless contract", () => {
     const f = fixture();
     await f.service.create(PROJECT_ID);
     f.advance(901_000);
-    await expect(f.service.exec(PROJECT_ID, ["node", "game.js"])).rejects.toThrow(SandboxBusyError);
+    await expect(f.service.exec(PROJECT_ID, ["npm", "run", "build"])).rejects.toThrow(SandboxBusyError);
     expect(f.driver.exec).not.toHaveBeenCalled();
   });
 

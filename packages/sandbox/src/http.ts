@@ -3,10 +3,17 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { SandboxBusyError, SandboxNotFoundError, SandboxService } from "./service";
 import { SandboxRuntimeError } from "./driver";
+import {
+  SandboxInstallDependenciesInputSchema,
+  SandboxReadFileInputSchema,
+  SandboxRunCommandInputSchema,
+  SandboxWriteFileInputSchema,
+} from "@meta-game/contracts";
 
 const projectPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox$/i;
 const execPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/exec$/i;
 const stopPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/stop$/i;
+const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|write-file|list-files|install-dependencies|run-command|start-dev-server|read-logs)$/i;
 const projectIdSchema = z.uuid();
 const execSchema = z.object({
   argv: z.array(z.string()).min(1).max(64),
@@ -38,7 +45,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     return;
   }
   const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-  const match = projectPath.exec(pathname) ?? execPath.exec(pathname) ?? stopPath.exec(pathname);
+  const match = projectPath.exec(pathname) ?? execPath.exec(pathname) ?? stopPath.exec(pathname) ?? toolPath.exec(pathname);
   if (!match) {
     send(response, 404, { error: "not_found" });
     return;
@@ -76,6 +83,48 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       send(response, 200, await service.exec(projectId, input.data.argv, input.data.cwd, input.data.timeoutMs));
       return;
     }
+    const tool = toolPath.exec(pathname)?.[2];
+    if (tool === "read-logs" && request.method === "GET") {
+      send(response, 200, await service.readLogs(projectId));
+      return;
+    }
+    if (tool === "start-dev-server" && request.method === "POST") {
+      send(response, 200, await service.startDevServer(projectId));
+      return;
+    }
+    if (tool && request.method === "POST") {
+      const body = await readJson(request, 6_300_000);
+      if (tool === "read-file") {
+        const input = SandboxReadFileInputSchema.safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        send(response, 200, await service.readFile(projectId, input.data.path));
+        return;
+      }
+      if (tool === "write-file") {
+        const input = SandboxWriteFileInputSchema.safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        send(response, 200, await service.writeFile(projectId, input.data.path, input.data.content));
+        return;
+      }
+      if (tool === "list-files") {
+        const input = z.object({ path: z.string().max(512).default("") }).strict().safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        send(response, 200, await service.listFiles(projectId, input.data.path));
+        return;
+      }
+      if (tool === "install-dependencies") {
+        const input = SandboxInstallDependenciesInputSchema.safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_dependency_specification" }); return; }
+        send(response, 200, await service.installDependencies(projectId, input.data));
+        return;
+      }
+      if (tool === "run-command") {
+        const input = SandboxRunCommandInputSchema.safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        send(response, 200, await service.runCommand(projectId, input.data));
+        return;
+      }
+    }
     send(response, 405, { error: "method_not_allowed" });
   } catch (error) {
     if (error instanceof SandboxNotFoundError || (error instanceof Error && error.name === "SandboxProjectNotFoundError")) {
@@ -83,8 +132,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     } else if (error instanceof SandboxBusyError || (error instanceof Error && error.name === "SandboxOperationConflictError")) {
       send(response, 409, { error: "sandbox_busy" });
     } else if (error instanceof SandboxRuntimeError) {
-      const status = ["sandbox_not_running", "execution_timeout"].includes(error.code) ? 409 :
-        error.code === "request_too_large" ? 413 : error.code === "invalid_json" ? 400 : 503;
+      const status = ["sandbox_not_running", "execution_timeout", "sandbox_busy"].includes(error.code) ? 409 :
+        ["request_too_large", "file_too_large"].includes(error.code) ? 413 :
+          ["invalid_json", "invalid_path", "invalid_tool_input", "invalid_dependency_specification", "sandbox_command_not_allowed"].includes(error.code) ? 400 :
+            ["file_not_found", "path_not_found"].includes(error.code) ? 404 : 503;
       send(response, status, { error: error.code });
     } else {
       send(response, 500, { error: "sandbox_controller_failed" });
@@ -99,9 +150,9 @@ function validBearer(header: string | undefined, expected: string): boolean {
   return received.length === wanted.length && timingSafeEqual(received, wanted);
 }
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
+async function readJson(request: IncomingMessage, maxBytes = 16_384): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"] ?? 0);
-  if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > 16_384) {
+  if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > maxBytes) {
     throw new SandboxRuntimeError("request_too_large");
   }
   const chunks: Buffer[] = [];
@@ -109,7 +160,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   for await (const value of request) {
     const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
     length += chunk.length;
-    if (length > 16_384) throw new SandboxRuntimeError("request_too_large");
+    if (length > maxBytes) throw new SandboxRuntimeError("request_too_large");
     chunks.push(chunk);
   }
   try { return JSON.parse(Buffer.concat(chunks, length).toString("utf8")); }

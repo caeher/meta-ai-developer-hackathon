@@ -1,4 +1,14 @@
-ARG NODE_BASE_IMAGE
+ARG NODE_BASE_IMAGE=docker.io/library/node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c
+FROM ${NODE_BASE_IMAGE} AS build-fs-helper
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY infra/sandbox/workspace-fs.c /tmp/workspace-fs.c
+RUN cc -static -O2 -Wall -Wextra -Werror -o /tmp/workspace-fs /tmp/workspace-fs.c \
+    && chmod 0755 /tmp/workspace-fs
+
 FROM ${NODE_BASE_IMAGE}
 
 ENV HOME=/tmp \
@@ -6,11 +16,17 @@ ENV HOME=/tmp \
     npm_config_cache=/tmp/npm-cache \
     NODE_ENV=development
 
-RUN addgroup -S -g 10000 sandbox \
-    && adduser -S -D -H -u 10000 -G sandbox sandbox \
+RUN groupadd --system --gid 10000 sandbox \
+    && useradd --system --uid 10000 --gid sandbox --no-create-home --home-dir /nonexistent sandbox \
     && mkdir -p /workspace \
     && chown 0:0 /workspace \
     && chmod 1777 /workspace
+
+COPY --from=build-fs-helper /tmp/workspace-fs /usr/local/bin/workspace-fs
+COPY infra/sandbox/egress-proxy.mjs /opt/meta-game/egress-proxy.mjs
+COPY infra/sandbox/server-manager.mjs /opt/meta-game/server-manager.mjs
+RUN chmod 0755 /usr/local/bin/workspace-fs \
+    && chmod 0444 /opt/meta-game/egress-proxy.mjs /opt/meta-game/server-manager.mjs
 
 USER 10000:10000
 WORKDIR /workspace

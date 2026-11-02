@@ -30,6 +30,7 @@ export {
 export type { RunUsage, RunWorkerClaim } from "./worker-runs";
 export {
   createOrGetProjectSandbox,
+  claimProjectDevServerStart,
   getProjectSandbox,
   touchProjectSandbox,
   updateProjectSandbox,
