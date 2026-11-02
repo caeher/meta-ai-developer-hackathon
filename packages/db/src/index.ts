@@ -37,6 +37,8 @@ export {
   claimExpiredSandboxes,
 } from "./sandboxes";
 export type { SandboxRecord, SandboxState } from "./sandboxes";
+export { getPreviewTarget } from "./preview";
+export type { PreviewTarget } from "./preview";
 export { assertRunQuotaAvailable, RunQuotaPolicySchema, runChargeIdempotencyKey, utcDayStart } from "./usage";
 export type { RunQuotaPolicy } from "./usage";
 export * from "./schema/index";

@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { request as httpsRequest } from "node:https";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -9,6 +9,11 @@ const maxMetadataBytes = 10 * 1024 * 1024;
 const maxTarballBytes = 64 * 1024 * 1024;
 const allowedHosts = new Set((process.env.SANDBOX_EGRESS_ALLOWLIST ?? "registry.npmjs.org")
   .split(",").map((host) => host.trim().toLowerCase()).filter(Boolean));
+const sandboxId = process.env.SANDBOX_ID ?? "";
+const sandboxIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const previewHost = `mg-egress-${sandboxId.toLowerCase()}:8080`;
+const previewUpstreamHost = `mg-sandbox-${sandboxId.toLowerCase()}`;
+const previewMethods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 const packageNamePattern = /^(?:@[a-z0-9][a-z0-9._-]{0,213}%2f)?[a-z0-9][a-z0-9._-]{0,213}$/i;
 const safeMetadataPathPattern = /^(?:@?[A-Za-z0-9%._~-]+(?:%2f[A-Za-z0-9._~-]+)?)(?:\/[A-Za-z0-9%._~-]+)?$/i;
 
@@ -122,6 +127,105 @@ export function validateRedirectLocation(location, baseHost, hosts) {
   } catch { return null; }
 }
 
+export function validatePreviewRequest(requestTarget, host, expectedHost) {
+  if (typeof requestTarget !== "string" || typeof host !== "string" || host.toLowerCase() !== expectedHost ||
+    requestTarget.length > 4096 || !requestTarget.startsWith("/") || requestTarget.startsWith("//") || requestTarget.includes("#") || requestTarget.includes("\\")) return null;
+  const question = requestTarget.indexOf("?");
+  const rawPath = question < 0 ? requestTarget : requestTarget.slice(0, question);
+  const query = question < 0 ? "" : requestTarget.slice(question);
+  const prefix = "/__preview";
+  if (!rawPath.startsWith(`${prefix}/`) || query.length > 2048 || /[\u0000-\u0020\u007f#]/.test(query)) return null;
+  const gamePath = rawPath.slice(prefix.length);
+  if (!validPathname(gamePath) || /%(?:2f|5c)/i.test(gamePath)) return null;
+  return { gamePath, query };
+}
+
+function validPreviewOrigin(value) {
+  if (typeof value !== "string" || value.length > 512) return false;
+  try {
+    const origin = new URL(value);
+    return origin.protocol === "https:" && origin.origin === value && /^[a-z0-9.-]+$/.test(origin.hostname);
+  } catch { return false; }
+}
+
+function previewRequestHeaders(request) {
+  const headers = { host: "localhost:4173" };
+  for (const name of ["accept", "accept-encoding", "accept-language", "cache-control", "content-type", "content-length", "if-modified-since", "if-none-match", "range", "user-agent"]) {
+    const value = request.headers[name];
+    if (typeof value === "string" && value.length <= 4096) headers[name] = value;
+  }
+  const origin = request.headers["x-preview-origin"];
+  if (validPreviewOrigin(origin)) headers.origin = origin;
+  return headers;
+}
+
+function previewResponseHeaders(headers) {
+  const result = {};
+  for (const name of ["content-type", "content-length", "content-encoding", "etag", "last-modified", "accept-ranges", "content-range"]) {
+    const value = headers[name];
+    if (typeof value === "string") result[name] = value;
+  }
+  return result;
+}
+
+function handlePreview(request, response, parsed) {
+  if (!previewMethods.has(request.method ?? "")) { response.writeHead(405).end(); return; }
+  const upstream = httpRequest({
+    hostname: previewUpstreamHost,
+    port: 4173,
+    method: request.method,
+    path: `${parsed.gamePath}${parsed.query}`,
+    headers: previewRequestHeaders(request),
+    timeout: 30_000,
+  }, (upstreamResponse) => {
+    response.writeHead(upstreamResponse.statusCode ?? 502, previewResponseHeaders(upstreamResponse.headers));
+    upstreamResponse.pipe(response);
+  });
+  upstream.once("timeout", () => upstream.destroy(new Error("preview_upstream_timeout")));
+  upstream.once("error", () => { if (!response.headersSent) response.writeHead(502).end(); else response.destroy(); });
+  request.once("aborted", () => upstream.destroy());
+  request.pipe(upstream);
+}
+
+function handlePreviewUpgrade(request, socket, head, parsed) {
+  const key = request.headers["sec-websocket-key"];
+  if (request.method !== "GET" || request.headers.upgrade?.toLowerCase() !== "websocket" ||
+    request.headers.connection?.toLowerCase().split(/\s*,\s*/).includes("upgrade") !== true ||
+    typeof key !== "string" || key.length > 128 || request.headers["sec-websocket-version"] !== "13") {
+    socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+    return;
+  }
+  const headers = previewRequestHeaders(request);
+  headers.connection = "Upgrade";
+  headers.upgrade = "websocket";
+  headers["sec-websocket-key"] = key;
+  headers["sec-websocket-version"] = "13";
+  for (const name of ["sec-websocket-protocol", "sec-websocket-extensions"]) {
+    const value = request.headers[name];
+    if (typeof value === "string" && value.length <= 2048) headers[name] = value;
+  }
+  const upstream = httpRequest({ hostname: previewUpstreamHost, port: 4173, method: "GET", path: `${parsed.gamePath}${parsed.query}`, headers, timeout: 15_000 });
+  upstream.once("upgrade", (response, upstreamSocket, upstreamHead) => {
+    const forwarded = response.rawHeaders.flatMap((name, index, all) => {
+      if (index % 2 !== 0) return [];
+      const value = all[index + 1];
+      return value && new Set(["sec-websocket-accept", "sec-websocket-protocol", "sec-websocket-extensions"]).has(name.toLowerCase())
+        ? [`${name}: ${value}`]
+        : [];
+    });
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n${forwarded.join("\r\n")}\r\n\r\n`);
+    if (upstreamHead.length) socket.write(upstreamHead);
+    if (head.length) upstreamSocket.write(head);
+    socket.pipe(upstreamSocket);
+    upstreamSocket.pipe(socket);
+    socket.once("close", () => upstreamSocket.destroy());
+    upstreamSocket.once("close", () => socket.destroy());
+  });
+  upstream.once("response", (response) => { response.resume(); socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"); });
+  upstream.once("error", () => socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"));
+  upstream.end();
+}
+
 function rewriteTarballs(metadata, host) {
   if (!metadata || typeof metadata !== "object" || !metadata.versions || typeof metadata.versions !== "object") throw new Error("egress_invalid_registry_response");
   for (const version of Object.values(metadata.versions)) {
@@ -143,11 +247,14 @@ async function handle(request, response) {
     response.end("ready\n");
     return;
   }
+  const requestHost = request.headers.host?.toLowerCase();
+  const preview = validatePreviewRequest(request.url, requestHost, previewHost);
+  if (preview) { handlePreview(request, response, preview); return; }
   if (!new Set(["GET", "HEAD"]).has(request.method ?? "")) { response.writeHead(405).end(); return; }
   let path;
   try {
     const url = new URL(request.url ?? "/", "http://npm-proxy");
-    if (url.search || url.hash || url.username || url.password || url.host !== "npm-proxy") throw new Error("invalid_proxy_request");
+    if (url.search || url.hash || url.username || url.password || requestHost !== "npm-proxy:8080") throw new Error("invalid_proxy_request");
     path = url.pathname;
   } catch { response.writeHead(400).end(); return; }
   const route = validateRegistryRequest(path, allowedHosts);
@@ -172,4 +279,12 @@ const server = createServer((request, response) => { void handle(request, respon
 server.headersTimeout = 5_000;
 server.requestTimeout = 30_000;
 server.keepAliveTimeout = 2_000;
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) server.listen(8080, "0.0.0.0");
+server.on("upgrade", (request, socket, head) => {
+  const parsed = validatePreviewRequest(request.url, request.headers.host?.toLowerCase(), previewHost);
+  if (!sandboxIdPattern.test(sandboxId) || !parsed) { socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"); return; }
+  handlePreviewUpgrade(request, socket, head, parsed);
+});
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  if (!sandboxIdPattern.test(sandboxId)) throw new Error("preview_proxy_sandbox_identity_invalid");
+  server.listen(8080, "0.0.0.0");
+}

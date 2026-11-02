@@ -1,0 +1,9 @@
+# Termina TLS con un certificado wildcard emitido para *.preview.example.test.
+# Mantén Caddy en una red privada y limita el acceso al gateway a este proxy.
+*.preview.example.test {
+	tls /etc/caddy/certs/preview-wildcard.crt /etc/caddy/certs/preview-wildcard.key
+	reverse_proxy preview-gateway:8080 {
+		header_up X-Forwarded-Proto https
+		header_up X-Real-IP {remote_host}
+	}
+}

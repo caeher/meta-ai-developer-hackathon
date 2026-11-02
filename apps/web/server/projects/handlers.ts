@@ -25,6 +25,7 @@ export function createProjectHandlers(dependencies: {
   authenticator: ProjectAuthenticator;
   projects: ProjectsRepository;
   allowedOrigins: readonly string[];
+  revokePreviewSessions?: (projectId: string) => Promise<unknown>;
 }) {
   return {
     async GET(_request: Request, context: ProjectRouteContext): Promise<Response> {
@@ -71,6 +72,8 @@ export function createProjectHandlers(dependencies: {
         assertSameOriginRequest(request, dependencies.allowedOrigins);
         const identity = await dependencies.authenticator.requireUser();
         const { projectId } = await context.params;
+        await requireProjectOwner(identity, projectId, dependencies.projects);
+        await dependencies.revokePreviewSessions?.(projectId);
         const result = await dependencies.projects.delete(identity, projectId);
         return Response.json(result, {
           status: 202,

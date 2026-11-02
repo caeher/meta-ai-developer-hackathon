@@ -5,17 +5,35 @@ import {
   reportInfrastructureError,
   runDocker,
 } from "./infra-common.mjs";
+import { spawnSync } from "node:child_process";
 
 function parseOptions(arguments_) {
-  const options = { web: false, worker: false };
+  const options = { web: false, worker: false, preview: false };
 
   for (const argument of arguments_) {
     if (argument === "--web") options.web = true;
     else if (argument === "--worker") options.worker = true;
+    else if (argument === "--preview") options.preview = true;
     else throw new Error(`Opción desconocida para infra:up: ${argument}`);
   }
 
   return options;
+}
+
+function ensureSandboxEgressNetwork() {
+  const docker = process.platform === "win32" ? "docker.exe" : "docker";
+  const inspect = spawnSync(docker, ["network", "inspect", "mg-sandbox-egress"], { stdio: "ignore", windowsHide: true, shell: false });
+  if (!inspect.error && inspect.status === 0) return;
+  const create = spawnSync(docker, [
+    "network", "create", "--driver", "bridge",
+    "--label", "com.meta-game.managed=true",
+    "--label", "com.meta-game.network-kind=egress",
+    "mg-sandbox-egress",
+  ], { stdio: "ignore", windowsHide: true, shell: false });
+  if (create.error || create.status !== 0) {
+    const retry = spawnSync(docker, ["network", "inspect", "mg-sandbox-egress"], { stdio: "ignore", windowsHide: true, shell: false });
+    if (retry.error || retry.status !== 0) throw new Error("No se pudo preparar la red privada de preview.");
+  }
 }
 
 function initializeStorageBuckets(environment) {
@@ -59,9 +77,20 @@ try {
   const options = parseOptions(process.argv.slice(2));
   ensureLocalEnvironmentFile();
   const environment = readLocalEnvironment();
+  if (options.preview) {
+    if (environment.PREVIEW_GATEWAY_ENABLED !== "true") {
+      throw new Error("Configura PREVIEW_GATEWAY_ENABLED=true y claves RSA en infra/.env antes de iniciar el gateway.");
+    }
+    if ([environment.PREVIEW_TOKEN_KEY_ID, environment.PREVIEW_TOKEN_PRIVATE_KEY, environment.PREVIEW_TOKEN_PUBLIC_KEYS]
+      .some((value) => value.toLowerCase().includes("replace-with"))) {
+      throw new Error("Configura las claves RSA activas y públicas en infra/.env; no se inició el gateway.");
+    }
+    ensureSandboxEgressNetwork();
+  }
   const profiles = [
     ...(options.web ? ["--profile", "web"] : []),
     ...(options.worker ? ["--profile", "worker"] : []),
+    ...(options.preview ? ["--profile", "preview"] : []),
   ];
   runDocker(composeArguments([...profiles, "up", "--detach", "--wait"]));
   initializeStorageBuckets(environment);

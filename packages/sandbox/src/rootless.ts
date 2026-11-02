@@ -479,7 +479,10 @@ export class RootlessDockerDriver implements SandboxDriver {
           User: "10000:10000",
           WorkingDir: "/opt/meta-game",
           Cmd: ["node", "/opt/meta-game/egress-proxy.mjs"],
-          Env: [`SANDBOX_EGRESS_ALLOWLIST=${(spec.egressAllowlist ?? this.egressAllowlist).join(",")}`],
+          Env: [
+            `SANDBOX_EGRESS_ALLOWLIST=${(spec.egressAllowlist ?? this.egressAllowlist).join(",")}`,
+            `SANDBOX_ID=${spec.sandboxId}`,
+          ],
           Labels: labels,
           HostConfig: {
             Privileged: false,
@@ -530,6 +533,7 @@ export class RootlessDockerDriver implements SandboxDriver {
     const networks = runtime.NetworkSettings?.Networks ?? {};
     const proxyIp = networks[sandboxNetworkName(spec.sandboxId)]?.IPAddress;
     const envAllowlist = (runtime.Config.Env ?? []).find((entry) => entry.startsWith("SANDBOX_EGRESS_ALLOWLIST="));
+    const envSandboxId = (runtime.Config.Env ?? []).find((entry) => entry.startsWith("SANDBOX_ID="));
     const safe = labels["com.meta-game.managed"] === "true" &&
       labels["com.meta-game.runtime-kind"] === "egress-proxy" &&
       labels["com.meta-game.sandbox-id"] === spec.sandboxId &&
@@ -538,6 +542,7 @@ export class RootlessDockerDriver implements SandboxDriver {
       runtime.Config.WorkingDir === "/opt/meta-game" &&
       JSON.stringify(runtime.Config.Cmd) === JSON.stringify(["node", "/opt/meta-game/egress-proxy.mjs"]) &&
       envAllowlist === `SANDBOX_EGRESS_ALLOWLIST=${(spec.egressAllowlist ?? this.egressAllowlist).join(",")}` &&
+      envSandboxId === `SANDBOX_ID=${spec.sandboxId}` &&
       runtime.HostConfig.Privileged === false && runtime.HostConfig.ReadonlyRootfs === true &&
       runtime.HostConfig.NetworkMode === sharedEgressNetwork &&
       runtime.HostConfig.Memory === 128 * 1024 * 1024 && runtime.HostConfig.MemorySwap === 128 * 1024 * 1024 &&

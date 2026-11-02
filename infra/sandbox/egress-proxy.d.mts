@@ -9,3 +9,8 @@ export function validateRedirectLocation(
   baseHost: string,
   hosts: ReadonlySet<string>,
 ): { hostname: string; pathname: string } | null;
+export function validatePreviewRequest(
+  requestTarget: string,
+  host: string,
+  expectedHost: string,
+): { gamePath: string; query: string } | null;

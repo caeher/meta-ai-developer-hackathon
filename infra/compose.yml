@@ -98,8 +98,22 @@ services:
     init: true
     restart: "no"
     environment:
-      APP_ORIGIN: http://localhost:3000
-      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}
+      REDIS_URL: redis://redis:6379
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-http://localhost:3000}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-pk_test_placeholder}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-sk_test_placeholder}
+      NEXT_PUBLIC_CLERK_SIGN_IN_URL: ${NEXT_PUBLIC_CLERK_SIGN_IN_URL:-/sign-in}
+      NEXT_PUBLIC_CLERK_SIGN_UP_URL: ${NEXT_PUBLIC_CLERK_SIGN_UP_URL:-/sign-up}
+      PREVIEW_GATEWAY_ENABLED: ${PREVIEW_GATEWAY_ENABLED:-false}
+      PREVIEW_BASE_DOMAIN: ${PREVIEW_BASE_DOMAIN:-preview.example.test}
+      PREVIEW_TOKEN_KEY_ID: ${PREVIEW_TOKEN_KEY_ID:-replace-with-active-key-id}
+      PREVIEW_TOKEN_PRIVATE_KEY: ${PREVIEW_TOKEN_PRIVATE_KEY:-replace-with-base64-pkcs8-rsa-private-key}
+      PREVIEW_TOKEN_PUBLIC_KEYS: ${PREVIEW_TOKEN_PUBLIC_KEYS:-replace-with-json-public-keys}
+      PREVIEW_TOKEN_TTL_SECONDS: ${PREVIEW_TOKEN_TTL_SECONDS:-60}
+      PREVIEW_SESSION_TTL_SECONDS: ${PREVIEW_SESSION_TTL_SECONDS:-900}
       NEXT_TELEMETRY_DISABLED: "1"
     ports:
       - name: web-loopback
@@ -179,6 +193,36 @@ services:
     networks:
       - control
 
+  preview-gateway:
+    profiles: [preview]
+    build:
+      context: ..
+      dockerfile: infra/preview-gateway.Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}
+      REDIS_URL: redis://redis:6379
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      PREVIEW_BASE_DOMAIN: ${PREVIEW_BASE_DOMAIN:-preview.example.test}
+      PREVIEW_GATEWAY_ENABLED: ${PREVIEW_GATEWAY_ENABLED:-false}
+      PREVIEW_TOKEN_PUBLIC_KEYS: ${PREVIEW_TOKEN_PUBLIC_KEYS:-replace-with-json-public-keys}
+      PREVIEW_TOKEN_TTL_SECONDS: ${PREVIEW_TOKEN_TTL_SECONDS:-60}
+      PREVIEW_SESSION_TTL_SECONDS: ${PREVIEW_SESSION_TTL_SECONDS:-900}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    networks:
+      - control
+      - sandbox-egress
+
 volumes:
   postgres-data:
   redis-data:
@@ -188,3 +232,6 @@ volumes:
 
 networks:
   control: {}
+  sandbox-egress:
+    name: mg-sandbox-egress
+    external: true

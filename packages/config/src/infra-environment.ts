@@ -26,6 +26,14 @@ export const InfraEnvironmentSchema = z
     S3_CONSOLE_PORT: localPort,
     S3_BUCKET_PRIVATE: bucketName,
     S3_BUCKET_PUBLIC: bucketName,
+    PREVIEW_GATEWAY_ENABLED: z.enum(["true", "false"]).default("false"),
+    PREVIEW_BASE_DOMAIN: z.string().default("preview.example.test"),
+    PREVIEW_TOKEN_KEY_ID: z.string().default("replace-with-active-key-id"),
+    PREVIEW_TOKEN_PRIVATE_KEY: z.string().default("replace-with-base64-pkcs8-rsa-private-key"),
+    PREVIEW_TOKEN_PUBLIC_KEYS: z.string().default("{\"replace-with-active-key-id\":\"replace-with-base64-spki-rsa-public-key\"}"),
+    PREVIEW_TOKEN_TTL_SECONDS: z.string().regex(/^\d+$/).default("60"),
+    PREVIEW_SESSION_TTL_SECONDS: z.string().regex(/^\d+$/).default("900"),
+    APP_ORIGIN: z.string().url().default("http://localhost:3000"),
   })
   .strict()
   .refine(
