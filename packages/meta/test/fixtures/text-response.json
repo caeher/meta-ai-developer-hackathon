@@ -10,7 +10,7 @@
       "content": [
         {
           "type": "output_text",
-          "text": "{\"summary\":\"Create a compact platform game prototype.\",\"steps\":[{\"id\":\"scene\",\"title\":\"Build the main scene\",\"description\":\"Add the player, platforms, and camera bounds.\"}]}"
+          "text": "{\"summary\":\"Create a compact platform game prototype.\",\"objective\":\"Create a playable platform scene with bounded movement.\",\"steps\":[{\"id\":\"scene\",\"title\":\"Build the main scene\",\"description\":\"Add the player, platforms, and camera bounds.\",\"expectedFiles\":[\"src/main.ts\",\"src/game.ts\"],\"verifications\":[\"Run the configured build script.\"]}]}"
         }
       ]
     }
