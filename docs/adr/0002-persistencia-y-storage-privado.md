@@ -1,0 +1,28 @@
+# ADR 0002: persistencia multiusuario y objetos privados
+
+- Estado: aceptado.
+- Fecha: 2026-11-02.
+
+## Contexto
+
+Los proyectos, mensajes, runs, eventos, sandboxes, assets, versiones, publicaciones y mediciones de uso deben sobrevivir a reinicios y mantener ownership verificable. Las claves privadas de objetos no deben llegar al navegador. La base de datos es la fuente de verdad; S3 almacena bytes y puede quedar temporalmente desfasado durante una falla de red.
+
+## Decisiones
+
+- PostgreSQL 17 y Drizzle ORM. El esquema TypeScript vive en `packages/db/src/schema`; SQL generado y versionado vive en `packages/db/migrations`. `drizzle-kit migrate` registra las migraciones aplicadas y no repite las que ya tienen historial.
+- `users.clerk_user_id` conserva la identidad del proveedor como clave única; recursos usan UUID internos opacos. Cada repositorio requiere un `VerifiedIdentityContext` creado en servidor desde el resultado autenticado de Clerk. Aún no existe el adaptador Clerk, que pertenece a la issue #4; hasta entonces solo el seed y las pruebas crean ese contexto sintético.
+- Cada recurso hijo guarda `owner_user_id` y `project_id`. Claves foráneas compuestas vinculan ambos al mismo proyecto y, donde aplica, vinculan run, versión o reserva sin permitir cruces entre dueños. Las lecturas ocultan recursos ajenos con un resultado indistinguible de inexistente.
+- El adaptador solo usa `S3_BUCKET_PRIVATE`, deriva claves desde IDs internos y no acepta rutas/prefijos del cliente. Limita objetos a 25 MiB, restringe MIME, calcula SHA-256 y verifica metadata/tamaño luego de escribir. No emite URLs firmadas, no configura ACLs públicas y responde solo después de autorizar el owner.
+- S3 y PostgreSQL no comparten transacción. La carga reserva metadata `pending`, escribe y valida el objeto, y luego marca `ready`. Si se pierde la respuesta de commit tras la escritura, conserva el objeto y la fila pendiente para reconciliar; si la eliminación falla, conserva `delete_requested`. No hay aún un worker de reconciliación; los casos requieren revisión operacional hasta la issue de recuperación.
+- Compose configura acceso anónimo `none` para los buckets locales. Para producción, el operador debe bloquear acceso público a nivel de bucket/cuenta y usar credenciales con permisos mínimos antes de conectar el adaptador. El código no puede neutralizar una política de bucket externa que conceda lectura anónima.
+
+## Migración y rollback
+
+`0000_normal_chameleon.sql` crea el esquema inicial con secuencia en el ledger; `0001_dazzling_red_skull.sql` convierte su ID a UUID y conserva las filas. El segundo paso deja compatibles las bases locales que ya habían aplicado la primera ejecución durante el desarrollo y no repite cambios sobre una base nueva. `0000_normal_chameleon_down.sql` elimina el esquema completo y solo sirve para una base local descartable. `0001_dazzling_red_skull_down.sql` vuelve a generar IDs secuenciales, por lo que los IDs/cursors previos no se conservan. Ningún rollback se ejecuta desde `db:migrate`; usar backup para conservar identidades y no ejecutar estos scripts en staging/producción. Las siguientes migraciones serán aditivas y describirán un rollback específico junto a su SQL.
+
+## Consecuencias
+
+- Las consultas de ownership y restricciones de base trabajan juntas: el filtro de repositorio devuelve 404 uniforme y PostgreSQL rechaza incluso escrituras internas inconsistentes.
+- La paginación usa cursores estables con límite máximo; los eventos usan secuencia asignada bajo lock del run.
+- Los tests integrados crean una base y un bucket privados temporales locales, verifican la lectura anónima y eliminan ambos al terminar.
+- La conexión real a un bucket de producción sigue pendiente; se validará selección del proveedor, bloqueo de acceso público, IAM y cifrado antes del despliegue.

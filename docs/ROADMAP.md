@@ -1,8 +1,8 @@
 # Orden de implementación
 
-Estado al implementar la issue #2: la base del monorepo, web mínima, contratos, CI y servicios locales de Postgres, Redis y storage S3 compatible están en `main`. La issue #2 permanece abierta hasta revisión; las issues #3–#28 siguen pendientes y no se declaran operativas. El storage local usa Silo, fork compatible con MinIO, porque la distribución comunitaria de MinIO dejó de estar disponible.
+Estado local en `main`: la base del monorepo, web mínima, contratos, CI y servicios locales de Postgres, Redis y storage S3 compatible están implementados. La issue #2 está cerrada; el código de la issue #3 incorpora persistencia Drizzle, repositorios con owner y storage privado, pero #3 sigue abierta hasta revisión. Las issues #4–#28 siguen pendientes y no se declaran operativas. El storage local usa Silo, fork compatible con MinIO, porque la distribución comunitaria de MinIO dejó de estar disponible.
 
-Plan creado a partir de [PROJECT_BRIEF.md](PROJECT_BRIEF.md). Leer [AGENTS.md](../AGENTS.md) antes de tomar una issue. Cada entrega depende de la anterior; sus cuerpos en GitHub contienen tareas, archivos, variables, aceptación, pruebas y seguridad. Estado inicial: planificación; ninguna de estas capacidades se declara implementada.
+Plan creado a partir de [PROJECT_BRIEF.md](PROJECT_BRIEF.md). Leer [AGENTS.md](../AGENTS.md) antes de tomar una issue. Cada issue depende de la anterior; sus cuerpos en GitHub contienen tareas, archivos, variables, aceptación, pruebas y seguridad. El estado actual está indicado en la fila de cada issue; no declarar capacidades posteriores disponibles sin implementarlas y verificarlas.
 
 | Orden | Issue | Fase | Dependencia |
 | --- | --- | --- | --- |

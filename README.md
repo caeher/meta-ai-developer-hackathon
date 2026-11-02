@@ -41,6 +41,9 @@ npm run infra:config
 npm run infra:up
 npm run infra:up -- --web
 npm run infra:down
+npm run db:migrate
+npm run db:seed
+npm run test:integration
 npm run lint
 npm run typecheck
 npm test
@@ -51,17 +54,29 @@ npm run check:node
 
 `npm ci` aplica `engine-strict`; también hay una comprobación explícita de Node 24 en la instalación y en los comandos de raíz. CI usa Node 24 y ejecuta instalación, lint, typecheck, tests y build sin claves.
 
+## Persistencia y storage privado
+
+La issue #3 incorpora el esquema Drizzle, migración inicial, seed sintético y adaptador S3 privado. Todavía no se habilitan Clerk, Meta, sandbox, gateway ni preview. `.env.example` contiene placeholders; no copies esos valores sobre un `.env.local` existente.
+
+Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQL de Drizzle y se puede repetir. El comando toma `DATABASE_URL` del entorno o deriva la conexión local desde `infra/.env`; no carga `.env.local`. `npm run db:seed` inserta dos usuarios, proyectos y actividad sintéticos; solo acepta PostgreSQL en loopback y es idempotente. No crea objetos S3 ficticios.
+
+`npm run test:integration` crea una base temporal en PostgreSQL local y un bucket S3 privado temporal, aplica migraciones y verifica ownership, claves foráneas, paginación, idempotencia, ledger, sandboxes y storage. Requiere `npm run infra:up` y permiso local para crear/eliminar ambos recursos. Los elimina al finalizar.
+
+El adaptador usa solo `S3_BUCKET_PRIVATE`, genera claves en servidor, admite objetos de hasta 25 MiB y valida SHA-256 al escribir y leer. El bucket privado de Silo no permite lectura anónima. El adaptador no emite URLs firmadas ni cambia ACLs a públicas. El proveedor de producción debe configurar bloqueo/política de acceso público antes de usarse.
+
+Las migraciones no se revierten automáticamente. El archivo `0000_normal_chameleon_down.sql` es una operación destructiva manual; consulta [desarrollo local](docs/local-development.md) antes de ejecutarla. Las siguientes migraciones deben ser aditivas.
+
 ## Capacidades planificadas
 
-Todavía no existen `dev:worker`, `dev:gateway`, migraciones/seed, smoke de Meta, pruebas de integración/E2E/seguridad, publicación o despliegue. Sus issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). Clerk, Meta, el esquema de base de datos, sandbox rootless, gateway y preview privada se incorporarán en fases posteriores. No hay proveedor de IA ni ejecución de juegos habilitados.
-
-`.env.example` documenta nombres y placeholders previstos; no contiene credenciales válidas. Los servicios locales de control no habilitan un sandbox. Silo es un fork compatible de MinIO para desarrollo: la edición comunitaria upstream archivó su repositorio y dejó de publicar imágenes comunitarias. No uses el storage local ni sus credenciales de ejemplo en producción.
+Todavía no existen `dev:worker`, `dev:gateway`, smoke de Meta, pruebas E2E/seguridad, publicación o despliegue. Sus issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). Clerk, Meta, sandbox rootless, gateway y preview privada se incorporarán en fases posteriores. No hay proveedor de IA ni ejecución de juegos habilitados.
 
 ## Estructura inicial
 
 - `apps/web`: Next.js App Router, React, Radix Themes y TypeScript estricto.
 - `packages/config`: validación de URLs públicas y configuración de infraestructura local.
 - `packages/contracts`: schemas Zod de liveness y errores HTTP.
+- `packages/db`: modelo PostgreSQL/Drizzle y repositorios que requieren identidad verificada.
+- `packages/storage`: adaptador S3 privado con claves de servidor, checksum y estados de reconciliación.
 - `infra`: Docker Compose, perfiles de desarrollo, ejemplos locales y digest de imágenes.
 - `tests`: contratos y comportamiento de liveness con fixtures locales.
 - `.github/workflows/ci.yml`: verificación en Node 24, sin secretos.

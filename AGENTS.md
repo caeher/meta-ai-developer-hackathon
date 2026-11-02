@@ -4,7 +4,7 @@
 
 Lee primero [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md). Construimos una plataforma tipo v0 para crear y modificar juegos web 2D mediante chat: plan visible, herramientas, archivos cambiados, verificaciones y preview privada en vivo. El editor tiene chat a la izquierda, preview a la derecha y header con proyecto, avatar, versiones y Publish/Share. Incluye opciones rápidas para género, arte, controles, niveles, enemigos, assets y sonido.
 
-Este commit inicial contiene planificación, no una aplicación implementada. Las carpetas, variables y comandos siguientes son el contrato objetivo; cada issue debe incorporar sus partes y mantener ejecutable lo que ya exista. No declares disponible un comando o integración hasta implementarlo y comprobarlo. El orden ejecutable está en [docs/ROADMAP.md](docs/ROADMAP.md) y en las issues de `caeher/meta-ai-developer-hackathon`.
+El commit inicial contenía planificación. `main` ya incluye el monorepo, los servicios locales Postgres/Redis/S3 y la persistencia Drizzle con repositorios de owner y storage privado de la issue #3. Las capacidades posteriores siguen siendo objetivos hasta implementarlas y comprobarlas. Mantén ejecutable lo que ya exista y no declares disponible un comando o integración sin verificarlo. El orden está en [docs/ROADMAP.md](docs/ROADMAP.md) y en las issues de `caeher/meta-ai-developer-hackathon`.
 
 ## Decisiones de arquitectura
 

@@ -35,6 +35,39 @@ docker compose -f infra/compose.yml config
 docker compose -f infra/compose.yml --env-file infra/.env ps
 ```
 
+## Persistencia local
+
+Con Postgres y Silo disponibles, aplica la migración y carga los fixtures sintéticos:
+
+```sh
+npm run db:migrate
+npm run db:seed
+```
+
+`db:migrate` usa `DATABASE_URL` del entorno si está definido. Si falta, arma la URL de loopback con las variables de `infra/.env`; nunca lee `.env.local`. Drizzle registra cada migración aplicada, por lo que volver a ejecutar el comando no repite ni altera una migración anterior.
+
+`db:seed` requiere PostgreSQL local en loopback y rechaza `NODE_ENV=production`. Inserta dos identidades Clerk sintéticas, proyectos, mensajes, runs, eventos, sandboxes y registros de uso con IDs reservados. Repetir el comando no duplica fixtures. No genera datos personales ni pretende autenticar a esas identidades.
+
+Las pruebas integradas usan una base y un bucket privados temporales:
+
+```sh
+npm run test:integration
+```
+
+El comando necesita permiso para crear/eliminar una base y un bucket en los servicios locales. Migra la base temporal desde cero, repite la migración, aplica el seed sintético dos veces y compara sus filas, verifica consultas de dos dueños y lectura S3 anónima, y elimina la base y el bucket temporal al finalizar. No configura ni contacta un PostgreSQL o bucket remoto.
+
+La primera migración puede revertirse solo de forma manual en una base local descartable. Detén la aplicación y ejecuta desde la raíz:
+
+```sh
+# PowerShell
+psql "$env:DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/db/migrations/0000_normal_chameleon_down.sql
+
+# Linux/macOS
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/db/migrations/0000_normal_chameleon_down.sql
+```
+
+El archivo elimina todas las tablas y tipos de esta migración, incluidos sus datos. No lo ejecutes en staging ni producción. `0001_dazzling_red_skull_down.sql` cambia los UUID del ledger a una secuencia nueva; los IDs/cursors externos no se conservan, así que usa un backup si los necesitas. No hay rollback automático de migraciones futuras; cada cambio posterior debe ser aditivo y tener un plan explícito.
+
 Los servicios publicados en el host enlazan `127.0.0.1`. La red bridge de desarrollo permite egress de los contenedores de control; no ejecuta código de juegos ni constituye la política de egress del sandbox. Los puertos de datos no se publican en perfiles de despliegue. Web no recibe claves de Clerk, Meta o del controlador.
 
 ## Servicios e imágenes
