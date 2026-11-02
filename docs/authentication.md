@@ -30,3 +30,7 @@ En Node 24.22.1 se ejecutaron `npm test` (28 pasaron; 5 pruebas de integración 
 El smoke de producción devolvió `200` para `/api/health` y `/sign-in`, `307` para `/editor` sin sesión, y `503 authentication_not_configured` para la API privada sin credenciales Clerk. La revisión de los chunks JavaScript no encontró valores con formato de clave secreta Clerk (`sk_test_`/`sk_live_`).
 
 Esto verifica el comportamiento local fail-closed y los contratos con identidades sintéticas. Sigue pendiente usar una instancia Clerk real para validar sign-in/sign-out, expiración de sesión y lecturas/escrituras cruzadas entre dos cuentas; no se considera completada esa prueba externa.
+
+## Continuación de la verificación (#4)
+
+El 2 de noviembre de 2026 se volvió a comprobar la disponibilidad de la configuración sin leer ni registrar sus valores. El proceso no tiene las claves Clerk requeridas ni credenciales configuradas para dos cuentas de prueba. Por ello no se pudo ejecutar el recorrido E2E contra Clerk ni verificar la expiración y el acceso cruzado con sesiones reales. La issue permanece abierta; los fixtures locales no sustituyen esa evidencia.
