@@ -8,7 +8,9 @@
   "workspaces": [
     "apps/*",
     "packages/config",
-    "packages/contracts"
+    "packages/contracts",
+    "packages/db",
+    "packages/storage"
   ],
   "scripts": {
     "preinstall": "node scripts/check-node-version.mjs",
@@ -18,14 +20,20 @@
     "infra:config": "node scripts/check-node-version.mjs && node scripts/infra-config.mjs",
     "infra:up": "node scripts/check-node-version.mjs && node scripts/infra-up.mjs",
     "infra:down": "node scripts/check-node-version.mjs && node scripts/infra-down.mjs",
-    "lint": "node scripts/check-node-version.mjs && eslint apps/web packages/config packages/contracts tests scripts --max-warnings=0",
-    "typecheck": "node scripts/check-node-version.mjs && tsc --noEmit -p apps/web/tsconfig.json && tsc --noEmit -p packages/config/tsconfig.json && tsc --noEmit -p packages/contracts/tsconfig.json && tsc --noEmit -p tsconfig.tests.json",
+    "db:migrate": "node scripts/check-node-version.mjs && node scripts/db-migrate.mjs",
+    "db:seed": "node scripts/check-node-version.mjs && node scripts/db-seed.mjs",
+    "lint": "node scripts/check-node-version.mjs && eslint apps/web packages/config packages/contracts packages/db packages/storage tests scripts --max-warnings=0",
+    "typecheck": "node scripts/check-node-version.mjs && tsc --noEmit -p apps/web/tsconfig.json && tsc --noEmit -p packages/config/tsconfig.json && tsc --noEmit -p packages/contracts/tsconfig.json && tsc --noEmit -p packages/db/tsconfig.json && tsc --noEmit -p packages/storage/tsconfig.json && tsc --noEmit -p tsconfig.tests.json",
     "test": "node scripts/check-node-version.mjs && vitest run",
+    "test:integration": "node scripts/check-node-version.mjs && node scripts/test-integration.mjs",
     "check:node": "node scripts/check-node-version.mjs"
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "16.4.3",
+    "dotenv": "18.0.9",
+    "drizzle-kit": "0.31.11",
     "eslint": "10.14.0",
+    "tsx": "4.23.15",
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.1",
     "vitest": "3.2.7"

@@ -1,0 +1,17 @@
+{
+  "name": "@meta-game/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1161.0",
+    "@meta-game/db": "0.1.0",
+    "zod": "4.6.7"
+  }
+}
