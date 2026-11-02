@@ -60,7 +60,7 @@ describe("MetaClient plan and image contracts", () => {
     const result = await client.plan("Create a small platform game.");
 
     expect(result).toMatchObject({
-      plan: { summary: "Create a compact platform game prototype.", steps: [{ id: "scene" }] },
+      plan: { summary: "Create a compact platform game prototype.", objective: "Create a playable platform scene with bounded movement.", steps: [{ id: "scene", expectedFiles: ["src/main.ts", "src/game.ts"], verifications: ["Run the configured build script."] }] },
       model: spark,
       responseId: "resp_fixture_plan_01",
       requestId: "req_plan_1",

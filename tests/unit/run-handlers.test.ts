@@ -81,13 +81,34 @@ describe("run API handlers", () => {
   it("returns accepted and duplicate statuses for idempotent enqueue", async () => {
     const { handlers, enqueueRun } = makeHandlers();
     const context = { params: Promise.resolve({ projectId }) };
-    const first = await handlers.POST(request("POST", { idempotencyKey: "run-request-003" }), context);
+    const first = await handlers.POST(request("POST", { idempotencyKey: "run-request-003", messageRequestId: "message-request-003", contributorConsent: true }), context);
     enqueueRun.mockResolvedValueOnce({ run, created: false });
-    const duplicate = await handlers.POST(request("POST", { idempotencyKey: "run-request-003" }), context);
+    const duplicate = await handlers.POST(request("POST", { idempotencyKey: "run-request-003", messageRequestId: "message-request-003", contributorConsent: true }), context);
     expect(first.status).toBe(202);
     expect((await first.json()).duplicate).toBe(false);
     expect(duplicate.status).toBe(200);
     expect((await duplicate.json()).duplicate).toBe(true);
+  });
+
+  it("requires a saved user message before creating an enabled run", async () => {
+    const { handlers, enqueueRun } = makeHandlers();
+    const response = await handlers.POST(request("POST", { idempotencyKey: "run-request-004" }), {
+      params: Promise.resolve({ projectId }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "message_required" });
+    expect(enqueueRun).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit Contributor terms and 18+ confirmation before enqueue", async () => {
+    const { handlers, enqueueRun } = makeHandlers();
+    const response = await handlers.POST(request("POST", {
+      idempotencyKey: "run-request-005",
+      messageRequestId: "message-request-005",
+    }), { params: Promise.resolve({ projectId }) });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "contributor_consent_required" });
+    expect(enqueueRun).not.toHaveBeenCalled();
   });
 
   it("requires same-origin writes and does not cancel a run through a different project path", async () => {

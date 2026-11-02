@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { parseRunEnvironment } from "@meta-game/config";
 
 describe("configuración de runs", () => {
-  it("mantiene deshabilitada la API de runs hasta conectar el orquestador", () => {
+  it("mantiene deshabilitada la API de runs por defecto", () => {
     expect(parseRunEnvironment({})).toMatchObject({
       RUNS_ENABLED: false,
       REDIS_URL: "redis://127.0.0.1:6379",
       USER_MAX_CONCURRENT_JOBS: 1,
       PROJECT_MAX_RUN_STEPS: 20,
       RUN_MAX_TOKENS: 16_000,
+      RUN_MAX_DURATION_MS: 600_000,
       USER_DAILY_TOKEN_LIMIT: 100_000,
       USER_DAILY_IMAGE_LIMIT: 10,
     });
