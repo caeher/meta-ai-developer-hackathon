@@ -16,6 +16,8 @@ Estado de issue #8 (2 de noviembre de 2026): `npm run meta:smoke` pasó en Node 
 
 Estado local de issue #9 (2 de noviembre de 2026): `MetaClient` valida el plan JSON, consume SSE incremental y ensambla/valida argumentos antes de emitir tool calls una sola vez cuando termina el response. La imagen se valida por base64, formato, tamaño y dimensiones. El replay usa `store: false` y razonamiento cifrado; no se muestran resúmenes privados. Los POST facturables no se reintentan por falta de clave idempotente documentada; los errores ambiguos requieren que el futuro worker persista el run antes de reintentarlo. Fixtures offline cubren texto, llamadas paralelas y PNG sintético; no se ejecutó el smoke real ni una generación facturable. El chat aún no llama a Meta.
 
+Estado local de issue #10 (2 de noviembre de 2026): el subconjunto upstream está fijado al commit `19d93f97c9c1ea0f8b306e77aa81e0d3e352d3e9`, con licencias, NOTICE y manifiesto SHA-256. `packages/skills` ofrece selección metadata-first, carga por tarea/referencia, presupuesto 8.000, fingerprint y registro de selección sin persistencia durable. Phaser 3.90 usa adaptaciones locales porque las skills Phaser upstream apuntan a 4.2. La entrega no conecta aún el editor ni Meta.
+
 | Orden | Issue | Fase | Dependencia |
 | --- | --- | --- | --- |
 | 01 | [#1 [01] Inicializar el monorepo Next.js y fijar Node 24](https://github.com/caeher/meta-ai-developer-hackathon/issues/1) | Fundaciones | Ninguna |

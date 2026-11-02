@@ -43,6 +43,8 @@ El endpoint `GET /api/health` solo comprueba que la app web responde. Devuelve `
 
 Las issues #8 y #9 añaden configuración de servidor, `npm run meta:smoke` y el adaptador interno `MetaClient` para planes estructurados, streaming de código/tool calls y generación de imágenes. Los contratos offline validan respuestas y fixtures; ningún mensaje del chat se envía todavía a Meta ni se ejecutan herramientas. El smoke carga `.env.local` (ignorado por Git) o variables del proceso, comprueba los tres modelos y envía un prompt sintético; sin `META_API_KEY` falla antes de hacer solicitudes. `--tools` añade solicitudes con uso de tokens y `--image` genera una imagen con cobro separado; revisa los precios vigentes antes de esas opciones. Consulta [docs/meta-api.md](docs/meta-api.md).
 
+La issue #10 añade `@meta-game/skills`: un subconjunto vendorizado en un SHA fijo, catálogo de metadata, router por tarea con presupuesto de 8.000 tokens, guías locales para Phaser 3.90/shooter cenital/testing y verificación de hashes con `npm run skills:verify`. No se añaden variables de entorno. El editor todavía no consume este paquete; el futuro worker podrá persistir el registro por run mediante el callback `recordSelection`. Consulta [docs/skills.md](docs/skills.md).
+
 ## Capturas del tema Tokyo Night
 
 Para repetir la revisión visual a 390 y 1440 px, inicia `npm run dev` y en otra terminal ejecuta `npx playwright install chromium` (solo la primera vez) y `npm run screenshots:theme`. El script verifica contraste, desbordamiento, foco por teclado, diálogo e hidratación del navegador y guarda las capturas en `docs/screenshots/`. Puedes indicar otra URL local con `THEME_SCREENSHOT_BASE_URL`.
@@ -98,6 +100,7 @@ Todavía no existen `dev:worker`, `dev:gateway`, generación desde el chat, ejec
 - `packages/config`: validación de URLs públicas y configuración de infraestructura local.
 - `packages/contracts`: schemas Zod de liveness, errores HTTP, proyectos, progreso del editor y contratos Meta.
 - `packages/meta`: `MetaClient`, transporte server-side acotado, replay stateless y smoke opt-in de Meta.
+- `packages/skills`: catálogo y router de skills consultivas con hashes upstream fijados y carga por tarea.
 - `packages/db`: modelo PostgreSQL/Drizzle y repositorios que requieren identidad verificada.
 - `packages/storage`: adaptador S3 privado con claves de servidor, checksum y estados de reconciliación.
 - `infra`: Docker Compose, perfiles de desarrollo, ejemplos locales y digest de imágenes.

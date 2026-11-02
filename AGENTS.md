@@ -74,6 +74,8 @@ Solo claves públicas Clerk y URLs públicas llevan `NEXT_PUBLIC_`. No pasar un 
 
 Fuente: [gamedev-skills/awesome-gamedev-agent-skills](https://github.com/gamedev-skills/awesome-gamedev-agent-skills), commit revisado `19d93f97c9c1ea0f8b306e77aa81e0d3e352d3e9` (Apache-2.0). La integración posterior importa un subconjunto auditado conservando `LICENSE`, `NOTICE`, atribuciones, rutas originales y un manifiesto con SHA/hash de cada archivo; no descargar `main` en runtime ni ejecutar scripts de instalación externos automáticamente.
 
+Estado local de issue #10 (2 de noviembre de 2026): ese subconjunto y su router están implementados en `vendor/gamedev-skills/` y `packages/skills/`; `npm run skills:verify` comprueba commit, archivos, referencias y hashes. El router lee primero metadata, selecciona un género como máximo y carga cuerpos/referencias permitidos hasta 8.000 tokens estimados. La fuente Phaser upstream apunta a 4.2, así que el baseline 3.90 usa las adaptaciones locales de `packages/skills/local/`. La selección genera registros por run y un callback de persistencia; aún no existe el worker/ledger durable de la issue #11.
+
 Catálogo base (las rutas son relativas al upstream):
 
 | Necesidad | Skills seleccionables |
