@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { GameDatabase } from "./database";
 import { projectRunLocks, projects, runOutbox, runs } from "./schema/index";
@@ -83,6 +83,14 @@ export async function markRunOutboxRetryable(
       eq(runOutbox.status, "dispatching"),
       eq(runOutbox.leaseToken, item.leaseToken!),
     ));
+}
+
+export async function isQueuedRunDispatchable(database: GameDatabase, runId: string): Promise<boolean> {
+  const [run] = await database.select({ id: runs.id }).from(runs)
+    .innerJoin(projects, and(eq(projects.ownerUserId, runs.ownerUserId), eq(projects.id, runs.projectId)))
+    .where(and(eq(runs.id, runId), eq(runs.status, "queued"), isNull(projects.deletedAt)))
+    .limit(1);
+  return Boolean(run);
 }
 
 export async function listDispatchedQueuedRuns(database: GameDatabase, limit = 100) {

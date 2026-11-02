@@ -341,6 +341,9 @@ export function createRepositories(db: GameDatabase, policyInput: Partial<z.inpu
               eq(runs.projectId, parsedProjectId),
               inArray(runs.status, ["queued", "planning", "running", "verifying"]),
             ));
+          await tx.update(runOutbox).set({
+            status: "cancelled", leaseToken: null, leaseExpiresAt: null, updatedAt: deletedAt,
+          }).where(and(eq(runOutbox.ownerUserId, ownerUserId), eq(runOutbox.projectId, parsedProjectId)));
           await tx.update(sandboxes)
             .set({ status: "stopping", lifecycleLeaseToken: null, lifecycleLeaseExpiresAt: null, updatedAt: deletedAt })
             .where(and(eq(sandboxes.ownerUserId, ownerUserId), eq(sandboxes.projectId, parsedProjectId)));

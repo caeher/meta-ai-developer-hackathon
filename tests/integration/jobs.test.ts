@@ -10,6 +10,7 @@ import {
   appendClaimedRunAgentEvents,
   reserveClaimedRunImage,
   finishClaimedRun,
+  isQueuedRunDispatchable,
   identityFromAuthenticatedSession,
   ProjectRunBusyError,
   StaleRunWorkerError,
@@ -23,7 +24,7 @@ import {
   users,
 } from "@meta-game/db";
 import { pendingOrchestratorHandler, RunProcessingError } from "../../apps/worker/src/handler";
-import { startRunWorkerService } from "../../apps/worker/src/queue";
+import { createRunQueue, removeProjectRunJobs, startRunWorkerService } from "../../apps/worker/src/queue";
 
 const integrationEnabled = process.env.PERSISTENCE_TEST_ENABLED === "1";
 const basePolicy = { maxConcurrentJobs: 2, runMaxTokens: 100, dailyTokenLimit: 2_000, dailyImageLimit: 10 };
@@ -79,6 +80,40 @@ describe.skipIf(!integrationEnabled)("cola durable, cuotas y fencing con Postgre
     const [outbox] = await database.db.select().from(runOutbox).where(eq(runOutbox.runId, runId)).limit(1);
     expect(reservation).toMatchObject({ reservedTokens: basePolicy.runMaxTokens, reservedImages: 1, status: "reserved" });
     expect(outbox).toMatchObject({ idempotencyKey: key, generation: 0, status: "pending" });
+  });
+
+  it("cancela entregas outbox pendientes al borrar el proyecto", async () => {
+    const owner = await fixture("DeletedOutbox");
+    const created = await repositories.runs.enqueueRun(owner.identity, {
+      projectId: owner.project.id,
+      idempotencyKey: `deleted-outbox-${randomUUID()}`,
+      policy: basePolicy,
+    });
+
+    await repositories.projects.delete(owner.identity, owner.project.id);
+
+    const [delivery] = await database.db.select().from(runOutbox).where(eq(runOutbox.runId, created.run.id)).limit(1);
+    expect(delivery).toMatchObject({ status: "cancelled", leaseToken: null, leaseExpiresAt: null });
+    expect(await isQueuedRunDispatchable(database.db, created.run.id)).toBe(false);
+  });
+
+  it("retira de Redis los jobs de un proyecto usando runId y generación durable", async () => {
+    const queueName = `run-cleanup-${randomUUID().replaceAll("-", "").slice(0, 18)}`;
+    const queue = createRunQueue(process.env.REDIS_URL ?? "redis://127.0.0.1:6379", queueName);
+    const runId = randomUUID();
+    const generation = 3;
+    const jobId = `run-${runId}-${generation}`;
+    try {
+      await queue.add("run", { runId, idempotencyKey: `cleanup-${randomUUID()}`, generation }, { jobId });
+      expect(await queue.getJob(jobId)).toBeDefined();
+
+      await removeProjectRunJobs(queue, [{ runId, generation }]);
+
+      expect(await queue.getJob(jobId)).toBeUndefined();
+    } finally {
+      await queue.obliterate({ force: true }).catch(() => undefined);
+      await queue.close();
+    }
   });
 
   it("serializa la concurrencia del usuario y del proyecto antes de aceptar otro gasto", async () => {

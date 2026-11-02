@@ -18,6 +18,10 @@ Al despertar un workspace suspendido, el controlador crea el sandbox administrad
 
 ## Borrado de proyecto y cuenta
 
+La reconciliación retira primero de BullMQ los jobs referidos por `(runId, generation)` en PostgreSQL. Si el job sigue activo, conserva la tarea de borrado para reintentar y no borra sus filas de origen.
+
+La transacción que borra un proyecto o cuenta cancela también su outbox. Si una entrega concurrente ya añadió el job a Redis y pierde el compare-and-set, el worker lo retira; los jobs activos se dejan terminar o fallar antes de completar la limpieza.
+
 Eliminar un proyecto oculta datos y revoca la preview en la transacción de la API. El worker detiene inmediatamente el contenedor de ese registro administrado, pero conserva el volumen hasta que venza la retención. Tras la retención, elimina el runtime/volumen, assets, snapshots de versiones y suspensión, checkpoints y artefactos publicados; después borra filas privadas y marca la tarea durable `succeeded`. La fila del proyecto y la tarea permanecen como traza sin el transcript.
 
 Eliminar una cuenta requiere su contraseña actual. Revoca las sesiones y enlaces de un solo uso, borra email/hash de contraseña, invalida acceso a los proyectos y revoca previews/publicaciones. Los proyectos se renombran de forma genérica y cada uno recibe una tarea de limpieza. La fila de usuario queda como tombstone con ID opaco y fecha de borrado para mantener ownership/auditoría; no se permite iniciar sesión, crear proyectos ni resolver recursos con esa identidad.
@@ -29,3 +33,9 @@ Eliminar una cuenta requiere su contraseña actual. Revoca las sesiones y enlace
 `RESOURCE_LIFECYCLE_ENABLED=true npm run resources:reconcile` ejecuta una pasada manual (contenedores de proyectos borrados en pausa, suspensión TTL y limpieza de proyectos vencidos). El worker ejecuta las mismas pasadas cada 30 segundos. Ambos necesitan la configuración privada de cada servicio; nunca copies `.env.local` a otro proceso. Consulta sus salidas por contadores, sin IDs ni contenido de usuario.
 
 Los límites duros de CPU/RAM/PIDs/disco dependen de cgroups v2 y cuotas de filesystem del host. Deben probarse con `npm run sandbox:host-check` en el host Linux dedicado antes de activar la bandera. Los tests PostgreSQL/Redis/S3 con servicios locales y los mocks de controlador verifican contratos y reconciliación; no acreditan rootless real, DNS/TLS, permisos S3 productivos ni el proveedor de correo. Una tarea fallida conserva el registro para reintento y no autoriza borrar recursos de otro proyecto.
+
+## Verificación local (2 de noviembre de 2026)
+
+`npm run test:integration` pasó con 43 pruebas y una omitida, usando PostgreSQL, Redis y Silo locales; incluye cancelación del outbox y eliminación BullMQ por run/generación. `npm test` pasó con 226 pruebas y 37 omitidas. `npm run lint`, `npm run typecheck`, `npm run build:worker` y `npm run build` también pasaron. Estos servicios locales y fixtures no demuestran aislamiento del host.
+
+`npm run sandbox:host-check` se detuvo con `sandbox_host_requires_linux` en Windows con Docker Desktop. Sigue pendiente ejecutar suspensión/restore, cuotas duras y borrado con Docker rootless, filesystem con cuotas y roles S3 productivos en el host Linux dedicado.

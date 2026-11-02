@@ -63,7 +63,7 @@ export const reservationStatus = pgEnum("reservation_status", [
 ]);
 export const usageKind = pgEnum("usage_kind", ["charge", "refund", "adjustment"]);
 export const cleanupStatus = pgEnum("cleanup_status", ["queued", "running", "succeeded", "failed"]);
-export const outboxStatus = pgEnum("outbox_status", ["pending", "dispatching", "dispatched"]);
+export const outboxStatus = pgEnum("outbox_status", ["pending", "dispatching", "dispatched", "cancelled"]);
 export const authTokenPurpose = pgEnum("auth_token_purpose", ["verify_email", "reset_password"]);
 
 export const users = pgTable(

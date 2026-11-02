@@ -26,6 +26,7 @@ type LifecycleSnapshots = Readonly<{
 type CleanupStorage = Readonly<{ delete(key: string): Promise<void> }>;
 type CheckpointCleanup = Readonly<{ delete(identity: { ownerUserId: string; projectId: string; runId: string }): Promise<void> }>;
 type PublicationCleanup = Readonly<{ delete(slug: string): Promise<void> }>;
+type RunJobCleanup = Readonly<{ removeProjectRuns(jobs: readonly { runId: string; generation: number }[]): Promise<void> }>;
 
 export function createResourceLifecycleService(input: {
   database: GameDatabase;
@@ -37,6 +38,7 @@ export function createResourceLifecycleService(input: {
   maxStorageBytes: number;
   privateObjects: CleanupStorage;
   checkpoints: CheckpointCleanup;
+  jobs: RunJobCleanup;
   hasActivePreview?: (projectId: string) => Promise<boolean>;
   publications?: PublicationCleanup;
 }) {
@@ -147,6 +149,7 @@ export function createResourceLifecycleService(input: {
         try {
           const resources = await getProjectCleanupResources(input.database, task);
           if (!resources) throw new Error("project_cleanup_lease_lost");
+          await input.jobs.removeProjectRuns(resources.runJobs);
           if (resources.sandbox) await input.sandbox.cleanupManagedProject(task.projectId);
           if (resources.sandbox?.lifecycleSnapshotId) {
             await input.snapshots.deleteLifecycleSnapshot({

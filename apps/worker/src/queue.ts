@@ -2,6 +2,7 @@ import { Queue, Worker, type Job, type QueueOptions, type WorkerOptions } from "
 import type { GameDatabase } from "@meta-game/db";
 import {
   claimRunOutboxBatch,
+  isQueuedRunDispatchable,
   listDispatchedQueuedRuns,
   markRunOutboxDispatched,
   markRunOutboxRetryable,
@@ -57,6 +58,28 @@ export function createRunQueue(redisUrl: string, queueName = RUN_QUEUE_NAME): Qu
   });
 }
 
+type RemovableRunJob = Readonly<{
+  getState(): Promise<string>;
+  remove(): Promise<void>;
+}>;
+
+type RunJobLookup = Readonly<{
+  getJob(jobId: string): Promise<RemovableRunJob | undefined>;
+}>;
+
+export async function removeProjectRunJobs(
+  queue: RunJobLookup,
+  jobs: readonly { runId: string; generation: number }[],
+): Promise<void> {
+  for (const { runId, generation } of jobs) {
+    if (!Number.isSafeInteger(generation) || generation < 0) throw new Error("project_cleanup_job_reference_invalid");
+    const job = await queue.getJob(`run-${runId}-${generation}`);
+    if (!job) continue;
+    if (await job.getState() === "active") throw new Error("project_cleanup_job_active");
+    await job.remove();
+  }
+}
+
 async function dispatchOne(database: GameDatabase, queue: Queue<RunQueueJob>, item: ClaimedRunOutbox): Promise<void> {
   try {
     const payload = RunQueueJobSchema.parse({ runId: item.runId, idempotencyKey: item.idempotencyKey, generation: item.generation });
@@ -67,7 +90,11 @@ async function dispatchOne(database: GameDatabase, queue: Queue<RunQueueJob>, it
       removeOnComplete: true,
       removeOnFail: false,
     });
-    await markRunOutboxDispatched(database, item);
+    const marked = await markRunOutboxDispatched(database, item);
+    if (!marked && !await isQueuedRunDispatchable(database, payload.runId)) {
+      const job = await queue.getJob(`run-${payload.runId}-${payload.generation}`);
+      if (job && await job.getState() !== "active") await job.remove();
+    }
   } catch (error) {
     await markRunOutboxRetryable(database, item, error instanceof Error && error.name === "ZodError" ? "invalid_outbox_payload" : "redis_unavailable");
     throw error;

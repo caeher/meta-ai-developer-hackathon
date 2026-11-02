@@ -146,6 +146,7 @@ describe.skipIf(!integrationEnabled)("proyectos privados y chat persistente", ()
       maxStorageBytes: 2_048,
       privateObjects: { delete: async () => undefined },
       checkpoints: { delete: async () => undefined },
+      jobs: { removeProjectRuns: async () => undefined },
     });
     await expect(lifecycle.suspendExpired()).resolves.toMatchObject({ scanned: 1, suspended: 1, failed: 0 });
     expect(destroyedProjects).toEqual([interruptedProject.id]);

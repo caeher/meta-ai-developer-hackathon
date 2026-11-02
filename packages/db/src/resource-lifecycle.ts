@@ -86,7 +86,17 @@ export async function getProjectCleanupResources(database: GameDatabase, task: C
   const runRows = await database.select({ id: runs.id }).from(runs).where(and(
     eq(runs.ownerUserId, task.ownerUserId), eq(runs.projectId, task.projectId),
   ));
-  return { sandbox, assets: assetRows, versions: versionRows, publications: publicationRows, runIds: runRows.map(({ id }) => id) };
+  const runJobs = await database.select({ runId: runOutbox.runId, generation: runOutbox.generation }).from(runOutbox).where(and(
+    eq(runOutbox.ownerUserId, task.ownerUserId), eq(runOutbox.projectId, task.projectId),
+  ));
+  return {
+    sandbox,
+    assets: assetRows,
+    versions: versionRows,
+    publications: publicationRows,
+    runIds: runRows.map(({ id }) => id),
+    runJobs,
+  };
 }
 
 export async function failProjectCleanup(database: GameDatabase, task: ClaimedProjectCleanup, errorCode: string): Promise<void> {

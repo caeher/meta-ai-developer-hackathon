@@ -1,7 +1,7 @@
 import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { GameDatabase } from "@meta-game/db";
-import { assets, authRateLimits, authSessions, authTokens, projectCleanupTasks, projects, publications, runs, sandboxes, usageReservations, users, versions } from "@meta-game/db";
+import { assets, authRateLimits, authSessions, authTokens, projectCleanupTasks, projects, publications, runOutbox, runs, sandboxes, usageReservations, users, versions } from "@meta-game/db";
 import {
   clearSessionCookie,
   createOpaqueToken,
@@ -193,6 +193,9 @@ export function createAuthHandlers(options: {
             await tx.update(runs).set({ status: "cancelled", errorCode: "project_deleted", updatedAt: now }).where(and(
               eq(runs.ownerUserId, owner.id), inArray(runs.projectId, projectIds), inArray(runs.status, ["queued", "planning", "running", "verifying"]),
             ));
+            await tx.update(runOutbox).set({
+              status: "cancelled", leaseToken: null, leaseExpiresAt: null, updatedAt: now,
+            }).where(and(eq(runOutbox.ownerUserId, owner.id), inArray(runOutbox.projectId, projectIds)));
             await tx.update(sandboxes).set({
               status: "stopping", lifecycleLeaseToken: null, lifecycleLeaseExpiresAt: null, updatedAt: now,
             }).where(and(eq(sandboxes.ownerUserId, owner.id), inArray(sandboxes.projectId, projectIds)));

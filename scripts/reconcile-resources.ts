@@ -13,6 +13,7 @@ import {
 } from "@meta-game/storage";
 import { createVersionService } from "../apps/worker/src/versions/service";
 import { createResourceLifecycleService } from "../apps/worker/src/lifecycle/service";
+import { createRunQueue, removeProjectRunJobs } from "../apps/worker/src/queue";
 
 dotenv.config({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
 
@@ -35,6 +36,7 @@ const repositories = createRepositories(database.db, {
   runMaxDurationMs: environment.RUN_MAX_DURATION_MS,
 });
 const sandbox = new SandboxControllerClient(controllerUrl, controllerToken);
+const runQueue = createRunQueue(environment.REDIS_URL);
 const snapshots = createPrivateSnapshotStorageFromEnvironment();
 const checkpoints = createPrivateCheckpointStorageFromEnvironment();
 const privateObjects = createS3PrivateObjectClient(readStorageEnvironment());
@@ -58,6 +60,7 @@ const lifecycle = createResourceLifecycleService({
   maxStorageBytes: environment.USER_MAX_STORAGE_MB * 1024 * 1024,
   privateObjects,
   checkpoints,
+  jobs: { removeProjectRuns: (jobs) => removeProjectRunJobs(runQueue, jobs) },
   ...(previewStore ? { hasActivePreview: (projectId: string) => previewStore.hasActiveProjectSessions(projectId) } : {}),
   ...(publications ? { publications } : {}),
 });
@@ -68,6 +71,7 @@ try {
   const deletedProjects = await lifecycle.reconcileDeletedProjects();
   process.stdout.write(JSON.stringify({ quiescedSandboxes, suspended, deletedProjects }) + "\n");
 } finally {
+  await runQueue.close();
   await publications?.close();
   await previewStore?.close();
   privateObjects.close?.();

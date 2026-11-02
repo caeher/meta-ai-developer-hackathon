@@ -13,6 +13,7 @@ export type { VerifiedIdentityContext } from "./identity";
 export { createRepositories } from "./repositories/index";
 export {
   claimRunOutboxBatch,
+  isQueuedRunDispatchable,
   listDispatchedQueuedRuns,
   markRunOutboxDispatched,
   markRunOutboxRetryable,

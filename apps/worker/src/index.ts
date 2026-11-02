@@ -11,7 +11,7 @@ import { createAgentRunHandler } from "./agent/orchestrator";
 import { createPostgresAgentRunStore } from "./agent/store";
 import { createGeneratedImageTool } from "./assets/image-generator";
 import { pendingOrchestratorHandler } from "./handler";
-import { startRunWorkerService } from "./queue";
+import { removeProjectRunJobs, startRunWorkerService } from "./queue";
 import { createVersionService } from "./versions/service";
 import { createWorkerVersionServer } from "./versions/http";
 import { createPublicationPipeline } from "./pipelines/publish-game";
@@ -28,6 +28,7 @@ let publicationPipeline: ReturnType<typeof createPublicationPipeline> | undefine
 let checkpointStorage: ReturnType<typeof createPrivateCheckpointStorageFromEnvironment> | undefined;
 let sandboxClient: SandboxControllerClient | undefined;
 let resourceLifecycle: ReturnType<typeof createResourceLifecycleService> | undefined;
+const projectJobCleaner: { remove: ((jobs: readonly { runId: string; generation: number }[]) => Promise<void>) | undefined } = { remove: undefined };
 let snapshotStorage: ReturnType<typeof createPrivateSnapshotStorageFromEnvironment> | undefined;
 let previewStore: ReturnType<typeof createRedisPreviewStore> | undefined;
 const repositories = createRepositories(database.db, {
@@ -65,6 +66,10 @@ if (environment.RESOURCE_LIFECYCLE_ENABLED) {
     maxStorageBytes: environment.USER_MAX_STORAGE_MB * 1024 * 1024,
     privateObjects,
     checkpoints: checkpointStorage,
+    jobs: { removeProjectRuns: async (jobs) => {
+      if (!projectJobCleaner.remove) throw new Error("project_cleanup_job_queue_unavailable");
+      await projectJobCleaner.remove(jobs);
+    } },
     ...(previewStore ? { hasActivePreview: (projectId: string) => previewStore!.hasActiveProjectSessions(projectId) } : {}),
     ...(publicationCleanup ? { publications: publicationCleanup } : {}),
   });
@@ -74,6 +79,7 @@ const service = startRunWorkerService({
   redisUrl: environment.REDIS_URL,
   handler,
 });
+projectJobCleaner.remove = (jobs) => removeProjectRunJobs(service.queue, jobs);
 
 let snapshotReconciler: NodeJS.Timeout | undefined;
 if (versionService && environment.RUNS_ENABLED) {
