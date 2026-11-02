@@ -43,3 +43,7 @@ Esto verifica el comportamiento local fail-closed y los contratos con identidade
 ## Continuación de la verificación (#4)
 
 El 2 de noviembre de 2026 se volvió a comprobar la disponibilidad de la configuración sin leer ni registrar sus valores. El proceso no tiene las claves Clerk requeridas ni credenciales configuradas para dos cuentas de prueba. Por ello no se pudo ejecutar el recorrido E2E contra Clerk ni verificar la expiración y el acceso cruzado con sesiones reales. La issue permanece abierta; los fixtures locales no sustituyen esa evidencia.
+
+## Verificación de continuación de #6 (2 de noviembre de 2026)
+
+En Node 24.22.1 volvieron a pasar `npm test` (31 pruebas; 8 de integración omitidas en esta suite), `npm run test:integration` (8 pruebas con PostgreSQL y S3 locales), `npm run lint`, `npm run typecheck` y `npm run build`. La comprobación de `.env.local` revisó solo presencia y formato de las variables Clerk necesarias, sin imprimir ni guardar sus valores; no encontró una configuración utilizable. Sin una instancia Clerk y dos cuentas de prueba no se puede completar el E2E de crear proyecto, persistir el chat, recargar, renombrar, eliminar y comprobar el aislamiento entre usuarios. #6 permanece abierta hasta obtener esa evidencia real; los tests con fixtures no la sustituyen.
