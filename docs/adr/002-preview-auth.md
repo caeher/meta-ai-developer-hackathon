@@ -30,6 +30,14 @@ Los tests offline cubren emisión, firmas inválidas y vencidas, replay, ownersh
 
 Antes de habilitar una preview externa, el operador debe aportar claves Clerk de prueba, dominio wildcard con DNS/TLS y un host Linux dedicado con Docker rootless ya validado por #12/#13. También debe probar `SameSite=None; Partitioned` en los navegadores objetivo; este entorno no acredita una instancia real Clerk, TLS público, cookies de terceros ni acceso al host Linux dedicado. Mantener el feature flag apagado hasta completar esos pasos.
 
+### Continuación de verificación (2 de noviembre de 2026)
+
+En Node 24.22.1 pasaron `npm test` (124 tests; 22 omitidos), `npm run test:integration` (27 tests; 1 omitido), el test Redis ejecutado por separado contra el Redis local (1 test), `npm run lint`, `npm run typecheck`, `npm run build:gateway` y `npm run build`. La omisión del test Redis en la suite de integración se debe a que requiere `PREVIEW_TEST_REDIS_URL`; la ejecución separada confirmó consumo atómico y revocación con Redis real.
+
+No se completó la validación externa: `infra/.env` no define `PREVIEW_BASE_DOMAIN` ni `APP_ORIGIN`, el gateway permanece desactivado y no hay certificado wildcard instalado. El Docker disponible usa el contexto `desktop-linux`; aunque reporta Linux y cgroups v2, no es el host dedicado y sus opciones de seguridad no acreditan Docker rootless. No se ejecutaron pruebas de host en Docker Desktop. Tampoco se realizó una comprobación en navegador real; por tanto, el comportamiento de `SameSite=None; Partitioned` en navegadores objetivo sigue pendiente.
+
+La issue continúa abierta. Mantener `PREVIEW_GATEWAY_ENABLED=false` hasta validar DNS/TLS público, cookies en los navegadores objetivo y el host Linux dedicado.
+
 ## Reversión
 
 Deshabilite `PREVIEW_GATEWAY_ENABLED`, detenga gateway y Caddy y revoque el epoch de cada proyecto. Retire la clave privada de la app y las claves públicas tras vencer grants anteriores. No borre la red `mg-sandbox-egress` ni recursos Docker administrados mientras existan sandboxes activos.
