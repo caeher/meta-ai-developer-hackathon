@@ -46,6 +46,8 @@ La integración de iframe de #15 cuenta con E2E de fixtures en Chromium, Firefox
 
 En Node 24.22.1, `npm run typecheck`, `npm run lint`, `npm run build`, `npm run build:gateway` y `git diff --check` pasaron. `npm test` pasó 128 pruebas y omitió 22 pruebas que requieren servicios de integración. `npm run test:integration` pasó 28 pruebas con PostgreSQL, Redis y Silo locales y omitió una prueba que requiere `PREVIEW_TEST_REDIS_URL`; esas pruebas verifican además CSP y headers de seguridad del gateway. `npm run test:e2e` pasó 33 pruebas Playwright en Chromium, Firefox y WebKit; incluye iframe con canvas/assets/HMR, grants rechazados para anónimo/otro dueño, grant vencido, cookie particionada bloqueada, navegación con teclado e historial de rutas hostiles. Los grants y los sitios de preview E2E son fixtures, no sustituyen DNS/TLS, Clerk ni cookie real del dominio.
 
+La revalidación de esta continuación repitió esos checks en Node 24.22.1 con los mismos resultados. La inspección de `.env.local` e `infra/.env` confirmó que no hay dominio/origen públicos, credenciales Clerk, claves de firma ni controlador configurados; el gateway permanece desactivado. Docker usa el contexto `desktop-linux` (Docker Desktop), no el host Linux dedicado. No se habilitó la preview ni se expusieron valores de configuración. La issue sigue abierta hasta validar DNS/TLS, cookies particionadas bajo el dominio real, Clerk de prueba y el host dedicado.
+
 ## Reversión
 
 Deshabilite `PREVIEW_GATEWAY_ENABLED`, detenga gateway y Caddy y revoque el epoch de cada proyecto. Retire la clave privada de la app y las claves públicas tras vencer grants anteriores. No borre la red `mg-sandbox-egress` ni recursos Docker administrados mientras existan sandboxes activos.
