@@ -1,0 +1,13 @@
+{
+  "id": "resp_fixture_image_01",
+  "model": "muse-image-1.0",
+  "status": "completed",
+  "output": [
+    {
+      "type": "image_generation_call",
+      "status": "completed",
+      "result": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII="
+    }
+  ],
+  "usage": { "input_tokens": 6, "output_tokens": 0, "total_tokens": 6 }
+}

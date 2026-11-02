@@ -1,0 +1,12 @@
+{
+  "id": "resp_fixture_invalid_image_01",
+  "model": "muse-image-1.0",
+  "status": "completed",
+  "output": [
+    {
+      "type": "image_generation_call",
+      "status": "completed",
+      "result": "aGVsbG8="
+    }
+  ]
+}

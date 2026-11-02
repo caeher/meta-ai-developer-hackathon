@@ -4,10 +4,10 @@ import {
   MetaApiError,
   MetaConfigurationError,
   MetaSmokeError,
-  MetaTransport,
   parseMetaSmokeOptions,
   runMetaSmoke,
 } from "@meta-game/meta";
+import { MetaTransport } from "../packages/meta/src/transport.js";
 
 const spark = "muse-spark-1.3-contributor";
 const image = "muse-image-1.0";
@@ -75,7 +75,7 @@ describe("Meta API smoke configuration", () => {
 describe("Meta API transport", () => {
   it("uses the server-side Bearer key and official Responses endpoint", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(httpResponse(textResponse(), 200, { "x-request-id": "req-safe-123" }));
-    const transport = new MetaTransport(config(), fetchMock);
+    const transport = new MetaTransport(config(), fetchMock, { maxRetries: 0 });
 
     const result = await transport.createResponse({ model: spark, input: "synthetic", store: false, max_output_tokens: 64 });
 
@@ -89,9 +89,15 @@ describe("Meta API transport", () => {
     expect(result.response.id).toBe("resp_text");
   });
 
-  it.each([401, 403, 404, 429])("sanitizes HTTP %i error responses", async (status) => {
+  it.each([
+    [401, "unauthorized"],
+    [403, "forbidden"],
+    [404, "http_error"],
+    [429, "rate_limited"],
+    [503, "provider_error"],
+  ] as const)("normalizes and sanitizes HTTP %i error responses", async (status, code) => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(httpResponse({ error: { message: "test-secret-key must never leak" } }, status));
-    const transport = new MetaTransport(config(), fetchMock);
+    const transport = new MetaTransport(config(), fetchMock, { maxRetries: 0 });
     let error: unknown;
     try {
       await transport.listModels();
@@ -101,7 +107,7 @@ describe("Meta API transport", () => {
 
     expect(error).toBeInstanceOf(MetaApiError);
     expect((error as Error).message).not.toContain("test-secret-key");
-    expect(error).toMatchObject({ status, code: "http_error" });
+    expect(error).toMatchObject({ status, code });
   });
 
   it("sanitizes network errors and timeouts", async () => {
@@ -203,7 +209,7 @@ describe("Meta connectivity smoke", () => {
       id: "resp_image",
       model: image,
       status: "completed",
-      output: [{ type: "image_generation_call", status: "completed", result: "aGVsbG8=" }],
+      output: [{ type: "image_generation_call", status: "completed", result: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=" }],
     };
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(httpResponse(modelList()))
@@ -213,6 +219,35 @@ describe("Meta connectivity smoke", () => {
     const result = await runMetaSmoke(config(), { checkImage: true }, new MetaTransport(config(), fetchMock));
 
     expect(result.imageResponseId).toBe("resp_image");
-    expect(JSON.stringify(result)).not.toContain("aGVsbG8=");
+    expect(JSON.stringify(result)).not.toContain("iVBORw0KGgo");
+  });
+});
+
+describe("Meta API retry safety", () => {
+  it("retries bounded safe model-list reads using Retry-After", async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(httpResponse({ error: { message: "temporary" } }, 429, { "retry-after": "0" }))
+      .mockResolvedValueOnce(httpResponse(modelList()));
+    const sleep = vi.fn(async () => undefined);
+    const transport = new MetaTransport(config(), fetchMock, { sleep, random: () => 0.5 });
+
+    const result = await transport.listModels();
+
+    expect(result.ids).toEqual(availableModels);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry a billable response POST after an ambiguous provider failure", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(httpResponse({ error: { message: "private provider detail" } }, 503, { "retry-after": "0" }));
+    const transport = new MetaTransport(config(), fetchMock);
+
+    await expect(transport.createResponse({ model: spark, input: "synthetic", store: false })).rejects.toMatchObject({
+      code: "provider_error",
+      status: 503,
+      ambiguous: true,
+      retryAfterMs: 0,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

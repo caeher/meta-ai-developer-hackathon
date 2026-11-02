@@ -1,0 +1,26 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_fixture_code_01","status":"in_progress"}}
+
+data: {"type":"response.output_text.delta","delta":"Preparing safe edits. "}
+
+data: {"type":"response.output_item.added","output_index":1,"item":{"id":"fc_item_a","type":"function_call","call_id":"call_a","name":"writeFile","arguments":"","status":"in_progress"}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_item_a","output_index":1,"delta":"{\"path\":"}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_item_a","output_index":1,"delta":"\"src/main.ts\",\"contents\":\"export {}\\n\"}"}
+
+data: {"type":"response.function_call_arguments.done","item_id":"fc_item_a","output_index":1,"arguments":"{\"path\":\"src/main.ts\",\"contents\":\"export {}\\n\"}"}
+
+data: {"type":"response.output_item.done","output_index":1,"item":{"id":"fc_item_a","type":"function_call","call_id":"call_a","name":"writeFile","arguments":"{\"path\":\"src/main.ts\",\"contents\":\"export {}\\n\"}","status":"completed"}}
+
+data: {"type":"response.output_item.added","output_index":2,"item":{"id":"fc_item_b","type":"function_call","call_id":"call_b","name":"writeFile","arguments":"","status":"in_progress"}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_item_b","output_index":2,"delta":"{\"path\":\"src/game.ts\",\"contents\":\"scene.start('level-1')\"}"}
+
+data: {"type":"response.function_call_arguments.done","item_id":"fc_item_b","output_index":2,"arguments":"{\"path\":\"src/game.ts\",\"contents\":\"scene.start('level-1')\"}"}
+
+data: {"type":"response.output_item.done","output_index":2,"item":{"id":"fc_item_b","type":"function_call","call_id":"call_b","name":"writeFile","arguments":"{\"path\":\"src/game.ts\",\"contents\":\"scene.start('level-1')\"}","status":"completed"}}
+
+data: {"type":"response.completed","response":{"id":"resp_fixture_code_01","model":"muse-spark-1.3-contributor","status":"completed","output":[{"id":"msg_fixture","type":"message","role":"assistant","phase":"commentary","status":"completed","content":[{"type":"output_text","text":"Preparing safe edits."}]},{"id":"rs_fixture","type":"reasoning","status":"completed","encrypted_content":"opaque-fixture-replay"},{"id":"fc_item_a","type":"function_call","status":"completed","call_id":"call_a","name":"writeFile","arguments":"{\"path\":\"src/main.ts\",\"contents\":\"export {}\\n\"}"},{"id":"fc_item_b","type":"function_call","status":"completed","call_id":"call_b","name":"writeFile","arguments":"{\"path\":\"src/game.ts\",\"contents\":\"scene.start('level-1')\"}"}],"usage":{"input_tokens":92,"output_tokens":30,"total_tokens":122,"output_tokens_details":{"reasoning_tokens":12}}}}
+
+data: [DONE]
