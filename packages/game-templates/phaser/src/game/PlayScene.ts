@@ -353,6 +353,7 @@ export class PlayScene extends Phaser.Scene {
       muted: gameAudio.isMuted(),
       paused: this.paused,
       assetsReady: this.registry.get("assetsReady") === true,
+      generatedAssetKeys: Object.freeze((this.registry.get("generatedAssets") as Array<{ key: string }> | undefined ?? []).map(({ key }) => key)),
     });
     this.registry.set("publicSnapshot", snapshot);
     this.game.events.emit(GAME_SNAPSHOT_EVENT, snapshot);

@@ -109,6 +109,35 @@ describe("SSE de runs", () => {
     expect(get).not.toHaveBeenCalled();
   });
 
+  it("emite el path validado de una imagen sin filtrar procedencia privada ni hashes", async () => {
+    const { handler } = makeHandler({ rows: [
+      stored(1, "agent.tool_completed", {
+        callId: "image-call",
+        toolName: "generate_image",
+        argsHash: hash,
+        result: JSON.stringify({
+          assetId: "00000000-0000-4000-8000-000000000201",
+          contactSheetAssetId: "00000000-0000-4000-8000-000000000202",
+          path: "assets/generated/00000000-0000-4000-8000-000000000201.png",
+          bytesWritten: 128,
+          sha256: "b".repeat(64),
+          model: "private-model-id",
+          prompt: "secret private prompt",
+        }),
+      }),
+      stored(2, "run.succeeded", { summary: "Generated asset" }),
+    ] });
+
+    const response = await handler(request(), { params: Promise.resolve({ runId }) });
+    const body = await response.text();
+    const frames = parseFrames(body);
+    expect(frames[0]?.data.payload).toEqual({ path: "assets/generated/00000000-0000-4000-8000-000000000201.png", bytesWritten: 128 });
+    expect(body).not.toContain("private-model-id");
+    expect(body).not.toContain("secret private prompt");
+    expect(body).not.toContain("b".repeat(64));
+    expect(body).not.toContain("00000000-0000-4000-8000-000000000202");
+  });
+
   it("oculta runs ajenos con 404 uniforme", async () => {
     const { handler, listEvents } = makeHandler({ owned: false });
     const response = await handler(request(), { params: Promise.resolve({ runId }) });

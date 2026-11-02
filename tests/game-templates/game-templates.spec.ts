@@ -78,6 +78,35 @@ test("all genre presets load local assets, accept controls, and restart without 
   }
 });
 
+test("Phaser loads generated assets from its validated manifest into the game cache", async ({ page }) => {
+  const assetId = "00000000-0000-4000-8000-000000000201";
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
+  const requested: string[] = [];
+  await page.route("**/assets/generated/manifest.json", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ schemaVersion: 1, assets: [{
+      assetId,
+      key: `generated-${assetId}`,
+      path: `assets/generated/${assetId}.png`,
+      assetType: "sprite",
+      frameColumns: 1,
+      frameRows: 1,
+      frameWidth: 1,
+      frameHeight: 1,
+    }] }),
+  }));
+  await page.route(`**/assets/generated/${assetId}.png`, (route) => {
+    requested.push(route.request().url());
+    return route.fulfill({ contentType: "image/png", body: png });
+  });
+  await page.goto("/?genre=platformer");
+  await page.waitForFunction(() => window.__GAME_TEST__?.getState()?.assetsReady === true);
+
+  const snapshot = await readState(page);
+  expect(snapshot.generatedAssetKeys).toEqual([`generated-${assetId}`]);
+  expect(requested).toHaveLength(1);
+});
+
 test("puzzle can be won and lost with keyboard play, then restarted", async ({ page }) => {
   await page.goto("/?genre=puzzle");
   await page.waitForFunction(() => window.__GAME_TEST__?.getState()?.assetsReady === true);

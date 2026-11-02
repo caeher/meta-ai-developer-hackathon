@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  ImageGenerationBriefSchema,
   SandboxInstallDependenciesInputSchema,
   SandboxListFilesInputSchema,
   SandboxReadFileInputSchema,
@@ -15,7 +16,7 @@ import { isSensitiveWorkspacePath, redactSensitiveText, sensitiveInputReason } f
 
 export type AgentSandbox = Pick<
   SandboxControllerClient,
-  "create" | "inspect" | "readFile" | "writeFile" | "listFiles" | "installDependencies" | "runCommand" | "startDevServer" | "readLogs"
+  "create" | "inspect" | "readFile" | "writeFile" | "writeBinaryFile" | "listFiles" | "installDependencies" | "runCommand" | "startDevServer" | "readLogs"
 >;
 
 type ToolDefinition = MetaToolDefinition & Readonly<{ summary(args: Record<string, unknown>): string }>;
@@ -62,6 +63,12 @@ const definitions: ToolDefinition[] = [
     description: "Read bounded logs from the sandbox's fixed development server.",
     inputSchema: SandboxReadLogsInputSchema,
     summary: () => "Leer logs del servidor de desarrollo",
+  },
+  {
+    name: "generate_image",
+    description: "Generate one original game image with Meta, validate and normalize it, store private provenance, and register it for Phaser loading.",
+    inputSchema: ImageGenerationBriefSchema,
+    summary: (args) => `Generar asset ${String(args.assetType)} y validarlo para Phaser`,
   },
 ];
 

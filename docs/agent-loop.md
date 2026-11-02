@@ -34,3 +34,9 @@ npm run typecheck
 ```
 
 Los tests de orquestación usan Meta y sandbox falsos. No sustituyen `npm run meta:smoke` opt-in ni las pruebas de aislamiento en el host Linux dedicado. La conexión del editor y SSE están documentadas en [eventos de runs](run-events.md); la plantilla Phaser corresponde a #18 y los assets de imagen a #19.
+
+## Imágenes generadas (#19)
+
+La operación `generate_image` reserva una unidad diaria antes del POST y registra `agent.meta_request_started` bajo el lease del run. Si esa clave ya tiene un inicio durable, el worker falla como ambiguo sin repetir la llamada. Un intento que no tiene respuesta durable se cuenta conservadoramente en `images`. La respuesta completada registra modelo, IDs y uso antes de validar, almacenar y copiar el PNG.
+
+El worker habilitado requiere `S3_*` para guardar PNG, hoja de contacto y metadata de procedencia en el bucket privado. `write_binary_file` solo acepta PNG en `public/assets/generated/`; Phaser carga los archivos que enumera el manifest runtime. Los checks visuales se registran como pendientes de inspección humana en la preview. Ver [assets generados](generated-assets.md).

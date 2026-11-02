@@ -17,10 +17,12 @@
     "@meta-game/db": "0.1.0",
     "@meta-game/meta": "0.1.0",
     "@meta-game/sandbox": "0.1.0",
+    "@meta-game/storage": "0.1.0",
     "@meta-game/skills": "0.1.0",
     "bullmq": "5.81.5",
     "dotenv": "18.0.9",
     "ioredis": "5.11.1",
+    "sharp": "0.35.5",
     "zod": "4.6.7"
   },
   "devDependencies": {

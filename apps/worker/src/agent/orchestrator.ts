@@ -9,8 +9,8 @@ import {
   type MetaPlanResult,
   type MetaUsage,
 } from "@meta-game/contracts";
-import type { MetaClient } from "@meta-game/meta";
-import type { RunUsage, RunWorkerClaim } from "@meta-game/db";
+import { MetaApiError, type MetaClient } from "@meta-game/meta";
+import { UsageLimitExceededError, type RunUsage, type RunWorkerClaim } from "@meta-game/db";
 import type { SkillSelection } from "@meta-game/skills";
 import { RunProcessingError, type RunHandler, type RunHandlerContext, type WorkerRun } from "../handler";
 import type { AgentRunStore } from "./store";
@@ -30,8 +30,12 @@ import {
   type PreparedAgentToolCall,
 } from "./tools";
 import { estimateTokens, redactSensitiveText, sensitiveInputReason } from "./safety";
+import type { GeneratedImageToolContext } from "../assets/image-generator";
+import { imageResponseTokenUsage } from "../assets/image-generator";
+import { ImagePipelineError } from "../assets/image-pipeline";
 
-type AgentMeta = Pick<MetaClient, "plan" | "streamCode">;
+type AgentMeta = Pick<MetaClient, "plan" | "streamCode" | "generateImage">;
+type AgentImageGenerator = (args: Record<string, unknown>, context: GeneratedImageToolContext) => Promise<unknown>;
 type AgentSkillRouter = {
   routeForRun(input: { runId: string; task: string; engineVersion: string; budget: number }): Promise<SkillSelection>;
 };
@@ -45,6 +49,8 @@ export interface AgentOrchestratorOptions {
   maxTokens: number;
   maxDurationMs: number;
   skillTokenBudget?: number;
+  dailyImageLimit?: number;
+  imageGenerator?: AgentImageGenerator;
 }
 
 type MutableRunEvent = { sequence: number; type: string; payload: Record<string, unknown> };
@@ -376,17 +382,85 @@ async function executeCachedTool(
   });
   let result: unknown;
   try {
-    result = await executeAgentTool(options.sandbox, projectId, call, state.signal);
+    if (call.name === "generate_image") {
+      const imageGenerator = options.imageGenerator;
+      if (!imageGenerator) throw new RunProcessingError("image_generation_unavailable", false, state.usage);
+      const requestKey = `image-${call.callId}`;
+      let startedImageRequest = false;
+      let completedImageRequest = false;
+      result = await imageGenerator(call.args, {
+        claim,
+        projectId,
+        signal: state.signal,
+        async beforeRequest() {
+          if (startedImageRequest) throw new RunProcessingError("meta_request_ambiguous", false, state.usage);
+          try {
+            const reserved = await options.store.reserveImage(claim, {
+              requestKey,
+              round: 0,
+              dailyImageLimit: options.dailyImageLimit ?? 10,
+            });
+            if (!reserved) {
+              state.usage = { ...state.usage, images: state.usage.images + 1 };
+              throw new RunProcessingError("meta_request_ambiguous", false, state.usage);
+            }
+          } catch (error) {
+            if (error instanceof RunProcessingError) throw error;
+            if (error instanceof UsageLimitExceededError && error.limit === "images") {
+              throw new RunProcessingError("daily_image_limit_exceeded", false, state.usage);
+            }
+            throw error;
+          }
+          state.events.push(makeEvent(state.events, {
+            type: "agent.meta_request_started",
+            payload: { kind: "image", requestKey, round: 0 },
+          }));
+          state.usage = measuredUsage(state.events);
+          startedImageRequest = true;
+        },
+        async onResponse(image) {
+          if (!startedImageRequest || completedImageRequest) throw new RunProcessingError("meta_response_unexpected", false, state.usage);
+          const tokens = imageResponseTokenUsage(image);
+          state.usage = { tokens: state.usage.tokens + tokens, images: state.usage.images + 1 };
+          await append(state, options.store, claim, {
+            type: "agent.meta_response_completed",
+            payload: {
+              kind: "image",
+              requestKey,
+              responseId: image.responseId,
+              ...(image.requestId ? { requestId: image.requestId } : {}),
+              model: image.model,
+              usage: { tokens, images: 1 },
+            },
+          });
+          completedImageRequest = true;
+          if (state.usage.tokens > options.maxTokens) throw new RunProcessingError("run_token_budget_exceeded", false, state.usage);
+        },
+      });
+      if (!startedImageRequest || !completedImageRequest) throw new RunProcessingError("meta_incomplete_response", false, state.usage);
+    } else {
+      result = await executeAgentTool(options.sandbox, projectId, call, state.signal);
+    }
   } catch (error) {
     if (state.signal.aborted) throw error;
-      if (error instanceof Error && /^agent_[a-z0-9_]+$/.test(error.message)) {
-        throw new RunProcessingError(error.message, false, state.usage);
+    if (error instanceof RunProcessingError) throw error;
+    if (call.name === "generate_image" && error instanceof ImagePipelineError) {
+      throw new RunProcessingError(error.code, false, state.usage);
     }
-      const code = error instanceof Error && "code" in error && typeof (error as Error & { code?: unknown }).code === "string"
-        ? (error as Error & { code: string }).code : "";
-      if (["file_not_found", "path_not_found"].includes(code)) {
-        throw new RunProcessingError(`sandbox_${code}`, false, state.usage);
-      }
+    if (call.name === "generate_image" && error instanceof UsageLimitExceededError && error.limit === "images") {
+      throw new RunProcessingError("daily_image_limit_exceeded", false, state.usage);
+    }
+    if (call.name === "generate_image" && error instanceof MetaApiError) {
+      throw providerFailure(error, state.usage, state.signal, state.userSignal);
+    }
+    if (error instanceof Error && /^agent_[a-z0-9_]+$/.test(error.message)) {
+      throw new RunProcessingError(error.message, false, state.usage);
+    }
+    const code = error instanceof Error && "code" in error && typeof (error as Error & { code?: unknown }).code === "string"
+      ? (error as Error & { code: string }).code : "";
+    if (["file_not_found", "path_not_found"].includes(code)) {
+      throw new RunProcessingError(`sandbox_${code}`, false, state.usage);
+    }
     throw new RunProcessingError("sandbox_tool_failed", false, state.usage);
   }
   const compact = compactToolResult(result);
@@ -699,14 +773,21 @@ function makeEvent(events: MutableRunEvent[], event: AgentRunEvent): MutableRunE
 }
 
 function measuredUsage(events: readonly MutableRunEvent[]): RunUsage {
-  return events.reduce((total, event) => {
-    if (event.type !== "agent.meta_response_completed" || !isRecord(event.payload.usage)) return total;
+  const total = events.reduce((usage, event) => {
+    if (event.type !== "agent.meta_response_completed" || !isRecord(event.payload.usage)) return usage;
     const tokens = event.payload.usage.tokens;
     const images = event.payload.usage.images;
-    if (typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens >= 0) total.tokens += tokens;
-    if (typeof images === "number" && Number.isSafeInteger(images) && images >= 0) total.images += images;
-    return total;
+    if (typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens >= 0) usage.tokens += tokens;
+    if (typeof images === "number" && Number.isSafeInteger(images) && images >= 0) usage.images += images;
+    return usage;
   }, { tokens: 0, images: 0 });
+  const completedImageRequests = new Set(events.filter((event) => event.type === "agent.meta_response_completed" &&
+    event.payload.kind === "image").map((event) => stringPayload(event, "requestKey")));
+  const attemptedButAmbiguousImages = new Set(events.filter((event) => event.type === "agent.meta_request_started" &&
+    event.payload.kind === "image" && !completedImageRequests.has(stringPayload(event, "requestKey")))
+    .map((event) => stringPayload(event, "requestKey")));
+  total.images += attemptedButAmbiguousImages.size;
+  return total;
 }
 
 function requiredUsage(value: MetaUsage | undefined, previous: RunUsage): MetaUsage {
@@ -770,5 +851,8 @@ function validateLimits(options: AgentOrchestratorOptions): void {
       !Number.isSafeInteger(options.maxTokens) || options.maxTokens < 1 || options.maxTokens > 2_000_000 ||
       !Number.isSafeInteger(options.maxDurationMs) || options.maxDurationMs < 1_000 || options.maxDurationMs > 3_600_000) {
     throw new TypeError("Invalid agent run limits");
+  }
+  if (options.dailyImageLimit !== undefined && (!Number.isSafeInteger(options.dailyImageLimit) || options.dailyImageLimit < 1 || options.dailyImageLimit > 100_000)) {
+    throw new TypeError("Invalid agent image quota");
   }
 }

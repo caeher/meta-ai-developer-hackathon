@@ -243,7 +243,8 @@ function projectStoredEvent(runId: string, row: RunEventRow): Projected {
     }
   } else if (row.type === "agent.tool_completed") {
     const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
-    if (parsed.success && parsed.data.type === "agent.tool_completed" && parsed.data.payload.toolName === "write_file") {
+    if (parsed.success && parsed.data.type === "agent.tool_completed" &&
+        ["write_file", "generate_image"].includes(parsed.data.payload.toolName)) {
       const result = parseJsonRecord(parsed.data.payload.result);
       const path = safeWorkspacePath(result?.path);
       if (path) {
@@ -287,6 +288,7 @@ function toolTitle(toolName: string): string {
     prepare_sandbox: "Preparar el espacio de trabajo",
     read_file: "Leer un archivo",
     write_file: "Escribir un archivo",
+    generate_image: "Generar y validar un asset de juego",
     list_files: "Revisar archivos",
     install_dependencies: "Instalar dependencias aprobadas",
     run_command: "Ejecutar una verificación",

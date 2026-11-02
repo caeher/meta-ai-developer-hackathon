@@ -118,6 +118,10 @@ npm run test:e2e:game-templates
 
 El E2E de la plantilla valida el canvas, teclado, botón táctil, pause/mute, reinicio, victoria/derrota y solicitudes locales en Chromium, Firefox y WebKit. El build de Vite no requiere conexión de assets externos. Materializar esta plantilla desde un run del agente en un sandbox aún requiere la integración posterior; no se afirma validación con Docker rootless ni con gateway/dominio real.
 
+## Assets generados con Meta (issue #19)
+
+El worker ofrece `generate_image` para briefs de sprites, fondos, tilesets y UI. Reserva cuota por imagen, solicita el modelo configurado, valida firma/formato/dimensiones/transparencia/grilla, normaliza PNG, genera hoja de contacto y registra procedencia en S3 privado. Copia el PNG al sandbox por una operación binaria de ruta acotada y registra el manifest que Phaser carga. Cada asset queda marcado `pending-in-live-preview` para inspección humana en contexto; los checks no certifican calidad artística ni seams perfectos. Los runs siguen apagados por defecto. Límites, manejo de ambigüedad, checks y dependencias externas están en [docs/generated-assets.md](docs/generated-assets.md).
+
 ## Capacidades planificadas
 
 `dev:gateway` y `build:gateway` ya existen. El gateway resuelve únicamente sandboxes listos desde PostgreSQL, consume grants de un uso en Redis y autoriza cada HTTP/WebSocket; `npm run infra:up -- --preview` activa el perfil solo con claves válidas. El editor monta un iframe con sandbox mínimo, renovación de sesión, navegación por rutas comunicadas y fallback de primer nivel por formulario sin grant en URL. Las versiones guardadas se muestran, pero su restauración espera a #21. Los E2E de navegador usan un fixture; aún faltan dominio wildcard con TLS, cookies del dominio real, host Linux dedicado y un recorrido autenticado con dos cuentas Clerk. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue. El acceso real a Meta se informa por separado del resultado de los tests con fixtures.

@@ -21,17 +21,17 @@ export const AgentRunEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   z.object({
     type: z.literal("agent.meta_request_started"),
-    payload: z.object({ kind: z.enum(["plan", "code"]), requestKey: z.string().min(1).max(40), round: z.number().int().nonnegative() }).strict(),
+    payload: z.object({ kind: z.enum(["plan", "code", "image"]), requestKey: z.string().min(1).max(80), round: z.number().int().nonnegative() }).strict(),
   }).strict(),
   z.object({
     type: z.literal("agent.meta_response_completed"),
     payload: z.object({
-      kind: z.enum(["plan", "code"]),
-      requestKey: z.string().min(1).max(40),
+      kind: z.enum(["plan", "code", "image"]),
+      requestKey: z.string().min(1).max(80),
       responseId: z.string().min(1).max(128),
       requestId: z.string().min(1).max(128).optional(),
       model: z.string().min(1).max(128),
-      usage: z.object({ tokens: z.number().int().nonnegative(), images: z.literal(0) }).strict(),
+      usage: z.object({ tokens: z.number().int().nonnegative(), images: z.number().int().nonnegative().max(1) }).strict(),
     }).strict(),
   }).strict(),
   z.object({

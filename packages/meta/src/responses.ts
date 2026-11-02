@@ -111,12 +111,34 @@ export function buildPlanPayload(model: string, prompt: string, maxOutputTokens 
   };
 }
 
-export function buildImagePayload(model: string, prompt: string): ProviderResponsePayload {
+export function buildImagePayload(
+  model: string,
+  prompt: string,
+  reference?: { mimeType: "image/png"; base64: string },
+): ProviderResponsePayload {
+  const input: ProviderResponsePayload["input"] = reference
+    ? [{
+      type: "message",
+      role: "user",
+      content: [
+        { type: "input_text", text: prompt },
+        { type: "input_image", image_url: `data:${reference.mimeType};base64,${reference.base64}` },
+      ],
+    }]
+    : prompt;
   return {
     model,
-    input: prompt,
+    input,
     store: false,
     instructions: "Generate one image that follows the supplied asset brief. Return the generated image.",
+    tools: [{
+      type: "image_generation",
+      enable_image_search: false,
+      enable_web_search: false,
+      enable_shell: false,
+      reasoning_strength: "low",
+      output_format: "png",
+    }],
   };
 }
 

@@ -248,4 +248,50 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
     const [released] = await database.db.select().from(usageReservations).where(eq(usageReservations.runId, noConsentRun.run.id)).limit(1);
     expect(released?.status).toBe("released");
   });
+
+  it("reserva cada imagen una sola vez bajo lease y limita la cuota diaria por owner", async () => {
+    const identity = identityFromAuthenticatedSession({ userId: clerkUserId });
+    const project = await repositories.projects.create(identity, { name: "Image quota integration" });
+    const message = await repositories.messages.create(identity, {
+      projectId: project.id,
+      requestId: `image-message-${randomUUID()}`,
+      role: "user",
+      content: "Genera un sprite de prueba.",
+    });
+    const enqueued = await repositories.runs.enqueueRun(identity, {
+      projectId: project.id,
+      idempotencyKey: `image-run-${randomUUID()}`,
+      messageRequestId: message.requestId,
+      contributorConsent: true,
+      policy: { maxConcurrentJobs: 2, runMaxTokens: 20_000, dailyTokenLimit: 30_000, dailyImageLimit: 1 },
+    });
+    const claimed = await claimRun(database.db, {
+      runId: enqueued.run.id,
+      idempotencyKey: enqueued.run.idempotencyKey,
+      generation: 0,
+      leaseMs: 15_000,
+    });
+    if (!claimed) throw new Error("image quota fixture run was not claimed");
+    await transitionClaimedRun(database.db, claimed.claim, "running");
+
+    const store = createPostgresAgentRunStore(database.db);
+    await expect(store.identity(claimed.claim)).resolves.toMatchObject({ clerkUserId });
+    await expect(store.reserveImage(claimed.claim, { requestKey: "image-call-1", round: 1, dailyImageLimit: 1 }))
+      .resolves.toBe(true);
+    await expect(store.reserveImage(claimed.claim, { requestKey: "image-call-1", round: 1, dailyImageLimit: 1 }))
+      .resolves.toBe(false);
+    await expect(store.reserveImage(claimed.claim, { requestKey: "image-call-2", round: 1, dailyImageLimit: 1 }))
+      .rejects.toMatchObject({ limit: "images" });
+    await expect(store.identity({ ...claimed.claim, fencingToken: claimed.claim.fencingToken + 1 }))
+      .rejects.toBeInstanceOf(StaleRunWorkerError);
+
+    const storedEvents = await database.db.select().from(runEvents).where(eq(runEvents.runId, enqueued.run.id));
+    expect(storedEvents.filter((event) => event.type === "agent.meta_request_started" &&
+      (event.payload as Record<string, unknown>).kind === "image")).toHaveLength(1);
+    await finishClaimedRun(database.db, claimed.claim, { status: "failed", errorCode: "fixture_ambiguous_image", usage: { tokens: 0, images: 1 } });
+    const [reservation] = await database.db.select().from(usageReservations).where(eq(usageReservations.runId, enqueued.run.id)).limit(1);
+    const charges = await database.db.select().from(usageLedger).where(eq(usageLedger.reservationId, reservation!.id));
+    expect(charges).toHaveLength(1);
+    expect(charges[0]).toMatchObject({ tokens: 0, images: 1 });
+  });
 });

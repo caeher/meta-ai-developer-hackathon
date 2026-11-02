@@ -42,6 +42,7 @@ export type StorageAsset = {
   contentType: string;
   sizeBytes: number;
   sha256: string;
+  metadata?: Record<string, unknown>;
   status: "pending" | "ready" | "delete_requested" | "failed";
   createdAt: Date;
   updatedAt: Date;
@@ -50,7 +51,7 @@ export type StorageAsset = {
 export interface AssetRepository {
   createPending(
     identity: VerifiedIdentityContext,
-    input: { projectId: string; contentType: string; sizeBytes: number; sha256: string },
+    input: { projectId: string; contentType: string; sizeBytes: number; sha256: string; metadata?: Record<string, unknown> },
   ): Promise<StorageAsset>;
   getReady(identity: VerifiedIdentityContext, assetId: string): Promise<StorageAsset | undefined>;
   completeUpload(
@@ -197,7 +198,7 @@ export function createPrivateStorage(input: {
   return {
     async upload(
       identity: VerifiedIdentityContext,
-      request: { projectId: string; contentType: string; body: Uint8Array },
+      request: { projectId: string; contentType: string; body: Uint8Array; metadata?: Record<string, unknown> },
     ) {
       if (!(request.body instanceof Uint8Array) || request.body.byteLength < 1) {
         throw new TypeError("El objeto debe contener bytes");
@@ -215,6 +216,7 @@ export function createPrivateStorage(input: {
         contentType: request.contentType.trim().toLowerCase(),
         sizeBytes: body.byteLength,
         sha256,
+        ...(request.metadata ? { metadata: request.metadata } : {}),
       });
 
       try {
@@ -263,7 +265,7 @@ export function createPrivateStorage(input: {
       if (body.byteLength !== asset.sizeBytes || sha256Hex(body) !== asset.sha256) {
         throw new PrivateStorageError("El objeto privado no coincide con su checksum");
       }
-      return { asset: publicAsset(asset), body };
+      return { asset: { ...publicAsset(asset), metadata: asset.metadata ?? {} }, body };
     },
 
     async delete(identity: VerifiedIdentityContext, assetId: string) {

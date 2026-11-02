@@ -6,6 +6,8 @@ import {
   SANDBOX_FILE_OUTPUT_MAX_BYTES,
   SANDBOX_LIST_MAX_ENTRIES,
   SandboxInstallDependenciesInputSchema,
+  SandboxWriteBinaryFileInputSchema,
+  SANDBOX_BINARY_FILE_MAX_BYTES,
   SandboxListFilesInputSchema,
   SandboxReadFileInputSchema,
   SandboxRunCommandInputSchema,
@@ -234,6 +236,27 @@ export class SandboxService {
     return { path: parsed.data.path, bytesWritten };
   }
 
+  async writeBinaryFile(projectId: string, path: string, bytes: Uint8Array): Promise<{ path: string; bytesWritten: number }> {
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > SANDBOX_BINARY_FILE_MAX_BYTES) {
+      throw new SandboxRuntimeError("file_too_large");
+    }
+    const contentBase64 = Buffer.from(bytes).toString("base64");
+    const parsed = SandboxWriteBinaryFileInputSchema.safeParse({ path, contentBase64 });
+    if (!parsed.success) throw new SandboxRuntimeError("invalid_tool_input");
+    const content = Buffer.from(parsed.data.contentBase64, "base64");
+    if (content.toString("base64") !== parsed.data.contentBase64 || content.byteLength !== bytes.byteLength) {
+      throw new SandboxRuntimeError("invalid_tool_input");
+    }
+    const result = await this.executeSandboxCommand(
+      projectId, ["/usr/local/bin/workspace-fs", "write", parsed.data.path], "",
+      this.environment.SANDBOX_COMMAND_TIMEOUT_MS, 1024, content,
+    );
+    if (result.exitCode !== 0) throw helperError(result.stderr);
+    const bytesWritten = Number(result.stdout.trim());
+    if (!Number.isSafeInteger(bytesWritten) || bytesWritten !== content.byteLength) throw new SandboxRuntimeError("file_write_failed");
+    return { path: parsed.data.path, bytesWritten };
+  }
+
   async listFiles(projectId: string, path = ""): Promise<{ path: string; files: SandboxFileEntry[] }> {
     const parsed = SandboxListFilesInputSchema.safeParse({ path });
     if (!parsed.success) throw new SandboxRuntimeError("invalid_path");
@@ -337,7 +360,7 @@ export class SandboxService {
     cwd: string,
     timeoutMs: number | undefined,
     maxOutputBytes: number,
-    stdin?: string,
+    stdin?: string | Uint8Array,
   ): Promise<SandboxExecResult> {
     const record = await this.requiredRecord(projectId);
     if (record.status !== "ready" || !record.leaseExpiresAt || record.leaseExpiresAt.getTime() <= this.clock()) throw new SandboxBusyError();

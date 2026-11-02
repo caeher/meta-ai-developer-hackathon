@@ -131,7 +131,7 @@ class DockerEngineClient {
     });
   }
 
-  async hijack(path: string, body: unknown, input: string, maxBytes: number, signal?: AbortSignal): Promise<{ status: number; body: Buffer; truncated: boolean }> {
+  async hijack(path: string, body: unknown, input: string | Uint8Array, maxBytes: number, signal?: AbortSignal): Promise<{ status: number; body: Buffer; truncated: boolean }> {
     const payload = Buffer.from(JSON.stringify(body));
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -183,7 +183,7 @@ class DockerEngineClient {
           settled = true;
           reject(error);
         });
-        if (input.length) socket.write(Buffer.from(input, "utf8"));
+        if (input.length) socket.write(typeof input === "string" ? Buffer.from(input, "utf8") : Buffer.from(input));
         socket.end();
       });
       req.once("error", (error) => {
@@ -802,7 +802,7 @@ export class RootlessDockerDriver implements SandboxDriver {
     argv: readonly string[],
     cwd: string,
     timeoutMs: number,
-    options: { stdin?: string; maxOutputBytes?: number } = {},
+    options: { stdin?: string | Uint8Array; maxOutputBytes?: number } = {},
   ): Promise<SandboxExecResult> {
     return this.execWithSpec({
       sandboxId, projectId, uid, image: this.image, limits: this.defaultLimits,
@@ -816,7 +816,7 @@ export class RootlessDockerDriver implements SandboxDriver {
     cwd: string,
     timeoutMs: number,
     hostCheck = false,
-    options: { stdin?: string; maxOutputBytes?: number } = {},
+    options: { stdin?: string | Uint8Array; maxOutputBytes?: number } = {},
   ): Promise<SandboxExecResult> {
     const safeArgv = validateSandboxArgv(argv);
     const workingDir = resolveWorkspaceCwd(cwd);

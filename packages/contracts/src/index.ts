@@ -12,4 +12,5 @@ export * from "./meta";
 export * from "./runs";
 export * from "./events";
 export * from "./tools";
+export * from "./assets";
 export * from "./preview";

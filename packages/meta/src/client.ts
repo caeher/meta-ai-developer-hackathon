@@ -15,21 +15,21 @@ import {
   assertCompleted,
   buildCodePayload,
   buildCodeStreamCompletion,
-  buildImagePayload,
   buildPlanPayload,
   parseCompletedToolCalls,
-  parseImageResponse,
   parsePlanResponse,
   ProviderResponseSchema,
   type ProviderResponse,
   type ProviderToolDefinition,
 } from "./responses.js";
+import { buildImagePayload, parseImageResponse } from "./images.js";
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_TOOL_SCHEMA_BYTES = 32 * 1024;
 const MAX_TOOL_ARGUMENT_BYTES = 64 * 1024;
 const MAX_TOOL_COUNT = 32;
 const MAX_OUTPUT_TOKENS = 8_192;
+const MAX_IMAGE_REFERENCE_BYTES = 512 * 1024;
 
 export interface MetaOperationOptions {
   signal?: AbortSignal;
@@ -48,6 +48,11 @@ export interface MetaCodeRequest {
   tools?: MetaToolDefinition[];
   parallelToolCalls?: boolean;
 }
+
+export type MetaImageReference = Readonly<{
+  mimeType: "image/png";
+  bytes: Uint8Array;
+}>;
 
 interface PreparedToolSet {
   definitions: ProviderToolDefinition[];
@@ -317,9 +322,20 @@ export class MetaClient {
     yield codeEvent({ type: "completed", ...completion });
   }
 
-  async generateImage(prompt: string, options: Pick<MetaOperationOptions, "signal"> = {}): Promise<MetaImageResult> {
+  async generateImage(prompt: string, options: Pick<MetaOperationOptions, "signal"> & { referenceImage?: MetaImageReference } = {}): Promise<MetaImageResult> {
     assertPrompt(prompt, 16 * 1024, "image prompt");
-    const payload = buildImagePayload(this.config.modelImage, prompt);
+    if (options.referenceImage && (
+      options.referenceImage.mimeType !== "image/png" ||
+      !(options.referenceImage.bytes instanceof Uint8Array) ||
+      options.referenceImage.bytes.byteLength < 1 ||
+      options.referenceImage.bytes.byteLength > MAX_IMAGE_REFERENCE_BYTES ||
+      ![137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => options.referenceImage!.bytes[index] === value)
+    )) {
+      throw new MetaApiError({ code: "invalid_request", message: "The Meta image reference must be a bounded PNG." });
+    }
+    const payload = buildImagePayload(this.config.modelImage, prompt, options.referenceImage
+      ? { mimeType: options.referenceImage.mimeType, base64: Buffer.from(options.referenceImage.bytes).toString("base64") }
+      : undefined);
     assertPayloadSize(payload);
     const result = await this.transport.createResponse(payload, options.signal);
     assertCompleted(result.response, this.config.modelImage);

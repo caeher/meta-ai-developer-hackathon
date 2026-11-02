@@ -14,7 +14,7 @@
 
 #define ROOT_PATH "/workspace"
 #define MAX_PATH_BYTES 512
-#define MAX_FILE_BYTES 1048576
+#define MAX_FILE_BYTES 8388608
 #define MAX_ENTRIES 32
 
 static void fail(const char *code) {

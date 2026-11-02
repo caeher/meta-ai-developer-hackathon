@@ -33,7 +33,7 @@ export type SandboxExecResult = Readonly<{
 }>;
 
 export type SandboxExecOptions = Readonly<{
-  stdin?: string;
+  stdin?: string | Uint8Array;
   maxOutputBytes?: number;
 }>;
 

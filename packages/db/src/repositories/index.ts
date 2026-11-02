@@ -46,6 +46,10 @@ const assetInputSchema = z.object({
   contentType: z.string().trim().min(1).max(150),
   sizeBytes: z.number().int().positive().max(25 * 1024 * 1024),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  metadata: z.record(z.string(), z.unknown()).default({}).refine((value) => {
+    try { return Buffer.byteLength(JSON.stringify(value), "utf8") <= 64 * 1024; }
+    catch { return false; }
+  }, "Asset metadata exceeds 64 KiB"),
 });
 const versionInputSchema = z.object({
   projectId: uuidSchema,

@@ -6,6 +6,7 @@ export { MetaApiError } from "./errors.js";
 export { MetaClient } from "./client.js";
 export type {
   MetaCodeRequest,
+  MetaImageReference,
   MetaOperationOptions,
   MetaToolDefinition,
 } from "./client.js";

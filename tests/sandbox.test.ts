@@ -72,7 +72,9 @@ function fixture() {
       options: SandboxExecOptions = {},
     ): Promise<SandboxExecResult> => {
       if (argv[0] === "/usr/local/bin/workspace-fs" && argv[1] === "write") {
-        return { stdout: `${Buffer.byteLength(options.stdin ?? "", "utf8")}\n`, stderr: "", exitCode: 0, durationMs: 2 };
+        const stdin = options.stdin ?? "";
+        const bytesWritten = typeof stdin === "string" ? Buffer.byteLength(stdin, "utf8") : stdin.byteLength;
+        return { stdout: `${bytesWritten}\n`, stderr: "", exitCode: 0, durationMs: 2 };
       }
       if (argv[0] === "/usr/local/bin/workspace-fs" && argv[1] === "read") {
         return { stdout: `${Buffer.from("export {};", "utf8").toString("base64")}\n`, stderr: "", exitCode: 0, durationMs: 2 };
@@ -279,6 +281,10 @@ describe("sandbox rootless contract", () => {
     await f.service.create(PROJECT_ID);
     await expect(f.service.writeFile(PROJECT_ID, "src/main.ts", "export {};"))
       .resolves.toEqual({ path: "src/main.ts", bytesWritten: 10 });
+    const binaryAsset = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255]);
+    await expect(f.service.writeBinaryFile(PROJECT_ID, "public/assets/generated/00000000-0000-4000-8000-000000000001.png", binaryAsset))
+      .resolves.toEqual({ path: "public/assets/generated/00000000-0000-4000-8000-000000000001.png", bytesWritten: binaryAsset.byteLength });
+    await expect(f.service.writeBinaryFile(PROJECT_ID, "src/other.png", binaryAsset)).rejects.toThrow("invalid_tool_input");
     await expect(f.service.readFile(PROJECT_ID, "src/main.ts"))
       .resolves.toEqual({ path: "src/main.ts", content: "export {};" });
     await expect(f.service.listFiles(PROJECT_ID)).resolves.toEqual({ path: "", files: [] });
@@ -300,6 +306,15 @@ describe("sandbox rootless contract", () => {
       "",
       60_000,
       expect.objectContaining({ stdin: "export {};" }),
+    );
+    expect(f.driver.exec).toHaveBeenCalledWith(
+      SANDBOX_ID,
+      PROJECT_ID,
+      23451,
+      ["/usr/local/bin/workspace-fs", "write", "public/assets/generated/00000000-0000-4000-8000-000000000001.png"],
+      "",
+      60_000,
+      expect.objectContaining({ stdin: binaryAsset }),
     );
   });
 
@@ -347,6 +362,8 @@ describe("sandbox rootless contract", () => {
     expect(f.driver.create).toHaveBeenCalledWith(expect.objectContaining({ projectId: PROJECT_ID, uid: 23451 }));
 
     await expect(client.exec(PROJECT_ID, ["npm", "run", "build"])).resolves.toMatchObject({ stdout: "ok", exitCode: 0, truncated: false });
+    await expect(client.writeBinaryFile(PROJECT_ID, "public/assets/generated/00000000-0000-4000-8000-000000000002.png", new Uint8Array([137, 80, 78, 71])))
+      .resolves.toMatchObject({ path: "public/assets/generated/00000000-0000-4000-8000-000000000002.png", bytesWritten: 4 });
     await expect(client.inspect(PROJECT_ID)).resolves.toMatchObject({ sandboxId: SANDBOX_ID, state: "ready" });
     await expect(client.stop(PROJECT_ID)).resolves.toMatchObject({ state: "stopped" });
     await expect(client.destroy(PROJECT_ID)).resolves.toMatchObject({ state: "stopped" });

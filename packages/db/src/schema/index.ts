@@ -316,6 +316,7 @@ export const assets = pgTable(
     contentType: varchar("content_type", { length: 150 }).notNull(),
     sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
     sha256: varchar("sha256", { length: 64 }).notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
     status: assetStatus("status").notNull().default("pending"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

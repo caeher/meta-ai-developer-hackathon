@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentRunEvent, MetaCodeEvent, MetaConversationItem, MetaPlan } from "@meta-game/contracts";
+import { identityFromAuthenticatedSession, UsageLimitExceededError } from "@meta-game/db";
 import type { AgentRunStore } from "../../apps/worker/src/agent/store";
+import type { GeneratedImageToolContext } from "../../apps/worker/src/assets/image-generator";
 import { createAgentRunHandler } from "../../apps/worker/src/agent/orchestrator";
 import type { AgentOrchestratorOptions } from "../../apps/worker/src/agent/orchestrator";
 import type { AgentSandbox } from "../../apps/worker/src/agent/tools";
@@ -31,6 +33,12 @@ class MemoryRunStore implements AgentRunStore {
   constructor(private readonly trace: string[], private readonly prompt = "Crea un juego de plataformas corto.") {}
 
   async load() { return { prompt: this.prompt, plan: this.plan, events: [...this.events] }; }
+  async identity() { return identityFromAuthenticatedSession({ userId: "user_agentFixture001" }); }
+  async reserveImage(_claim: typeof claim, input: { requestKey: string; round: number; dailyImageLimit: number }) {
+    if (this.events.some((event) => event.type === "agent.meta_request_started" && event.payload.requestKey === input.requestKey)) return false;
+    await this.append(claim, [{ type: "agent.meta_request_started", payload: { kind: "image", requestKey: input.requestKey, round: input.round } }]);
+    return true;
+  }
   async append(_claim: typeof claim, events: readonly AgentRunEvent[]) {
     for (const event of events) {
       this.events.push({ sequence: this.events.length + 1, type: event.type, payload: event.payload as Record<string, unknown> });
@@ -66,6 +74,7 @@ function makeOptions(args: {
   sandboxOverrides?: Partial<AgentSandbox>;
   maxSteps?: number;
   maxTokens?: number;
+  imageGenerator?: AgentOrchestratorOptions["imageGenerator"];
 } = {}) {
   const trace = args.trace ?? [];
   const store = new MemoryRunStore(trace, args.prompt);
@@ -85,7 +94,7 @@ function makeOptions(args: {
     const items = args.streams?.[streamIndex++] ?? [completion(request.context ?? [], `response-code-${streamIndex}`, 10)];
     return (async function* () { for (const item of items) yield item; })();
   });
-  const meta = { plan: planCall, streamCode: streamCall } as unknown as AgentOrchestratorOptions["meta"];
+  const meta = { plan: planCall, streamCode: streamCall, generateImage: vi.fn() } as unknown as AgentOrchestratorOptions["meta"];
   const sandbox = {
     create: vi.fn(async () => {
       trace.push("sandbox:create");
@@ -151,6 +160,7 @@ function makeOptions(args: {
     maxSteps: args.maxSteps ?? 20,
     maxTokens: args.maxTokens ?? 16_000,
     maxDurationMs: 30_000,
+    ...(args.imageGenerator ? { imageGenerator: args.imageGenerator } : {}),
   };
   return { options, trace, store, planCall, streamCall, sandbox };
 }
@@ -160,6 +170,114 @@ function codeCall(callId: string, name: string, argumentsValue: unknown): Extrac
 }
 
 describe("orquestador de runs", () => {
+  it("reserva una imagen antes de Meta, persiste su uso y entrega el resultado al run", async () => {
+    const trace: string[] = [];
+    const imageCall = codeCall("call-image-1", "generate_image", {
+      assetType: "sprite",
+      description: "A blue fox hero facing right",
+      style: "crisp pixel art",
+      view: "side",
+      palette: ["#2468ac"],
+      transparentBackground: true,
+      frameColumns: 1,
+      frameRows: 1,
+      tileable: false,
+    });
+    const imageGenerator = vi.fn(async (_args: Record<string, unknown>, context: GeneratedImageToolContext) => {
+      await context.beforeRequest();
+      trace.push("meta:image");
+      await context.onResponse({
+        bytes: new Uint8Array([137, 80, 78, 71]),
+        mimeType: "image/png",
+        width: 1,
+        height: 1,
+        model: "muse-image-1.0",
+        responseId: "response-image-1",
+        requestId: "request-image-1",
+        usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+      });
+      return { path: "assets/generated/image.png", bytesWritten: 512 };
+    });
+    const { options, store } = makeOptions({
+      trace,
+      imageGenerator,
+      streams: [
+        [imageCall, completion([
+          { kind: "tool_call", callId: imageCall.callId, name: imageCall.name, arguments: imageCall.arguments },
+          { kind: "message", role: "assistant", text: "El asset está preparado." },
+        ], "response-code-image-1", 30)],
+        [completion([{ kind: "message", role: "assistant", text: "El juego está listo." }], "response-code-image-2", 10)],
+      ],
+    });
+
+    const result = await createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    });
+
+    expect(trace.indexOf("event:agent.meta_request_started")).toBeLessThan(trace.indexOf("meta:image"));
+    expect(store.events.filter((event) => event.type === "agent.meta_request_started" && event.payload.kind === "image"))
+      .toHaveLength(1);
+    expect(store.events.find((event) => event.type === "agent.meta_response_completed" && event.payload.kind === "image"))
+      .toMatchObject({ payload: { requestKey: "image-call-image-1", responseId: "response-image-1", usage: { tokens: 5, images: 1 } } });
+    expect(result.usage).toEqual({ tokens: 65, images: 1 });
+  });
+
+  it("no reintenta un request de imagen durable sin respuesta y lo cobra como ambiguo", async () => {
+    const { options, store, streamCall } = makeOptions();
+    store.plan = plan;
+    store.events = [{
+      sequence: 1,
+      type: "agent.meta_request_started",
+      payload: { kind: "image", requestKey: "image-call-image-1", round: 0 },
+    }];
+    const imageGenerator = vi.fn();
+    options.imageGenerator = imageGenerator;
+
+    await expect(createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    })).rejects.toMatchObject({ code: "meta_request_ambiguous", usage: { images: 1 } });
+    expect(imageGenerator).not.toHaveBeenCalled();
+    expect(streamCall).not.toHaveBeenCalled();
+  });
+
+  it("frena antes de generar cuando la reserva diaria de imágenes se agota", async () => {
+    const imageCall = codeCall("call-image-quota", "generate_image", {
+      assetType: "sprite",
+      description: "A blue fox hero facing right",
+      style: "crisp pixel art",
+      view: "side",
+      transparentBackground: false,
+      frameColumns: 1,
+      frameRows: 1,
+      tileable: false,
+    });
+    const imageGenerator = vi.fn(async (_args: Record<string, unknown>, context: GeneratedImageToolContext) => {
+      await context.beforeRequest();
+      throw new Error("Meta must not be called after quota rejection");
+    });
+    const { options, store } = makeOptions({
+      imageGenerator,
+      streams: [[imageCall, completion([
+        { kind: "tool_call", callId: imageCall.callId, name: imageCall.name, arguments: imageCall.arguments },
+        { kind: "message", role: "assistant", text: "Generando..." },
+      ], "response-image-quota", 10)]],
+    });
+    vi.spyOn(store, "reserveImage").mockRejectedValue(new UsageLimitExceededError("images"));
+
+    await expect(createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    })).rejects.toMatchObject({ code: "daily_image_limit_exceeded", usage: { images: 0 } });
+    expect(imageGenerator).toHaveBeenCalledOnce();
+    expect(store.events.some((event) => event.type === "agent.meta_request_started" && event.payload.kind === "image"))
+      .toBe(false);
+  });
+
   it("emite preview.ready solo después del health check del sandbox", async () => {
     const startServer = codeCall("call-start-server", "start_dev_server", {});
     const { options, store } = makeOptions({

@@ -1,7 +1,10 @@
 import { and, asc, desc, eq, isNull, isNotNull, lte, or, sql } from "drizzle-orm";
 import type { GameDatabase } from "./database";
 import {
+  UsageLimitExceededError,
   StaleRunWorkerError,
+  identityFromAuthenticatedSession,
+  type VerifiedIdentityContext,
 } from "./identity";
 import { AgentRunEventSchema, type AgentRunEvent, type MetaPlan } from "@meta-game/contracts";
 import { runChargeIdempotencyKey } from "./usage";
@@ -14,6 +17,7 @@ import {
   runs,
   usageLedger,
   usageReservations,
+  users,
 } from "./schema/index";
 
 export type RunWorkerClaim = Readonly<{
@@ -131,6 +135,81 @@ export async function getClaimedRunAgentContext(
       throw new Error("run_user_message_missing");
     }
     return { prompt: message.content, plan: run.plan, events };
+  });
+}
+
+/** Resolves the storage identity only while the supplied worker fencing claim is current. */
+export async function getClaimedRunIdentity(
+  database: GameDatabase,
+  claim: RunWorkerClaim,
+): Promise<VerifiedIdentityContext> {
+  return database.transaction(async (tx) => {
+    const run = await currentClaimedRun(tx, claim);
+    const [user] = await tx.select({ clerkUserId: users.clerkUserId }).from(users)
+      .where(eq(users.id, run.ownerUserId)).limit(1);
+    if (!user) throw new StaleRunWorkerError();
+    return identityFromAuthenticatedSession({ userId: user.clerkUserId });
+  });
+}
+
+export async function reserveClaimedRunImage(
+  database: GameDatabase,
+  claim: RunWorkerClaim,
+  input: { requestKey: string; round: number; dailyImageLimit: number },
+): Promise<boolean> {
+  if (!/^[A-Za-z0-9._:-]{1,80}$/.test(input.requestKey) || !Number.isSafeInteger(input.round) || input.round < 0 ||
+      !Number.isSafeInteger(input.dailyImageLimit) || input.dailyImageLimit < 1 || input.dailyImageLimit > 100_000) {
+    throw new TypeError("Invalid image usage reservation");
+  }
+  return database.transaction(async (tx) => {
+    const run = await currentClaimedRun(tx, claim);
+    const [existingRequest] = await tx.select({ payload: runEvents.payload }).from(runEvents).where(and(
+      eq(runEvents.ownerUserId, claim.ownerUserId),
+      eq(runEvents.runId, claim.runId),
+      eq(runEvents.type, "agent.meta_request_started"),
+      sql`${runEvents.payload}->>'requestKey' = ${input.requestKey}`,
+    )).limit(1);
+    if (existingRequest) {
+      const payload = existingRequest.payload as Record<string, unknown>;
+      if (payload.kind !== "image" || payload.round !== input.round) throw new Error("run_image_request_key_conflict");
+      return false;
+    }
+    const [user] = await tx.select({ id: users.id }).from(users).where(eq(users.id, run.ownerUserId)).for("update").limit(1);
+    if (!user) throw new StaleRunWorkerError();
+    const [reservation] = await tx.select().from(usageReservations).where(and(
+      eq(usageReservations.ownerUserId, claim.ownerUserId),
+      eq(usageReservations.projectId, claim.projectId),
+      eq(usageReservations.runId, claim.runId),
+      eq(usageReservations.status, "reserved"),
+    )).for("update").limit(1);
+    if (!reservation) throw new StaleRunWorkerError();
+
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const [consumed] = await tx.select({
+      images: sql<number>`coalesce(sum(case when ${usageLedger.kind} = 'refund' then -${usageLedger.images} else ${usageLedger.images} end), 0)`,
+    }).from(usageLedger).where(and(
+      eq(usageLedger.ownerUserId, claim.ownerUserId),
+      sql`${usageLedger.createdAt} >= ${dayStart}`,
+    ));
+    const [held] = await tx.select({
+      images: sql<number>`coalesce(sum(${usageReservations.reservedImages}), 0)`,
+    }).from(usageReservations).where(and(
+      eq(usageReservations.ownerUserId, claim.ownerUserId),
+      eq(usageReservations.status, "reserved"),
+    ));
+    if (Number(consumed?.images ?? 0) + Number(held?.images ?? 0) >= input.dailyImageLimit) {
+      throw new UsageLimitExceededError("images");
+    }
+    await tx.update(usageReservations).set({
+      reservedImages: reservation.reservedImages + 1,
+      updatedAt: new Date(),
+    }).where(and(eq(usageReservations.id, reservation.id), eq(usageReservations.status, "reserved")));
+    await appendAgentEventTx(tx, claim, {
+      type: "agent.meta_request_started",
+      payload: { kind: "image", requestKey: input.requestKey, round: input.round },
+    });
+    return true;
   });
 }
 

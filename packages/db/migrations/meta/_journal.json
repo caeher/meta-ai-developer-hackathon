@@ -50,6 +50,13 @@
       "when": 1793620463373,
       "tag": "0006_agent_contributor_consent",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793628122626,
+      "tag": "0007_generated-asset-metadata",
+      "breakpoints": true
     }
   ]
 }

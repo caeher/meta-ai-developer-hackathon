@@ -1,13 +1,15 @@
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { createDatabaseFromEnvironment } from "@meta-game/db";
+import { createDatabaseFromEnvironment, createRepositories } from "@meta-game/db";
 import { parseRunEnvironment } from "@meta-game/config";
 import { loadMetaConfig, MetaClient } from "@meta-game/meta";
 import { SandboxControllerClient } from "@meta-game/sandbox";
+import { createPrivateStorageFromEnvironment } from "@meta-game/storage";
 import { createSkillRouter } from "@meta-game/skills";
 import { createAgentRunHandler } from "./agent/orchestrator";
 import { createPostgresAgentRunStore } from "./agent/store";
+import { createGeneratedImageTool } from "./assets/image-generator";
 import { pendingOrchestratorHandler } from "./handler";
 import { startRunWorkerService } from "./queue";
 
@@ -16,6 +18,7 @@ dotenv.config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) }
 
 const environment = parseRunEnvironment(process.env);
 const database = createDatabaseFromEnvironment();
+let closeGeneratedAssetStorage: (() => void) | undefined;
 const handler = environment.RUNS_ENABLED
   ? await createEnabledAgentHandler()
   : pendingOrchestratorHandler;
@@ -38,14 +41,25 @@ async function createEnabledAgentHandler() {
   const store = createPostgresAgentRunStore(database.db);
   const skills = await createSkillRouter({ rootDir });
   const sandbox = new SandboxControllerClient(controllerUrl, controllerToken);
+  const meta = new MetaClient(loadMetaConfig());
+  const storage = createPrivateStorageFromEnvironment(createRepositories(database.db).assets);
+  closeGeneratedAssetStorage = () => storage.close();
+  const imageGenerator = createGeneratedImageTool({
+    meta,
+    storage,
+    sandbox,
+    identity: store.identity,
+  });
   return createAgentRunHandler({
     store,
-    meta: new MetaClient(loadMetaConfig()),
+    meta,
     sandbox,
     skills,
     maxSteps: environment.PROJECT_MAX_RUN_STEPS,
     maxTokens: environment.RUN_MAX_TOKENS,
     maxDurationMs: environment.RUN_MAX_DURATION_MS,
+    dailyImageLimit: environment.USER_DAILY_IMAGE_LIMIT,
+    imageGenerator,
   });
 }
 
@@ -54,6 +68,7 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   await service.close();
+  closeGeneratedAssetStorage?.();
   await database.close();
 }
 

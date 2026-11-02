@@ -8,12 +8,13 @@ import {
   SandboxReadFileInputSchema,
   SandboxRunCommandInputSchema,
   SandboxWriteFileInputSchema,
+  SandboxWriteBinaryFileInputSchema,
 } from "@meta-game/contracts";
 
 const projectPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox$/i;
 const execPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/exec$/i;
 const stopPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/stop$/i;
-const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|write-file|list-files|install-dependencies|run-command|start-dev-server|read-logs)$/i;
+const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|write-file|write-binary-file|list-files|install-dependencies|run-command|start-dev-server|read-logs)$/i;
 const projectIdSchema = z.uuid();
 const execSchema = z.object({
   argv: z.array(z.string()).min(1).max(64),
@@ -93,7 +94,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       return;
     }
     if (tool && request.method === "POST") {
-      const body = await readJson(request, 6_300_000);
+      const body = await readJson(request, tool === "write-binary-file" ? 12 * 1024 * 1024 : 6_300_000);
       if (tool === "read-file") {
         const input = SandboxReadFileInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
@@ -104,6 +105,14 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
         const input = SandboxWriteFileInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
         send(response, 200, await service.writeFile(projectId, input.data.path, input.data.content));
+        return;
+      }
+      if (tool === "write-binary-file") {
+        const input = SandboxWriteBinaryFileInputSchema.safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        const bytes = Buffer.from(input.data.contentBase64, "base64");
+        if (bytes.toString("base64") !== input.data.contentBase64) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        send(response, 200, await service.writeBinaryFile(projectId, input.data.path, bytes));
         return;
       }
       if (tool === "list-files") {

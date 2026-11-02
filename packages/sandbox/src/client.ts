@@ -1,12 +1,13 @@
 import type { PublicSandboxState } from "./service";
 import { SandboxRuntimeError } from "./driver";
-import type {
-  SandboxDevServerLogs,
-  SandboxDevServerState,
-  SandboxFileEntry,
-  SandboxInstallDependenciesInput,
-  SandboxRunCommandInput,
-  SandboxToolCommandResult,
+import {
+  SandboxWriteBinaryFileInputSchema,
+  type SandboxDevServerLogs,
+  type SandboxDevServerState,
+  type SandboxFileEntry,
+  type SandboxInstallDependenciesInput,
+  type SandboxRunCommandInput,
+  type SandboxToolCommandResult,
 } from "@meta-game/contracts";
 
 export class SandboxControllerClient {
@@ -48,6 +49,14 @@ export class SandboxControllerClient {
 
   writeFile(projectId: string, path: string, content: string, signal?: AbortSignal): Promise<{ path: string; bytesWritten: number }> {
     return this.tool(projectId, "write-file", { path, content }, signal);
+  }
+
+  writeBinaryFile(projectId: string, path: string, bytes: Uint8Array, signal?: AbortSignal): Promise<{ path: string; bytesWritten: number }> {
+    if (!(bytes instanceof Uint8Array)) throw new SandboxRuntimeError("invalid_tool_input");
+    const contentBase64 = Buffer.from(bytes).toString("base64");
+    const parsed = SandboxWriteBinaryFileInputSchema.safeParse({ path, contentBase64 });
+    if (!parsed.success) throw new SandboxRuntimeError("invalid_tool_input");
+    return this.tool(projectId, "write-binary-file", parsed.data, signal);
   }
 
   listFiles(projectId: string, path = "", signal?: AbortSignal): Promise<{ path: string; files: SandboxFileEntry[] }> {

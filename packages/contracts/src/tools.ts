@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const SANDBOX_FILE_MAX_BYTES = 1_048_576;
+export const SANDBOX_BINARY_FILE_MAX_BYTES = 8 * 1024 * 1024;
 export const SANDBOX_FILE_OUTPUT_MAX_BYTES = 1_500_000;
 export const SANDBOX_COMMAND_OUTPUT_MAX_BYTES = 64_000;
 export const SANDBOX_LIST_MAX_ENTRIES = 32;

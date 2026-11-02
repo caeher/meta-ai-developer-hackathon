@@ -99,10 +99,45 @@ describe("MetaClient plan and image contracts", () => {
     const image = await new MetaClient(config(), validFetch).generateImage("Pixel-art blue star.");
     expect(image).toMatchObject({ mimeType: "image/png", width: 1, height: 1, model: imageModel, responseId: "resp_fixture_image_01" });
     expect(image.bytes.byteLength).toBeGreaterThan(0);
+    const body = JSON.parse(String((validFetch.mock.calls[0]?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body).toMatchObject({ model: imageModel, store: false, tools: [{
+      type: "image_generation",
+      enable_image_search: false,
+      enable_web_search: false,
+      enable_shell: false,
+      output_format: "png",
+    }] });
 
     const invalid = JSON.parse(await fixture("invalid-image-response.json")) as unknown;
     const invalidFetch = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(invalid));
     await expect(new MetaClient(config(), invalidFetch).generateImage("Pixel-art blue star.")).rejects.toMatchObject({ code: "invalid_image" });
+  });
+
+  it("sends a bounded same-project PNG reference as input_image data without enabling search", async () => {
+    const valid = JSON.parse(await fixture("image-response.json")) as unknown;
+    const seedFetch = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(valid));
+    const reference = await new MetaClient(config(), seedFetch).generateImage("Pixel-art blue star.");
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(valid));
+
+    await new MetaClient(config(), fetchMock).generateImage("Pixel-art blue moon, matching the reference palette.", {
+      referenceImage: { mimeType: "image/png", bytes: reference.bytes },
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body.input).toEqual([{
+      type: "message",
+      role: "user",
+      content: [
+        { type: "input_text", text: "Pixel-art blue moon, matching the reference palette." },
+        { type: "input_image", image_url: `data:image/png;base64,${Buffer.from(reference.bytes).toString("base64")}` },
+      ],
+    }]);
+    expect(body.tools).toMatchObject([{ enable_image_search: false, enable_web_search: false, enable_shell: false }]);
+
+    const invalidFetch = vi.fn<typeof fetch>();
+    await expect(new MetaClient(config(), invalidFetch).generateImage("Draw something.", {
+      referenceImage: { mimeType: "image/png", bytes: new Uint8Array([1, 2, 3]) },
+    })).rejects.toMatchObject({ code: "invalid_request" });
+    expect(invalidFetch).not.toHaveBeenCalled();
   });
 });
 
