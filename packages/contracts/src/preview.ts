@@ -7,13 +7,13 @@ export const PREVIEW_SESSION_COOKIE = "__Host-preview_session";
 export const PREVIEW_DEFAULT_SESSION_TTL_SECONDS = 900;
 export const PREVIEW_EGRESS_PROXY_PORT = 8080;
 
-const clerkUserId = z.string().regex(/^user_[A-Za-z0-9]{1,240}$/);
+const userId = z.string().regex(/^user_[A-Za-z0-9]{1,240}$/);
 const uuid = z.string().uuid();
 
 export const PreviewGrantClaimsSchema = z.object({
   iss: z.literal(PREVIEW_GRANT_ISSUER),
-  sub: clerkUserId,
-  userId: clerkUserId,
+  sub: userId,
+  userId: userId,
   projectId: uuid,
   aud: z.literal(PREVIEW_GRANT_AUDIENCE),
   iat: z.number().int().positive(),
@@ -25,7 +25,7 @@ export const PreviewGrantClaimsSchema = z.object({
 });
 
 export const PreviewSessionSchema = z.object({
-  userId: clerkUserId,
+  userId: userId,
   projectId: uuid,
   epoch: z.number().int().nonnegative().safe(),
   expiresAt: z.number().int().positive(),

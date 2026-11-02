@@ -57,6 +57,6 @@ describe("API privada de versiones", () => {
     const [url, init] = fetcher.mock.calls[0]!;
     expect(String(url)).toBe(`http://worker:8082/internal/projects/${projectId}/versions/${versionId}/restore`);
     expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${"t".repeat(40)}`);
-    expect(JSON.parse(String(init?.body))).toEqual({ clerkUserId: identity.clerkUserId });
+    expect(JSON.parse(String(init?.body))).toEqual({ userId: identity.userId });
   });
 });

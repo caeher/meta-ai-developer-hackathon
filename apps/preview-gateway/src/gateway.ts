@@ -18,7 +18,7 @@ import {
 import { previewProjectHostname } from "@meta-game/preview";
 
 export type GatewayPreviewTarget = Readonly<{
-  ownerClerkUserId: string;
+  ownerUserId: string;
   projectId: string;
   sandboxId: string;
   devServerPort: number;
@@ -235,7 +235,7 @@ export function createPreviewGateway(options: {
     const session = await options.store.readSession(sessionIdHash, projectId, Math.floor(clock() / 1000));
     if (!session) return undefined;
     const target = await options.resolveTarget(projectId);
-    if (!target || target.projectId !== projectId || target.ownerClerkUserId !== session.userId ||
+    if (!target || target.projectId !== projectId || target.ownerUserId !== session.userId ||
       target.devServerPort !== 4173 || target.leaseExpiresAt.getTime() <= clock() || !uuidPattern.test(target.sandboxId)) return undefined;
     return { session, target, sessionIdHash };
   }
@@ -294,7 +294,7 @@ export function createPreviewGateway(options: {
       return;
     }
     const target = await options.resolveTarget(projectId);
-    if (!target || target.projectId !== projectId || target.ownerClerkUserId !== claims.userId ||
+    if (!target || target.projectId !== projectId || target.ownerUserId !== claims.userId ||
       target.devServerPort !== 4173 || target.leaseExpiresAt.getTime() <= clock()) {
       response.writeHead(404, headers).end(JSON.stringify({ error: "preview_unavailable" }));
       return;

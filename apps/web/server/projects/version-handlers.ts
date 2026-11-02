@@ -83,7 +83,7 @@ export function createVersionHandlers(context: ProjectApiContext, options: {
           redirect: "error",
           cache: "no-store",
           headers: { authorization: `Bearer ${options.workerToken}`, "content-type": "application/json" },
-          body: JSON.stringify({ clerkUserId: context.identity.clerkUserId }),
+          body: JSON.stringify({ userId: context.identity.userId }),
           signal: AbortSignal.timeout(9 * 60_000),
         });
         if (response.status === 404) throw new OwnedResourceNotFoundError();

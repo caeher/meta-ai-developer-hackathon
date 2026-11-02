@@ -20,20 +20,20 @@ async function start(server: ReturnType<typeof createWorkerVersionServer>) {
 describe("servicio interno de restauración", () => {
   it("requiere bearer interno y pasa al repositorio solo identidad y IDs validados", async () => {
     const restore = vi.fn(async (identity, requestedProjectId, requestedVersionId) => ({
-      user: identity.clerkUserId, projectId: requestedProjectId, versionId: requestedVersionId,
+      user: identity.userId, projectId: requestedProjectId, versionId: requestedVersionId,
     }));
     const server = createWorkerVersionServer({ token, restore });
     servers.push(server);
     const origin = await start(server);
     const endpoint = `${origin}/internal/projects/${projectId}/versions/${versionId}/restore`;
-    const denied = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clerkUserId: "user_httpOwner001" }) });
+    const denied = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: "user_httpOwner001" }) });
     expect(denied.status).toBe(401);
     expect(restore).not.toHaveBeenCalled();
 
     const accepted = await fetch(endpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ clerkUserId: "user_httpOwner001" }),
+      body: JSON.stringify({ userId: "user_httpOwner001" }),
     });
     expect(accepted.status).toBe(200);
     expect(await accepted.json()).toEqual({ restored: {

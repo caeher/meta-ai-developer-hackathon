@@ -4,7 +4,7 @@ import { identityFromAuthenticatedSession } from "@meta-game/db";
 import { z } from "zod";
 
 const restorePath = /^\/internal\/projects\/([0-9a-f-]{36})\/versions\/([0-9a-f-]{36})\/restore$/i;
-const restoreInput = z.object({ clerkUserId: z.string().trim().min(1).max(255) }).strict();
+const restoreInput = z.object({ userId: z.string().trim().min(1).max(255) }).strict();
 
 export function createWorkerVersionServer(options: {
   token: string;
@@ -34,7 +34,7 @@ async function handle(
     const body = await readJson(request, 4_096);
     const input = restoreInput.safeParse(body);
     if (!input.success) { send(response, 400, { error: "invalid_request" }); return; }
-    const identity = identityFromAuthenticatedSession({ userId: input.data.clerkUserId });
+    const identity = identityFromAuthenticatedSession({ userId: input.data.userId });
     const result = await options.restore(identity, match[1]!, match[2]!);
     if (!result) { send(response, 404, { error: "not_found" }); return; }
     send(response, 200, { restored: result });

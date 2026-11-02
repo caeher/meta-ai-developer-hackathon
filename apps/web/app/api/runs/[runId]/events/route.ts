@@ -14,7 +14,7 @@ export function GET(request: Request, context: RouteContext): Promise<Response> 
     runs: repositories.runs,
     validateSession: async () => {
       const currentIdentity = await requireUser();
-      if (currentIdentity.clerkUserId !== identity.clerkUserId) throw new AuthenticationRequiredError();
+      if (currentIdentity.userId !== identity.userId) throw new AuthenticationRequiredError();
     },
   })(request, context));
 }

@@ -44,9 +44,6 @@ describe("tema Tokyo Night", () => {
     expect(colorToken("green")).toBe("9ece6a");
     expect(colorToken("orange")).toBe("ff9e64");
     expect(colorToken("red")).toBe("f7768e");
-    expect(tokenSource).toContain("--clerk-color-primary: var(--app-blue)");
-    expect(tokenSource).toContain("--clerk-color-foreground: var(--app-text)");
-    expect(tokenSource).toContain("--clerk-color-ring: var(--app-focus)");
   });
 
   it("mantiene texto AA y acentos legibles sobre fondo y superficie", () => {

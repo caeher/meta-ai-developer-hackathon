@@ -215,7 +215,7 @@ test.describe("editor de dos paneles", () => {
 
   test("canjea una sesión y monta un iframe aislado con canvas, assets y HMR", async ({ page }) => {
     const fixture = await installPrivatePreviewFixture(page);
-    await page.context().addCookies([{ name: "clerk_session", value: "app-secret-cookie", url: "http://127.0.0.1:4173" }]);
+    await page.context().addCookies([{ name: "forja_session", value: "app-secret-cookie", url: "http://127.0.0.1:4173" }]);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/?preview=1&versions=1");
 
@@ -231,7 +231,7 @@ test.describe("editor de dos paneles", () => {
     await expect(game.locator("body")).toHaveAttribute("data-asset-ready", "true");
     await expect(game.locator("body")).toHaveAttribute("data-hmr", "connected");
     await expect(page.getByLabel("Estado de la preview: Lista")).toBeVisible();
-    expect(fixture.state.cookieHeaders.every((cookie) => !cookie.includes("clerk_session"))).toBe(true);
+    expect(fixture.state.cookieHeaders.every((cookie) => !cookie.includes("forja_session"))).toBe(true);
 
     await page.getByRole("combobox", { name: "Versión de la vista previa" }).click();
     await expect(page.getByRole("option", { name: "Latest · última verificada" })).toBeVisible();

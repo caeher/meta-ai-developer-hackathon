@@ -13,7 +13,7 @@ import { OriginValidationError, assertSameOriginRequest } from "../auth/http";
 
 type Authenticator = { requireUser(): Promise<VerifiedIdentityContext> };
 type ProjectLookup = { get(identity: VerifiedIdentityContext, projectId: string): Promise<unknown | undefined> };
-type PreviewTarget = { ownerClerkUserId: string; sandboxId: string; projectId: string };
+type PreviewTarget = { ownerUserId: string; sandboxId: string; projectId: string };
 
 const secureHeaders = {
   "cache-control": "private, no-store",
@@ -59,17 +59,17 @@ export function createPreviewGrantHandlers(dependencies: {
         const project = await dependencies.projects.get(identity, projectId);
         if (!project) return Response.json({ error: "not_found" }, { status: 404, headers: secureHeaders });
         const target = await dependencies.target(projectId);
-        if (!target || target.projectId !== projectId || target.ownerClerkUserId !== identity.clerkUserId) {
+        if (!target || target.projectId !== projectId || target.ownerUserId !== identity.userId) {
           return Response.json({ error: "preview_unavailable" }, { status: 409, headers: secureHeaders });
         }
-        const allowed = await dependencies.store.allowRateLimit(rateLimitKey(identity.clerkUserId, projectId), 60, 60);
+        const allowed = await dependencies.store.allowRateLimit(rateLimitKey(identity.userId, projectId), 60, 60);
         if (!allowed) return Response.json({ error: "rate_limited" }, { status: 429, headers: secureHeaders });
 
         const issuedAt = Math.floor(now() / 1000);
         const claims = PreviewGrantClaimsSchema.parse({
           iss: PREVIEW_GRANT_ISSUER,
-          sub: identity.clerkUserId,
-          userId: identity.clerkUserId,
+          sub: identity.userId,
+          userId: identity.userId,
           projectId,
           aud: PREVIEW_GRANT_AUDIENCE,
           iat: issuedAt,

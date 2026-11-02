@@ -62,16 +62,69 @@ export const reservationStatus = pgEnum("reservation_status", [
 export const usageKind = pgEnum("usage_kind", ["charge", "refund", "adjustment"]);
 export const cleanupStatus = pgEnum("cleanup_status", ["queued", "running", "succeeded", "failed"]);
 export const outboxStatus = pgEnum("outbox_status", ["pending", "dispatching", "dispatched"]);
+export const authTokenPurpose = pgEnum("auth_token_purpose", ["verify_email", "reset_password"]);
 
 export const users = pgTable(
   "users",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    clerkUserId: varchar("clerk_user_id", { length: 255 }).notNull().unique(),
+    userId: varchar("user_id", { length: 255 }).notNull().unique(),
+    email: varchar("email", { length: 320 }).unique(),
+    passwordHash: text("password_hash"),
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => [index("users_created_at_idx").on(table.createdAt)],
+  (table) => [
+    index("users_created_at_idx").on(table.createdAt),
+    check("users_email_lowercase_check", sql`${table.email} is null or ${table.email} = lower(${table.email})`),
+  ],
+);
+
+export const authSessions = pgTable(
+  "auth_sessions",
+  {
+    tokenHash: varchar("token_hash", { length: 64 }).primaryKey(),
+    userRowId: uuid("user_row_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    absoluteExpiresAt: timestamp("absolute_expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("auth_sessions_user_active_idx").on(table.userRowId, table.revokedAt, table.expiresAt),
+    check("auth_sessions_expiry_order_check", sql`${table.expiresAt} <= ${table.absoluteExpiresAt}`),
+  ],
+);
+
+export const authTokens = pgTable(
+  "auth_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userRowId: uuid("user_row_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+    purpose: authTokenPurpose("purpose").notNull(),
+    createdAt: createdAt(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("auth_tokens_user_purpose_idx").on(table.userRowId, table.purpose, table.expiresAt),
+    index("auth_tokens_expiry_idx").on(table.expiresAt),
+  ],
+);
+
+export const authRateLimits = pgTable(
+  "auth_rate_limits",
+  {
+    bucketHash: varchar("bucket_hash", { length: 64 }).primaryKey(),
+    failures: integer("failures").notNull().default(0),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    updatedAt: updatedAt(),
+  },
+  (table) => [check("auth_rate_limits_failures_nonnegative_check", sql`${table.failures} >= 0`)],
 );
 
 export const projects = pgTable(

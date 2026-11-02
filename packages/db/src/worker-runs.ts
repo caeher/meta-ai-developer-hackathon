@@ -160,10 +160,10 @@ export async function getClaimedRunIdentity(
 ): Promise<VerifiedIdentityContext> {
   return database.transaction(async (tx) => {
     const run = await currentClaimedRun(tx, claim);
-    const [user] = await tx.select({ clerkUserId: users.clerkUserId }).from(users)
+    const [user] = await tx.select({ userId: users.userId }).from(users)
       .where(eq(users.id, run.ownerUserId)).limit(1);
     if (!user) throw new StaleRunWorkerError();
-    return identityFromAuthenticatedSession({ userId: user.clerkUserId });
+    return identityFromAuthenticatedSession({ userId: user.userId });
   });
 }
 

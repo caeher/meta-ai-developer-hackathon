@@ -15,7 +15,7 @@ import {
 const fixtures = [
   {
     ownerId: "00000000-0000-4000-8000-000000000101",
-    clerkUserId: "user_fixtureAccountA001",
+    userId: "user_fixtureAccountA001",
     projectId: "00000000-0000-4000-8000-000000000201",
     messageId: "00000000-0000-4000-8000-000000000301",
     runId: "00000000-0000-4000-8000-000000000401",
@@ -27,7 +27,7 @@ const fixtures = [
   },
   {
     ownerId: "00000000-0000-4000-8000-000000000102",
-    clerkUserId: "user_fixtureAccountB001",
+    userId: "user_fixtureAccountB001",
     projectId: "00000000-0000-4000-8000-000000000202",
     messageId: "00000000-0000-4000-8000-000000000302",
     runId: "00000000-0000-4000-8000-000000000402",
@@ -62,8 +62,8 @@ async function main() {
     await db.transaction(async (tx) => {
       const [owner] = await tx
         .insert(users)
-        .values({ id: fixture.ownerId, clerkUserId: fixture.clerkUserId })
-        .onConflictDoUpdate({ target: users.clerkUserId, set: { updatedAt: new Date() } })
+        .values({ id: fixture.ownerId, userId: fixture.userId })
+        .onConflictDoUpdate({ target: users.userId, set: { updatedAt: new Date() } })
         .returning({ id: users.id });
       if (!owner) throw new Error("No se pudo reconciliar el usuario fixture");
 
@@ -86,7 +86,7 @@ async function main() {
           id: fixture.runId,
           ownerUserId: owner.id,
           projectId: project.id,
-          idempotencyKey: `fixture-run-${fixture.clerkUserId}`,
+          idempotencyKey: `fixture-run-${fixture.userId}`,
           status: "succeeded",
         })
         .onConflictDoNothing({ target: runs.id });
@@ -108,7 +108,7 @@ async function main() {
           runId: run.id,
           role: "user",
           content: fixture.message,
-          requestId: `fixture-message-${fixture.clerkUserId}`,
+          requestId: `fixture-message-${fixture.userId}`,
           sequence: 1,
         })
         .onConflictDoNothing({ target: messages.id });
@@ -139,7 +139,7 @@ async function main() {
           id: fixture.reservationId,
           ownerUserId: owner.id,
           projectId: project.id,
-          idempotencyKey: `fixture-reservation-${fixture.clerkUserId}`,
+          idempotencyKey: `fixture-reservation-${fixture.userId}`,
           expiresAt: new Date("2040-01-01T00:00:00.000Z"),
           status: "committed",
         })
@@ -153,7 +153,7 @@ async function main() {
             .where(
               and(
                 eq(usageReservations.ownerUserId, owner.id),
-                eq(usageReservations.idempotencyKey, `fixture-reservation-${fixture.clerkUserId}`),
+                eq(usageReservations.idempotencyKey, `fixture-reservation-${fixture.userId}`),
               ),
             )
             .limit(1);
@@ -164,7 +164,7 @@ async function main() {
           ownerUserId: owner.id,
           projectId: project.id,
           reservationId: existingReservation.id,
-          idempotencyKey: `fixture-ledger-${fixture.clerkUserId}`,
+          idempotencyKey: `fixture-ledger-${fixture.userId}`,
           kind: "charge",
           metadata: { fixture: true },
         })

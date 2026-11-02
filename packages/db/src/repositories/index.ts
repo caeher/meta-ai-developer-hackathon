@@ -146,15 +146,15 @@ function makePage<T extends { createdAt: Date; id: string }>(rows: T[], limit: n
 
 function requireContext(identity: VerifiedIdentityContext) {
   assertVerifiedIdentityContext(identity);
-  return identity.clerkUserId;
+  return identity.userId;
 }
 
 async function resolveOwnerId(db: GameDatabase, identity: VerifiedIdentityContext): Promise<string> {
-  const clerkUserId = requireContext(identity);
+  const userId = requireContext(identity);
   const [owner] = await db
     .select({ id: users.id })
     .from(users)
-    .where(eq(users.clerkUserId, clerkUserId))
+    .where(eq(users.userId, userId))
     .limit(1);
   if (!owner) throw new OwnedResourceNotFoundError();
   return owner.id;
@@ -177,13 +177,13 @@ export function createRepositories(db: GameDatabase) {
   return {
     projects: {
       async create(identity: VerifiedIdentityContext, input: { name: string }) {
-        const clerkUserId = requireContext(identity);
+        const userId = requireContext(identity);
         const name = projectNameSchema.parse(input.name);
         const [owner] = await db
           .insert(users)
-          .values({ clerkUserId })
+          .values({ userId })
           .onConflictDoUpdate({
-            target: users.clerkUserId,
+            target: users.userId,
             set: { updatedAt: new Date() },
           })
           .returning({ id: users.id });

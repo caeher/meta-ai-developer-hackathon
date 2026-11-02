@@ -28,7 +28,7 @@ const basePolicy = { maxConcurrentJobs: 2, runMaxTokens: 100, dailyTokenLimit: 2
 const queueTimeoutMs = 15_000;
 
 describe.skipIf(!integrationEnabled)("cola durable, cuotas y fencing con PostgreSQL/Redis", () => {
-  const createdClerkIds: string[] = [];
+  const createdUserIds: string[] = [];
   let database: ReturnType<typeof createDatabaseFromEnvironment>;
   let repositories: ReturnType<typeof createRepositories>;
 
@@ -39,16 +39,16 @@ describe.skipIf(!integrationEnabled)("cola durable, cuotas y fencing con Postgre
 
   afterAll(async () => {
     if (!database) return;
-    if (createdClerkIds.length) await database.db.delete(users).where(inArray(users.clerkUserId, createdClerkIds));
+    if (createdUserIds.length) await database.db.delete(users).where(inArray(users.userId, createdUserIds));
     await database.close();
   });
 
   async function fixture(label: string) {
-    const clerkUserId = `user_run${label}${randomUUID().replaceAll("-", "").slice(0, 16)}`;
-    createdClerkIds.push(clerkUserId);
-    const identity = identityFromAuthenticatedSession({ userId: clerkUserId });
+    const userId = `user_run${label}${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+    createdUserIds.push(userId);
+    const identity = identityFromAuthenticatedSession({ userId: userId });
     const project = await repositories.projects.create(identity, { name: `Durable run ${label}` });
-    return { clerkUserId, identity, project };
+    return { userId, identity, project };
   }
 
   async function waitForRun(runId: string, target: "succeeded" | "failed" | "cancelled", timeoutMs = queueTimeoutMs) {

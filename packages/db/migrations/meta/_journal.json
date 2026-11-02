@@ -64,6 +64,13 @@
       "when": 1793633491460,
       "tag": "0008_complete_galactus",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793637557679,
+      "tag": "0009_own_auth_sessions",
+      "breakpoints": true
     }
   ]
 }

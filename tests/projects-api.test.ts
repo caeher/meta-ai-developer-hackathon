@@ -10,7 +10,7 @@ const projectId = "11111111-1111-4111-8111-111111111111";
 const timestamp = new Date("2026-01-01T00:00:00.000Z");
 
 function projectFixture(identity: VerifiedIdentityContext, name = "Aventura") {
-  return { id: projectId, ownerUserId: "opaque-owner", name, createdAt: timestamp, updatedAt: timestamp, deletedAt: null, owner: identity.clerkUserId };
+  return { id: projectId, ownerUserId: "opaque-owner", name, createdAt: timestamp, updatedAt: timestamp, deletedAt: null, owner: identity.userId };
 }
 
 describe("API de proyectos y mensajes", () => {
@@ -25,11 +25,11 @@ describe("API de proyectos y mensajes", () => {
     const calls: unknown[] = [];
     const projects = {
       async list(identity: VerifiedIdentityContext, input: unknown) {
-        calls.push({ identity: identity.clerkUserId, input });
+        calls.push({ identity: identity.userId, input });
         return { items: [project], nextCursor: null };
       },
       async create(identity: VerifiedIdentityContext, input: { name: string }) {
-        calls.push({ identity: identity.clerkUserId, input });
+        calls.push({ identity: identity.userId, input });
         return { ...project, name: input.name };
       },
     };
@@ -52,14 +52,14 @@ describe("API de proyectos y mensajes", () => {
   it("oculta proyectos ajenos y exige origen propio para borrar", async () => {
     const projects = {
       async get(identity: VerifiedIdentityContext, id: string) {
-        return identity.clerkUserId === project.owner && id === project.id ? project : undefined;
+        return identity.userId === project.owner && id === project.id ? project : undefined;
       },
       async rename(identity: VerifiedIdentityContext, id: string) {
-        if (identity.clerkUserId !== project.owner || id !== project.id) throw new OwnedResourceNotFoundError();
+        if (identity.userId !== project.owner || id !== project.id) throw new OwnedResourceNotFoundError();
         return project;
       },
       async delete(identity: VerifiedIdentityContext, id: string) {
-        if (identity.clerkUserId !== project.owner || id !== project.id) throw new OwnedResourceNotFoundError();
+        if (identity.userId !== project.owner || id !== project.id) throw new OwnedResourceNotFoundError();
         return { id, deletedAt: timestamp, cleanup: { id: projectId, status: "queued" } };
       },
     };
@@ -101,13 +101,13 @@ describe("API de proyectos y mensajes", () => {
           if (stored.content !== input.content) throw new IdempotencyConflictError();
           return stored;
         }
-        stored = { ...input, id: "22222222-2222-4222-8222-222222222222", owner: identity.clerkUserId, sequence: 1, createdAt: timestamp };
+        stored = { ...input, id: "22222222-2222-4222-8222-222222222222", owner: identity.userId, sequence: 1, createdAt: timestamp };
         return stored;
       },
       async list() { return { items: [], nextCursor: null }; },
     };
     const projects = {
-      async get(identity: VerifiedIdentityContext) { return identity.clerkUserId === project.owner ? project : undefined; },
+      async get(identity: VerifiedIdentityContext) { return identity.userId === project.owner ? project : undefined; },
     };
     const handlers = createProjectMessageHandlers({ identity: ownerA, messages: messages as never, projects: projects as never, allowedOrigins });
     const context = { params: Promise.resolve({ projectId }) };

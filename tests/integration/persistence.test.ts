@@ -22,8 +22,8 @@ const integrationEnabled = process.env.PERSISTENCE_TEST_ENABLED === "1";
 
 describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () => {
   const suffix = randomUUID().replaceAll("-", "");
-  const clerkUserIdA = `user_integrationA${suffix}`;
-  const clerkUserIdB = `user_integrationB${suffix}`;
+  const userIdA = `user_integrationA${suffix}`;
+  const userIdB = `user_integrationB${suffix}`;
   let database: ReturnType<typeof createDatabaseFromEnvironment>;
   let repositories: ReturnType<typeof createRepositories>;
   let identityA: ReturnType<typeof identityFromAuthenticatedSession>;
@@ -37,8 +37,8 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
   beforeAll(async () => {
     database = createDatabaseFromEnvironment();
     repositories = createRepositories(database.db);
-    identityA = identityFromAuthenticatedSession({ userId: clerkUserIdA });
-    identityB = identityFromAuthenticatedSession({ userId: clerkUserIdB });
+    identityA = identityFromAuthenticatedSession({ userId: userIdA });
+    identityB = identityFromAuthenticatedSession({ userId: userIdB });
     projectA = await repositories.projects.create(identityA, { name: "Integration owner A" });
     projectASecond = await repositories.projects.create(identityA, { name: "Integration owner A second" });
     projectB = await repositories.projects.create(identityB, { name: "Integration owner B" });
@@ -54,7 +54,7 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
       }
     }
     if (database) {
-      await database.db.delete(users).where(inArray(users.clerkUserId, [clerkUserIdA, clerkUserIdB]));
+      await database.db.delete(users).where(inArray(users.userId, [userIdA, userIdB]));
       storage?.close();
       await database.close();
     }
@@ -111,7 +111,7 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
   });
 
   it("aplica ownership uniforme y rechaza relaciones con dueño inconsistente", async () => {
-    const forgedIdentity = { clerkUserId: clerkUserIdA } as unknown as VerifiedIdentityContext;
+    const forgedIdentity = { userId: userIdA } as unknown as VerifiedIdentityContext;
     await expect(repositories.projects.get(forgedIdentity, projectA.id)).rejects.toThrow(
       "identidad de servidor verificada",
     );
@@ -142,7 +142,7 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
     const [ownerA] = await database.db
       .select({ id: users.id })
       .from(users)
-      .where(eq(users.clerkUserId, clerkUserIdA))
+      .where(eq(users.userId, userIdA))
       .limit(1);
     expect(ownerA).toBeDefined();
     await expect(

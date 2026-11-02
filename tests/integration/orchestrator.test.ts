@@ -28,7 +28,7 @@ const integrationEnabled = process.env.PERSISTENCE_TEST_ENABLED === "1";
 const model = "muse-spark-1.3-contributor";
 
 describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () => {
-  const clerkUserId = `user_agent${randomUUID().replaceAll("-", "").slice(0, 18)}`;
+  const userId = `user_agent${randomUUID().replaceAll("-", "").slice(0, 18)}`;
   let database: ReturnType<typeof createDatabaseFromEnvironment>;
   let repositories: ReturnType<typeof createRepositories>;
 
@@ -39,12 +39,12 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
 
   afterAll(async () => {
     if (!database) return;
-    await database.db.delete(users).where(inArray(users.clerkUserId, [clerkUserId]));
+    await database.db.delete(users).where(inArray(users.userId, [userId]));
     await database.close();
   });
 
   it("liga consentimiento y mensaje, persiste plan antes de write/verify y cobra uso una vez", async () => {
-    const identity = identityFromAuthenticatedSession({ userId: clerkUserId });
+    const identity = identityFromAuthenticatedSession({ userId: userId });
     const project = await repositories.projects.create(identity, { name: "Agent integration" });
     const message = await repositories.messages.create(identity, {
       projectId: project.id,
@@ -266,7 +266,7 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
   });
 
   it("reserva cada imagen una sola vez bajo lease y limita la cuota diaria por owner", async () => {
-    const identity = identityFromAuthenticatedSession({ userId: clerkUserId });
+    const identity = identityFromAuthenticatedSession({ userId: userId });
     const project = await repositories.projects.create(identity, { name: "Image quota integration" });
     const message = await repositories.messages.create(identity, {
       projectId: project.id,
@@ -291,7 +291,7 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
     await transitionClaimedRun(database.db, claimed.claim, "running");
 
     const store = createPostgresAgentRunStore(database.db);
-    await expect(store.identity(claimed.claim)).resolves.toMatchObject({ clerkUserId });
+    await expect(store.identity(claimed.claim)).resolves.toMatchObject({ userId });
     await expect(store.reserveImage(claimed.claim, { requestKey: "image-call-1", round: 1, dailyImageLimit: 1 }))
       .resolves.toBe(true);
     await expect(store.reserveImage(claimed.claim, { requestKey: "image-call-1", round: 1, dailyImageLimit: 1 }))

@@ -3,7 +3,7 @@ import { createDatabaseFromEnvironment, createRepositories } from "@meta-game/db
 import type { VerifiedIdentityContext } from "@meta-game/db";
 import { apiErrorResponse } from "../auth/http";
 import { requireUser } from "../auth/auth";
-import { getClerkConfiguration } from "../auth/config";
+import { getAllowedOrigins } from "../auth/config";
 
 export interface ProjectApiContext {
   identity: VerifiedIdentityContext;
@@ -12,19 +12,12 @@ export interface ProjectApiContext {
 }
 
 export async function withProjectApi(action: (context: ProjectApiContext) => Promise<Response>): Promise<Response> {
-  const clerkConfiguration = getClerkConfiguration();
-  if (!clerkConfiguration.configured) {
-    return Response.json(
-      { error: "authentication_not_configured" },
-      { status: 503, headers: { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } },
-    );
-  }
   let database: ReturnType<typeof createDatabaseFromEnvironment> | undefined;
   let databaseTransferredToStream = false;
   try {
     const identity = await requireUser();
     database = createDatabaseFromEnvironment();
-    const response = await action({ identity, repositories: createRepositories(database.db), allowedOrigins: clerkConfiguration.authorizedParties });
+    const response = await action({ identity, repositories: createRepositories(database.db), allowedOrigins: getAllowedOrigins() });
     if (response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream") && response.body && database) {
       const reader = response.body.getReader();
       let released = false;

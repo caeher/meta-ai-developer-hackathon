@@ -161,7 +161,7 @@ describe("SSE de runs", () => {
     expect(JSON.stringify(frames)).not.toContain(".env.local");
   });
 
-  it("cierra sin contenido si Clerk revoca la sesión durante el stream", async () => {
+  it("cierra sin contenido si auth revoca la sesión durante el stream", async () => {
     const { listEvents } = makeHandler();
     const response = await createRunEventsHandler({
       identity,

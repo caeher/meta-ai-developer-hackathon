@@ -1,70 +1,34 @@
-import { clerkMiddleware } from "@clerk/nextjs/server";
-import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
-import { getClerkConfiguration } from "./server/auth/config";
-import { isProtectedPath } from "./server/auth/config-core";
+import { NextResponse, type NextRequest } from "next/server";
 
-const clerkConfiguration = getClerkConfiguration();
+const publicPaths = new Set(["/", "/sign-in", "/sign-up", "/forgot-password", "/reset-password", "/verify-email"]);
 
-const handleClerk = clerkMiddleware(
-  async (auth, request) => {
-    if (!isProtectedPath(request.nextUrl.pathname)) return;
+function isProtectedPath(pathname: string): boolean {
+  return !publicPaths.has(pathname) &&
+    !pathname.startsWith("/api/auth/") &&
+    pathname !== "/api/health";
+}
 
-    if (request.nextUrl.pathname.startsWith("/api/")) {
-      const session = await auth();
-      if (!session.userId) {
-        return Response.json(
-          { error: "unauthenticated" },
-          {
-            status: 401,
-            headers: {
-              "cache-control": "private, no-store",
-              "referrer-policy": "no-referrer",
-              "x-content-type-options": "nosniff",
-            },
-          },
-        );
-      }
-      return;
-    }
-
-    await auth.protect();
-  },
-  { authorizedParties: clerkConfiguration.authorizedParties },
-);
-
-export default function proxy(request: NextRequest, event: NextFetchEvent) {
-  // The gallery contains synthetic examples only and is public in local development.
+export default function proxy(request: NextRequest) {
   if (process.env.NODE_ENV === "development" && request.nextUrl.pathname === "/design-system") {
     return NextResponse.next();
   }
-
-  if (!clerkConfiguration.configured) {
-    if (isProtectedPath(request.nextUrl.pathname)) {
-      if (request.nextUrl.pathname.startsWith("/api/")) {
-        return Response.json(
-          { error: "authentication_not_configured" },
-          {
-            status: 503,
-            headers: {
-              "cache-control": "private, no-store",
-              "referrer-policy": "no-referrer",
-              "x-content-type-options": "nosniff",
-            },
-          },
-        );
-      }
-      return NextResponse.redirect(new URL("/sign-in?setup=required", request.url));
-    }
+  if (!isProtectedPath(request.nextUrl.pathname) || request.cookies.has("forja_session")) {
     return NextResponse.next();
   }
-
-  return handleClerk(request, event);
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    return Response.json(
+      { error: "unauthenticated" },
+      { status: 401, headers: { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } },
+    );
+  }
+  const destination = new URL("/sign-in", request.url);
+  if (request.nextUrl.pathname !== "/") destination.searchParams.set("returnTo", request.nextUrl.pathname);
+  return NextResponse.redirect(destination);
 }
 
 export const config = {
   matcher: [
     "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     "/(api|trpc)(.*)",
-    "/__clerk/(.*)",
   ],
 };

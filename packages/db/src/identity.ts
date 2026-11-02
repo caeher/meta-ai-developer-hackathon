@@ -1,63 +1,37 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 
-const clerkUserIdSchema = z.string().regex(/^user_[A-Za-z0-9]{1,240}$/, "Identidad Clerk inválida");
+const userIdSchema = z.string().regex(/^user_[A-Za-z0-9]{1,240}$/, "Identidad de usuario inválida");
 const verifiedIdentityBrand: unique symbol = Symbol("verified-identity");
 
-/**
- * Contexto de identidad creado en el servidor únicamente a partir del resultado de `auth()`
- * de Clerk. Nunca construirlo con body, query, prompt ni cabeceras controladas por el cliente.
- */
+/** Contexto creado tras validar una sesión propia en el servidor. Nunca aceptar identidad del cliente. */
 export type VerifiedIdentityContext = Readonly<{
-  clerkUserId: string;
+  userId: string;
   [verifiedIdentityBrand]: true;
 }>;
 
 export function identityFromAuthenticatedSession(session: { userId: string | null }): VerifiedIdentityContext {
-  const parsed = clerkUserIdSchema.safeParse(session.userId);
-  if (!parsed.success) throw new Error("Se requiere una sesión de Clerk autenticada");
-  const clerkUserId = parsed.data;
-  return Object.freeze({ clerkUserId, [verifiedIdentityBrand]: true as const });
+  const parsed = userIdSchema.safeParse(session.userId);
+  if (!parsed.success) throw new Error("Se requiere una sesión autenticada");
+  const userId = parsed.data;
+  return Object.freeze({ userId, [verifiedIdentityBrand]: true as const });
 }
 
-export function assertVerifiedIdentityContext(
-  value: VerifiedIdentityContext,
-): asserts value is VerifiedIdentityContext {
-  if (value[verifiedIdentityBrand] !== true) {
-    throw new TypeError("Se requiere una identidad de servidor verificada");
-  }
+export function assertVerifiedIdentityContext(value: VerifiedIdentityContext): asserts value is VerifiedIdentityContext {
+  if (value[verifiedIdentityBrand] !== true) throw new TypeError("Se requiere una identidad de servidor verificada");
 }
 
 export class OwnedResourceNotFoundError extends Error {
-  constructor() {
-    super("Recurso no encontrado");
-    this.name = "OwnedResourceNotFoundError";
-  }
+  constructor() { super("Recurso no encontrado"); this.name = "OwnedResourceNotFoundError"; }
 }
-
 export class IdempotencyConflictError extends Error {
-  constructor() {
-    super("La clave de idempotencia ya se usó para otra operación");
-    this.name = "IdempotencyConflictError";
-  }
+  constructor() { super("La clave de idempotencia ya se usó para otra operación"); this.name = "IdempotencyConflictError"; }
 }
-
 export class UsageLimitExceededError extends Error {
-  constructor(public readonly limit: "tokens" | "images" | "concurrency") {
-    super(`Se superó el límite de uso: ${limit}`);
-    this.name = "UsageLimitExceededError";
-  }
+  constructor(public readonly limit: "tokens" | "images" | "concurrency") { super(`Se superó el límite de uso: ${limit}`); this.name = "UsageLimitExceededError"; }
 }
-
 export class ProjectRunBusyError extends Error {
-  constructor() {
-    super("El proyecto ya tiene un run activo");
-    this.name = "ProjectRunBusyError";
-  }
+  constructor() { super("El proyecto ya tiene un run activo"); this.name = "ProjectRunBusyError"; }
 }
-
 export class StaleRunWorkerError extends Error {
-  constructor() {
-    super("El worker perdió el lease y no puede modificar este run");
-    this.name = "StaleRunWorkerError";
-  }
+  constructor() { super("El worker perdió el lease y no puede modificar este run"); this.name = "StaleRunWorkerError"; }
 }

@@ -71,9 +71,9 @@ class MemoryPreviewStore implements PreviewStore {
   async close() {}
 }
 
-function target(projectId = projectA, ownerClerkUserId = ownerA): GatewayPreviewTarget {
+function target(projectId = projectA, ownerUserId = ownerA): GatewayPreviewTarget {
   return {
-    ownerClerkUserId,
+    ownerUserId,
     projectId,
     sandboxId: sandboxA,
     devServerPort: 4173,
@@ -170,7 +170,7 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
   let backendPort: number;
   let gateway: ReturnType<typeof createPreviewGateway>;
   let gatewayPort: number;
-  const backendRequests: Array<{ path?: string; host?: string; cookie?: string; authorization?: string; origin?: string; previewOrigin?: string; clerk?: string }> = [];
+  const backendRequests: Array<{ path?: string; host?: string; cookie?: string; authorization?: string; origin?: string; previewOrigin?: string; auth?: string }> = [];
   const backendSockets = new Set<Duplex>();
   let activeBrowserSocket: Socket | undefined;
 
@@ -186,7 +186,7 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
         authorization: req.headers.authorization,
         origin: req.headers.origin,
         previewOrigin: req.headers["x-preview-origin"] as string | undefined,
-        clerk: req.headers["x-clerk-auth"] as string | undefined,
+        auth: req.headers["x-user-auth"] as string | undefined,
       });
       res.writeHead(req.url === "/__preview/missing.js" ? 404 : 200, {
         "content-type": req.url?.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8",
@@ -207,7 +207,7 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
         authorization: req.headers.authorization,
         origin: req.headers.origin,
         previewOrigin: req.headers["x-preview-origin"] as string | undefined,
-        clerk: req.headers["x-clerk-auth"] as string | undefined,
+        auth: req.headers["x-user-auth"] as string | undefined,
       });
       const key = req.headers["sec-websocket-key"] ?? "";
       const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
@@ -381,9 +381,9 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
     const cookie = String(session.headers["set-cookie"]).split(";")[0] ?? "";
     const page = await request(gatewayPort, "/index.html", {
       host: hostA,
-      cookie: `${cookie}; clerk_session=must-not-forward`,
+      cookie: `${cookie}; forja_session=must-not-forward`,
       authorization: "Bearer platform-secret",
-      "x-clerk-auth": "must-not-forward",
+      "x-user-auth": "must-not-forward",
     });
     expect(page.status).toBe(200);
     expect(page.body).toContain("my private game");
@@ -399,7 +399,7 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
     expect(backendRequests.at(-1)).toMatchObject({ path: "/__preview/index.html", previewOrigin: `https://${hostA}` });
     expect(backendRequests.at(-1)?.cookie).toBeUndefined();
     expect(backendRequests.at(-1)?.authorization).toBeUndefined();
-    expect(backendRequests.at(-1)?.clerk).toBeUndefined();
+    expect(backendRequests.at(-1)?.auth).toBeUndefined();
 
     const asset = await request(gatewayPort, "/assets/game.js", { host: hostA, cookie });
     expect(asset.status).toBe(200);
@@ -491,9 +491,9 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
       "Sec-WebSocket-Version: 13",
       `Sec-WebSocket-Key: ${key}`,
       `Origin: https://${hostA}`,
-      `Cookie: ${cookie}; clerk_session=private`,
+      `Cookie: ${cookie}; forja_session=private`,
       "Authorization: Bearer secret",
-      "X-Clerk-Auth: secret",
+      "x-user-auth: secret",
       "\r\n",
     ].join("\r\n"));
     const handshake = await readRawUntil(socket, Buffer.from("\r\n\r\n"));
@@ -502,7 +502,7 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
     expect(backendRequests.at(-1)).toMatchObject({ path: "/__preview/@vite/client?session=private", origin: `https://${hostA}` });
     expect(backendRequests.at(-1)?.cookie).toBeUndefined();
     expect(backendRequests.at(-1)?.authorization).toBeUndefined();
-    expect(backendRequests.at(-1)?.clerk).toBeUndefined();
+    expect(backendRequests.at(-1)?.auth).toBeUndefined();
 
     await store.revokeProject(projectA);
     const closeFrame = await readRawUntil(socket, Buffer.from([0x88, 0x02, 0x03, 0xf0]));
@@ -512,9 +512,9 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
 
   it("emite grants solo tras same-origin y ownership verificado", async () => {
     const handlers = createPreviewGrantHandlers({
-      authenticator: { requireUser: async () => ({ clerkUserId: ownerA } as never) },
-      projects: { get: async (identity) => identity.clerkUserId === ownerA ? { id: projectA } : undefined },
-      target: async (projectId) => projectId === projectA ? { projectId, ownerClerkUserId: ownerA, sandboxId: sandboxA } : undefined,
+      authenticator: { requireUser: async () => ({ userId: ownerA } as never) },
+      projects: { get: async (identity) => identity.userId === ownerA ? { id: projectA } : undefined },
+      target: async (projectId) => projectId === projectA ? { projectId, ownerUserId: ownerA, sandboxId: sandboxA } : undefined,
       store,
       keyRing,
       allowedOrigins: [appOrigin],
@@ -543,7 +543,7 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
     expect(await store.getProjectEpoch(projectA)).toBe(1);
 
     const ownerBHandlers = createPreviewGrantHandlers({
-      authenticator: { requireUser: async () => ({ clerkUserId: ownerB } as never) },
+      authenticator: { requireUser: async () => ({ userId: ownerB } as never) },
       projects: { get: async () => undefined },
       target: async () => target(),
       store,

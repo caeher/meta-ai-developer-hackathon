@@ -4,7 +4,7 @@ import type { GameDatabase } from "./database";
 import { projects, sandboxes, users } from "./schema/index";
 
 export type PreviewTarget = Readonly<{
-  ownerClerkUserId: string;
+  ownerUserId: string;
   projectId: string;
   sandboxId: string;
   devServerPort: number;
@@ -15,7 +15,7 @@ export type PreviewTarget = Readonly<{
 export async function getPreviewTarget(database: GameDatabase, projectId: string): Promise<PreviewTarget | undefined> {
   const now = new Date();
   const [row] = await database.select({
-    ownerClerkUserId: users.clerkUserId,
+    ownerUserId: users.userId,
     projectId: projects.id,
     sandboxId: sandboxes.id,
     sandboxStatus: sandboxes.status,
@@ -41,7 +41,7 @@ export async function getPreviewTarget(database: GameDatabase, projectId: string
 
   if (!row?.sandboxLease || !row.devServerLease || row.devServerPort !== SANDBOX_DEV_SERVER_PORT) return undefined;
   return {
-    ownerClerkUserId: row.ownerClerkUserId,
+    ownerUserId: row.ownerUserId,
     projectId: row.projectId,
     sandboxId: row.sandboxId,
     devServerPort: row.devServerPort,

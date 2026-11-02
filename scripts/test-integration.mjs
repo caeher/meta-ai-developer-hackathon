@@ -26,7 +26,7 @@ async function readSyntheticSeedCounts(connectionString) {
   try {
     const result = await client.query(`
       SELECT
-        (SELECT count(*) FROM users WHERE clerk_user_id IN ('user_fixtureAccountA001', 'user_fixtureAccountB001')) AS users,
+        (SELECT count(*) FROM users WHERE user_id IN ('user_fixtureAccountA001', 'user_fixtureAccountB001')) AS users,
         (SELECT count(*) FROM projects WHERE id IN ('00000000-0000-4000-8000-000000000201', '00000000-0000-4000-8000-000000000202')) AS projects,
         (SELECT count(*) FROM messages WHERE id IN ('00000000-0000-4000-8000-000000000301', '00000000-0000-4000-8000-000000000302')) AS messages,
         (SELECT count(*) FROM runs WHERE id IN ('00000000-0000-4000-8000-000000000401', '00000000-0000-4000-8000-000000000402')) AS runs,

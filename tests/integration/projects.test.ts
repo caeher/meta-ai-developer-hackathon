@@ -20,10 +20,10 @@ const integrationEnabled = process.env.PERSISTENCE_TEST_ENABLED === "1";
 
 describe.skipIf(!integrationEnabled)("proyectos privados y chat persistente", () => {
   const suffix = randomUUID().replaceAll("-", "");
-  const clerkA = `user_projectA${suffix}`;
-  const clerkB = `user_projectB${suffix}`;
-  const identityA = identityFromAuthenticatedSession({ userId: clerkA });
-  const identityB = identityFromAuthenticatedSession({ userId: clerkB });
+  const authA = `user_projectA${suffix}`;
+  const authB = `user_projectB${suffix}`;
+  const identityA = identityFromAuthenticatedSession({ userId: authA });
+  const identityB = identityFromAuthenticatedSession({ userId: authB });
   let database: ReturnType<typeof createDatabaseFromEnvironment>;
   let repositories: ReturnType<typeof createRepositories>;
 
@@ -34,7 +34,7 @@ describe.skipIf(!integrationEnabled)("proyectos privados y chat persistente", ()
 
   afterAll(async () => {
     if (database) {
-      await database.db.delete(users).where(inArray(users.clerkUserId, [clerkA, clerkB]));
+      await database.db.delete(users).where(inArray(users.userId, [authA, authB]));
       await database.close();
     }
   });

@@ -43,7 +43,7 @@ describe("verificación completa del juego", () => {
   it("reúne logs acotados y redacta credenciales antes de enviarlos a reparación", async () => {
     const options = input({
       runCommand: async () => ({ stdout: "test failed", stderr: "", exitCode: 1, durationMs: 5, truncated: false }),
-      readLogs: async () => ({ stdout: "[REDACTED_GITHUB_TOKEN]", stderr: "" }),
+      readLogs: async () => ({ stdout: "ghp_" + "A".repeat(36), stderr: "" }),
     });
     const result = await verifyGame(options);
     expect(result.status).toBe("failed");

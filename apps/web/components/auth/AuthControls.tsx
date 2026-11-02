@@ -1,27 +1,63 @@
-"use client";
+﻿"use client";
 
-import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
-import { Badge, Button, Flex, Text } from "@radix-ui/themes";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { Button, DropdownMenu, Flex, Text } from "@radix-ui/themes";
 
-export function AuthControls({ configured }: { configured: boolean }) {
-  if (!configured) {
-    return <Badge color="orange" variant="soft">Autenticación sin configurar</Badge>;
+type SessionUser = { userId: string; email: string };
+
+export function AuthControls() {
+  const router = useRouter();
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/session", { cache: "no-store", credentials: "same-origin" })
+      .then((response) => response.json())
+      .then((result: { user?: SessionUser | null }) => { if (active) setUser(result.user ?? null); })
+      .catch(() => { if (active) setUser(null); })
+      .finally(() => { if (active) setLoaded(true); });
+    return () => { active = false; };
+  }, []);
+
+  async function signOut(allSessions = false) {
+    await fetch(`/api/auth/${allSessions ? "logout-all" : "logout"}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    setUser(null);
+    router.push("/sign-in");
+    router.refresh();
   }
 
+  if (!loaded || !user) {
+    return (
+      <Flex align="center" gap="3">
+        <Button asChild variant="soft"><Link href="/sign-in">Iniciar sesión</Link></Button>
+        <Button asChild><Link href="/sign-up">Crear cuenta</Link></Button>
+      </Flex>
+    );
+  }
+
+  const initials = user.email.split("@")[0]?.split(/[._-]/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "U";
   return (
-    <Flex align="center" gap="3">
-      <SignedOut>
-        <SignInButton mode="redirect" forceRedirectUrl="/editor" fallbackRedirectUrl="/editor">
-          <Button variant="soft">Iniciar sesión</Button>
-        </SignInButton>
-        <SignUpButton mode="redirect" forceRedirectUrl="/editor" fallbackRedirectUrl="/editor">
-          <Button>Crear cuenta</Button>
-        </SignUpButton>
-      </SignedOut>
-      <SignedIn>
-        <Text size="2">Sesión activa</Text>
-        <UserButton />
-      </SignedIn>
-    </Flex>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger>
+        <Button variant="soft" aria-label={`Menú de ${user.email}`}>
+          <span className="avatar-initials" aria-hidden="true">{initials}</span>
+          <Text size="2">{user.email}</Text>
+        </Button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end">
+        <DropdownMenu.Label>{user.email}</DropdownMenu.Label>
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item onSelect={() => void signOut()}>Cerrar sesión</DropdownMenu.Item>
+        <DropdownMenu.Item color="red" onSelect={() => void signOut(true)}>Cerrar todas las sesiones</DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
   );
 }
