@@ -41,7 +41,7 @@ Postgres, Redis y S3 quedan ligados solo a loopback. `infra:up` prepara buckets 
 
 El endpoint `GET /api/health` solo comprueba que la app web responde. Devuelve `{"status":"ok","service":"web"}` sin consultar servicios externos ni serializar el entorno. No representa readiness de base de datos, cola, Meta o sandbox.
 
-La issue #8 añade configuración de servidor para Meta Model API y `npm run meta:smoke`. El script carga `.env.local` (ignorado por Git) o variables del proceso, comprueba acceso a los tres modelos configurados y envía un prompt sintético pequeño; sin `META_API_KEY` falla antes de hacer solicitudes. No conecta todavía el chat del editor ni ejecuta generación de juegos. `--tools` añade dos solicitudes de prueba con uso de tokens y `--image` genera una imagen con cobro separado; revisa los precios vigentes antes de usar esas opciones. Consulta [docs/meta-api.md](docs/meta-api.md).
+Las issues #8 y #9 añaden configuración de servidor, `npm run meta:smoke` y el adaptador interno `MetaClient` para planes estructurados, streaming de código/tool calls y generación de imágenes. Los contratos offline validan respuestas y fixtures; ningún mensaje del chat se envía todavía a Meta ni se ejecutan herramientas. El smoke carga `.env.local` (ignorado por Git) o variables del proceso, comprueba los tres modelos y envía un prompt sintético; sin `META_API_KEY` falla antes de hacer solicitudes. `--tools` añade solicitudes con uso de tokens y `--image` genera una imagen con cobro separado; revisa los precios vigentes antes de esas opciones. Consulta [docs/meta-api.md](docs/meta-api.md).
 
 ## Capturas del tema Tokyo Night
 
@@ -96,8 +96,8 @@ Todavía no existen `dev:worker`, `dev:gateway`, generación desde el chat, ejec
 - `apps/web`: Next.js App Router, Clerk, React, Radix Themes y TypeScript estricto.
 - `apps/web/components/ui`: wrappers Radix reutilizables y galería local del tema.
 - `packages/config`: validación de URLs públicas y configuración de infraestructura local.
-- `packages/contracts`: schemas Zod de liveness, errores HTTP, proyectos y progreso del editor.
-- `packages/meta`: validación de configuración, transporte server-side acotado y comprobación opt-in de modelos Meta.
+- `packages/contracts`: schemas Zod de liveness, errores HTTP, proyectos, progreso del editor y contratos Meta.
+- `packages/meta`: `MetaClient`, transporte server-side acotado, replay stateless y smoke opt-in de Meta.
 - `packages/db`: modelo PostgreSQL/Drizzle y repositorios que requieren identidad verificada.
 - `packages/storage`: adaptador S3 privado con claves de servidor, checksum y estados de reconciliación.
 - `infra`: Docker Compose, perfiles de desarrollo, ejemplos locales y digest de imágenes.

@@ -38,7 +38,23 @@ Verificación local del 2 de noviembre de 2026: `npm run meta:smoke` completó e
 
 ## Estado de integración
 
-El smoke solo envía datos sintéticos; el producto todavía no conecta mensajes del usuario con Meta. La conexión real al chat queda deshabilitada hasta implementar los avisos, controles de elegibilidad y filtros de datos sensibles requeridos.
+### Contrato de `MetaClient` (issue #9)
+
+`packages/meta` expone `MetaClient.plan`, `streamCode`, `generateImage` y `smokeTest`; sus contratos públicos están en `packages/contracts/src/meta.ts`. Plan devuelve `{ summary, steps }` mediante `text.format` con JSON Schema y valida el resultado de nuevo con Zod. Los límites actuales son 80 KiB de entrada del plan, 256 KiB para el prompt de código, 1 MiB por payload, 32 herramientas, 32 KiB por schema, 64 KiB por argumentos/resultado, 16 llamadas por response y 4 MiB de texto de código.
+
+El entrypoint de `packages/meta`, la validación de `META_API_KEY` y el transporte incluyen el marcador `server-only`; el smoke se ejecuta con la condición Node `react-server`. No importar estos módulos desde un Client Component ni exponer la configuración de Meta en el navegador.
+
+`streamCode` entrega deltas de texto mientras llegan. Mantiene cada delta de argumentos por `item_id` y espera `response.function_call_arguments.done`, `response.output_item.done` y `response.completed`; nunca entrega una llamada parcial para ejecución. Valida el JSON completo con el schema Zod asociado al nombre de herramienta y rechaza IDs repetidos, llamadas paralelas incompletas o metadata distinta entre eventos y el response final. El paquete no ejecuta las herramientas. `MetaClient.toolResult(callId, value)` serializa un resultado de hasta 64 KiB; el input siguiente conserva el `tool_call` completo y empareja cada resultado por el mismo call ID.
+
+El contexto usa el modo stateless documentado: cada request lleva `store: false` y solicita `reasoning.encrypted_content` solo para replay. `replay` incluye mensajes assistant visibles, llamadas completas y el bloque de razonamiento opaco cifrado; no incluye ni emite texto de razonamiento privado. Conservar replay solo dentro del contexto del run; el futuro worker debe filtrar datos sensibles antes de llamar a Meta y controlar el acceso a cualquier contexto persistido.
+
+`generateImage` limita la respuesta base64 a 20 MiB, valida PNG/JPEG/WebP y dimensiones de hasta 8192 px por lado/40 MP, y devuelve bytes, MIME y dimensiones. El adaptador no guarda assets ni certifica que un sprite/tileset sea visualmente utilizable; eso se comprueba al integrar assets.
+
+Los errores tienen códigos estables. 401, 403, 429, 5xx, cancelación, timeout, JSON/schema inválidos e imagen inválida se clasifican sin copiar bodies ni mensajes arbitrarios del proveedor. Se interpreta `Retry-After` como segundos o HTTP-date y `GET /models` reintenta como máximo dos veces con jitter. Ningún POST de plan/código/imagen se reintenta automáticamente porque Responses no documenta una clave idempotente para evitar cargos duplicados. Un timeout, una desconexión o un 5xx posterior al envío puede ser ambiguo; el caller debe reconciliar el run antes de iniciar otro. El worker durable aún no existe, así que esta garantía de extremo a extremo queda pendiente de las issues #11/#16.
+
+El smoke solo envía datos sintéticos; el producto todavía no conecta mensajes de usuario con Meta ni ejecuta tool calls. La conexión real al chat queda deshabilitada hasta implementar avisos Contributor, elegibilidad y filtros de datos sensibles.
+
+Las pruebas de esta capa son offline: `npm test -- tests/meta-client.test.ts tests/meta-smoke.test.ts`. El smoke real existente pertenece a la issue #8; no se requiere para las pruebas contractuales de #9 y `--tools`/`--image` siguen siendo opt-in facturables.
 
 ## Contrato y fuentes oficiales
 
@@ -46,7 +62,8 @@ El smoke solo envía datos sintéticos; el producto todavía no conecta mensajes
 - [Models](https://dev.meta.ai/docs/models): `muse-spark-1.3-contributor`, `muse-image-1.0` y disponibilidad.
 - [Política geográfica](https://dev.meta.ai/legal/geographic-use-policy): habilitación por jurisdicción, territorios restringidos y disponibilidad de Muse Image.
 - [Responses API](https://dev.meta.ai/docs/protocols/responses): `POST /v1/responses`, estados y campos de salida.
+- [Structured output](https://dev.meta.ai/docs/structured-output): límites y modo estricto de JSON Schema.
 - [Tool calling](https://dev.meta.ai/docs/tool-calling): formato plano de tools de Responses, `function_call` y respuesta ligada a `call_id`.
-- [Generación de imagen](https://dev.meta.ai/docs/cookbook/image-generation-basics): `image_generation_call` y resultado base64.
+- [Generación de imagen](https://dev.meta.ai/docs/image-generation): `image_generation_call` y resultado base64.
 - [Contributor mode](https://dev.meta.ai/help/policies-and-privacy/contributor-tier): uso de datos para entrenamiento, ZDR, privacidad, edad mínima y restricciones de datos.
 - [Precios y límites](https://dev.meta.ai/docs/pricing-rate-limits): tarifas y límites vigentes.

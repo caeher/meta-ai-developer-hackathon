@@ -14,6 +14,8 @@ Estado local de issue #7 actualizado el 2 de noviembre de 2026: `/projects/[proj
 
 Estado de issue #8 (2 de noviembre de 2026): `npm run meta:smoke` pasó en Node 24.22.1 con una clave local de operador; `GET /models` mostró los IDs configurados para plan, código e imagen y `POST /responses` completó la respuesta sintética. No se guardaron la clave, headers, prompt completo ni el ID completo de respuesta. `npm test` valida errores offline con mocks; no se ejecutaron los opt-in facturables `--tools` ni `--image`. `docs/meta-api.md` registra los requisitos Contributor/ZDR, disponibilidad de cuenta/región y los costes vigentes revisados. La verificación real no conecta todavía Meta al editor.
 
+Estado local de issue #9 (2 de noviembre de 2026): `MetaClient` valida el plan JSON, consume SSE incremental y ensambla/valida argumentos antes de emitir tool calls una sola vez cuando termina el response. La imagen se valida por base64, formato, tamaño y dimensiones. El replay usa `store: false` y razonamiento cifrado; no se muestran resúmenes privados. Los POST facturables no se reintentan por falta de clave idempotente documentada; los errores ambiguos requieren que el futuro worker persista el run antes de reintentarlo. Fixtures offline cubren texto, llamadas paralelas y PNG sintético; no se ejecutó el smoke real ni una generación facturable. El chat aún no llama a Meta.
+
 | Orden | Issue | Fase | Dependencia |
 | --- | --- | --- | --- |
 | 01 | [#1 [01] Inicializar el monorepo Next.js y fijar Node 24](https://github.com/caeher/meta-ai-developer-hackathon/issues/1) | Fundaciones | Ninguna |
