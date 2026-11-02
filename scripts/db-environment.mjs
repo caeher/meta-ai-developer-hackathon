@@ -44,9 +44,9 @@ export function loadDatabaseEnvironment() {
 
 export function loadLocalStorageEnvironment() {
   const local = readLocalEnvironment();
-  process.env.S3_ENDPOINT ??= `http://127.0.0.1:${local.S3_API_PORT}`;
-  process.env.S3_REGION ??= "us-east-1";
+  process.env.S3_ENDPOINT = `http://127.0.0.1:${local.S3_API_PORT}`;
+  process.env.S3_REGION = "us-east-1";
   process.env.S3_BUCKET_PRIVATE ??= local.S3_BUCKET_PRIVATE;
-  process.env.S3_ACCESS_KEY_ID ??= local.MINIO_ROOT_USER;
-  process.env.S3_SECRET_ACCESS_KEY ??= local.MINIO_ROOT_PASSWORD;
+  process.env.S3_ACCESS_KEY_ID = local.MINIO_ROOT_USER;
+  process.env.S3_SECRET_ACCESS_KEY = local.MINIO_ROOT_PASSWORD;
 }

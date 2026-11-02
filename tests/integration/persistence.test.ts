@@ -209,6 +209,8 @@ describe.skipIf(!integrationEnabled)("persistencia PostgreSQL y storage S3", () 
       versionId: readyVersion.id,
     });
     expect(publication.status).toBe("building");
+    await expect(repositories.publications.get(identityB, projectA.id, publication.id)).rejects.toThrow("Recurso no encontrado");
+    await expect(repositories.publications.setStatus(identityB, publication.id, "revoked")).rejects.toThrow("Recurso no encontrado");
     const idempotencyKey = `publication-idempotency-${suffix}`;
     const concurrentPublications = await Promise.all([
       repositories.publications.create(identityA, {

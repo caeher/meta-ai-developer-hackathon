@@ -75,16 +75,27 @@ let databaseName;
 let databaseCreated = false;
 let temporaryBucket;
 let bucketCreated = false;
+let temporaryPublicationBucket;
+let publicationBucketCreated = false;
 
 try {
   loadDatabaseEnvironment();
   const localEnvironment = readLocalEnvironment();
-  process.env.REDIS_URL ??= `redis://127.0.0.1:${localEnvironment.REDIS_PORT}`;
+  process.env.REDIS_URL = `redis://127.0.0.1:${localEnvironment.REDIS_PORT}`;
   loadLocalStorageEnvironment();
   temporaryBucket = `meta-game-itest-${randomUUID().replaceAll("-", "").slice(0, 20)}`;
   createPrivateTestBucket(temporaryBucket);
   bucketCreated = true;
   process.env.S3_BUCKET_PRIVATE = temporaryBucket;
+  temporaryPublicationBucket = `meta-game-pub-itest-${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+  createPrivateTestBucket(temporaryPublicationBucket);
+  publicationBucketCreated = true;
+  process.env.S3_BUCKET_PUBLIC = temporaryPublicationBucket;
+  process.env.PUBLISH_S3_ACCESS_KEY_ID = localEnvironment.MINIO_ROOT_USER;
+  process.env.PUBLISH_S3_SECRET_ACCESS_KEY = localEnvironment.MINIO_ROOT_PASSWORD;
+  process.env.PUBLISH_READ_ACCESS_KEY_ID = localEnvironment.MINIO_ROOT_USER;
+  process.env.PUBLISH_READ_SECRET_ACCESS_KEY = localEnvironment.MINIO_ROOT_PASSWORD;
+  process.env.PUBLICATION_S3_TEST_ENABLED = "1";
   const baseUrl = new URL(process.env.DATABASE_URL);
   if (!["localhost", "127.0.0.1", "[::1]"].includes(baseUrl.hostname.toLowerCase())) {
     throw new Error("test:integration solo conecta a PostgreSQL local; DATABASE_URL no se registra.");
@@ -142,6 +153,14 @@ try {
       runMcli(["rb", "--force", `local/${temporaryBucket}`]);
     } catch {
       console.error("No se pudo eliminar el bucket S3 temporal de integración; elimínalo en el entorno local.");
+      process.exitCode = 1;
+    }
+  }
+  if (publicationBucketCreated && temporaryPublicationBucket) {
+    try {
+      runMcli(["rb", "--force", `local/${temporaryPublicationBucket}`]);
+    } catch {
+      console.error("No se pudo eliminar el bucket público temporal de integración; elimínalo en el entorno local.");
       process.exitCode = 1;
     }
   }

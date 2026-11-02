@@ -35,4 +35,6 @@ La compilación se ejecuta con el sandbox existente y sus límites de recursos. 
 
 `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm run build:worker` y `npm run build:publishing-origin` comprueban el código y fixtures offline. Las pruebas de integración PostgreSQL/S3 dependen de servicios de prueba dedicados; no deben apuntarse a producción. El E2E comprueba la interacción del editor con endpoints fixture.
 
+Validación local del 2 de noviembre de 2026: `npm run test:integration` pasó con PostgreSQL, Redis y Silo locales. La suite crea bases y buckets temporales, comprueba la persistencia/ownership de publicaciones en PostgreSQL y escribe/lee/borra artefactos S3 mediante las rutas de worker y reader; el origen HTTP sirve GET/HEAD anónimos desde el manifiesto, niega `.env`, fuentes y mapas, y responde 404 después de revocar. Todos los recursos temporales se limpian. En esta comprobación ambos roles usaron la credencial root local, así que no valida permisos mínimos ni separación productiva.
+
 La implementación local no demuestra todavía rootless Docker en el host Linux dedicado, permisos productivos separados, DNS/TLS wildcard, comportamiento de cachés reales ni revocación entre navegadores. Hasta completar esa validación, deja `PUBLISHING_ENABLED=false`.
