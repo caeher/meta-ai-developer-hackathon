@@ -12,5 +12,6 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     clearMocks: true,
+    testTimeout: process.env.PERSISTENCE_TEST_ENABLED === "1" ? 30_000 : 5_000,
   },
 });
