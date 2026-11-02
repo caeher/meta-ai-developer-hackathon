@@ -21,6 +21,9 @@ npm run typecheck
 npm run build
 ```
 
-Playwright verifica los cuatro presets localmente sin depender de Meta. El recorrido del controller y el runner de Chromium tienen fixtures de contrato. La verificación con Docker rootless real y S3/Redis/PostgreSQL integrados requiere el host Linux dedicado; el runtime de producción sigue apagado con `RUNS_ENABLED=false` hasta publicar y fijar por digest la imagen nueva del sandbox y completar su preflight. No se usó una clave Meta real en esta issue, por lo que los fixtures no acreditan una generación cobrada.
+Playwright verifica los cuatro presets localmente sin depender de Meta. El recorrido del controller y el runner de Chromium tienen fixtures de contrato. En Node 24.22.1, la validación local previa reportó 197 pruebas aprobadas y 24 de integración omitidas; E2E pasó 21/21 en Chromium, Firefox y WebKit; lint, typecheck y builds web, worker y template Phaser pasaron.
 
+El 2 de noviembre de 2026, `npm run meta:smoke` pasó con la configuración local de Meta. Ejecutó el listado de modelos y una respuesta de texto sintética; los IDs y el texto de respuesta se suprimieron de la salida. También se construyó `meta-game-sandbox:issue20-check` para `linux/amd64` con Docker Desktop y la sonda del runner pasó en un contenedor sin red, read-only y con Chromium. Esa imagen solo existe en el daemon local; no está publicada ni fijada para el host dedicado.
+
+El preflight rootless no se ejecutó: este entorno es Windows con el contexto Docker Desktop `desktop-linux`, no el host Linux dedicado. Tampoco hay configuración local del controlador rootless. Por eso no se ejecutó la generación inicial y edición con Meta dentro del sandbox real. El runtime sigue apagado con `RUNS_ENABLED=false`; el smoke de Meta y la sonda local no sustituyen ese recorrido ni acreditan aislamiento real con S3/Redis/PostgreSQL.
 El checkpoint temporal no crea versiones restaurables para el usuario; snapshots y selector de versiones pertenecen a #21. Assets binarios nuevos que queden sin referencia tras una reparación fallida requieren la limpieza de recursos de issues posteriores.
