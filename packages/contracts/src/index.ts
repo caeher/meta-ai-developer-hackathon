@@ -7,3 +7,4 @@ export type {
   HealthResponse,
 } from "./http";
 export * from "./projects";
+export * from "./editor";

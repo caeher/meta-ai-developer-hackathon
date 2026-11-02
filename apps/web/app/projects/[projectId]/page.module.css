@@ -1,0 +1,10 @@
+.page { min-height: 100svh; display: grid; grid-template-rows: 72px minmax(0, 1fr); }
+.topbar { min-width: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; border-bottom: 1px solid var(--app-border); }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; letter-spacing: -0.03em; text-decoration: none; }
+.brandMark { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; color: var(--app-background); background: var(--app-blue); }
+
+@media (max-width: 640px) {
+  .page { grid-template-rows: 58px minmax(0, 1fr); }
+  .topbar { padding-inline: 12px; }
+  .brand { font-size: 16px; }
+}
