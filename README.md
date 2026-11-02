@@ -41,6 +41,8 @@ Postgres, Redis y S3 quedan ligados solo a loopback. `infra:up` prepara buckets 
 
 El endpoint `GET /api/health` solo comprueba que la app web responde. Devuelve `{"status":"ok","service":"web"}` sin consultar servicios externos ni serializar el entorno. No representa readiness de base de datos, cola, Meta o sandbox.
 
+La issue #8 añade configuración de servidor para Meta Model API y `npm run meta:smoke`. El script carga `.env.local` (ignorado por Git) o variables del proceso, comprueba acceso a los tres modelos configurados y envía un prompt sintético pequeño; sin `META_API_KEY` falla antes de hacer solicitudes. No conecta todavía el chat del editor ni ejecuta generación de juegos. `--tools` añade dos solicitudes de prueba con uso de tokens y `--image` genera una imagen con cobro separado; revisa los precios vigentes antes de usar esas opciones. Consulta [docs/meta-api.md](docs/meta-api.md).
+
 ## Capturas del tema Tokyo Night
 
 Para repetir la revisión visual a 390 y 1440 px, inicia `npm run dev` y en otra terminal ejecuta `npx playwright install chromium` (solo la primera vez) y `npm run screenshots:theme`. El script verifica contraste, desbordamiento, foco por teclado, diálogo e hidratación del navegador y guarda las capturas en `docs/screenshots/`. Puedes indicar otra URL local con `THEME_SCREENSHOT_BASE_URL`.
@@ -64,6 +66,9 @@ npm run build
 npm run start
 npm run check:node
 npm run screenshots:theme
+npm run meta:smoke
+npm run meta:smoke -- --tools
+npm run meta:smoke -- --image
 ```
 
 `npm ci` aplica `engine-strict`; también hay una comprobación explícita de Node 24 en la instalación y en los comandos de raíz. CI usa Node 24 y ejecuta instalación, lint, typecheck, tests y build sin claves.
@@ -84,7 +89,7 @@ El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y ve
 
 ## Capacidades planificadas
 
-Todavía no existen `dev:worker`, `dev:gateway`, smoke de Meta, ejecución de juegos, aislamiento de runtime, preview ni publicación. El E2E actual cubre el shell del editor con una API de prueba; aún falta un recorrido E2E autenticado con dos cuentas Clerk reales. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue.
+Todavía no existen `dev:worker`, `dev:gateway`, generación desde el chat, ejecución de juegos, aislamiento de runtime, preview ni publicación. El E2E actual cubre el shell del editor con una API de prueba; aún falta un recorrido E2E autenticado con dos cuentas Clerk reales. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue. El acceso real a Meta se informa por separado del resultado de los tests con fixtures.
 
 ## Estructura
 
@@ -92,6 +97,7 @@ Todavía no existen `dev:worker`, `dev:gateway`, smoke de Meta, ejecución de ju
 - `apps/web/components/ui`: wrappers Radix reutilizables y galería local del tema.
 - `packages/config`: validación de URLs públicas y configuración de infraestructura local.
 - `packages/contracts`: schemas Zod de liveness, errores HTTP, proyectos y progreso del editor.
+- `packages/meta`: validación de configuración, transporte server-side acotado y comprobación opt-in de modelos Meta.
 - `packages/db`: modelo PostgreSQL/Drizzle y repositorios que requieren identidad verificada.
 - `packages/storage`: adaptador S3 privado con claves de servidor, checksum y estados de reconciliación.
 - `infra`: Docker Compose, perfiles de desarrollo, ejemplos locales y digest de imágenes.

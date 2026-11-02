@@ -12,6 +12,8 @@ El commit inicial contenía planificación. `main` ya incluye el monorepo, los s
 
 ## Decisiones de arquitectura
 
+Estado de la issue #8 (2 de noviembre de 2026): `packages/meta` valida la clave y la allowlist de Meta, limita timeouts y ofrece `npm run meta:smoke`. El smoke real se verificó en Node 24.22.1 con respuestas exitosas para los modelos configurados y texto sintético; no se guardaron clave ni ID completo. Las pruebas offline usan respuestas mock. `--tools` y `--image` son opt-in por uso facturable. El smoke no conecta Meta al chat ni habilita generación.
+
 - **Node 24 en todos los proyectos Node**, incluidos plantillas, imágenes Docker, CI y servicios. `.nvmrc`: `24`; `engines.node`: `>=24 <25`; npm workspaces con `package-lock.json` versionado y `npm ci`. Comprobar compatibilidad y fijar versiones de dependencias al implementar, sin actualizar majors implícitamente.
 - **Next.js App Router + TypeScript estricto** para la aplicación y API de control. Usar Server Components por defecto y Client Components para interacción. **Radix Themes/Primitives** para las vistas; Clerk proporciona sus componentes de identidad, con apariencia coherente. El canvas del juego pertenece a Phaser.
 - **PostgreSQL + Drizzle**: relaciones, transacciones, migraciones SQL auditables y tipado cercano al esquema. **Redis + BullMQ** para trabajos durables, locks y límites atómicos. **S3 compatible** para assets y snapshots privados; Silo, fork compatible con MinIO, para desarrollo local mientras MinIO Community no publique imágenes mantenidas. La base es la fuente de verdad, no el disco temporal ni Redis.
