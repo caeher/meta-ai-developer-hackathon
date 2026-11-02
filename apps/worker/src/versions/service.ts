@@ -11,6 +11,8 @@ import {
   snapshotBytes,
   type VersionSnapshot,
   type VersionSnapshotFile,
+  type VersionSnapshotIdentity,
+  type VersionSnapshotMetadata,
   type SnapshotLimits,
 } from "@meta-game/storage";
 import type { AgentSandbox } from "../agent/tools";
@@ -46,11 +48,53 @@ export function createVersionService(input: {
   versions: VersionsRepository;
   storage: VersionStorage & { close?: () => void };
   sandbox: FileSource;
+  maxStorageBytes?: number;
 }) {
   const snapshots = input.storage;
   const limits: SnapshotLimits = input.storage.limits;
 
   return {
+    async captureLifecycleSnapshot(identity: VersionSnapshotIdentity, signal: AbortSignal) {
+      const files = await captureWorkspaceFiles(input.sandbox, identity.projectId, signal, { requireProjectFiles: false }, limits);
+      if (!files.length) return null;
+      const specFile = files.find((file) => file.path === "src/game/project-spec.json" && file.encoding === "utf8");
+      if (!specFile || specFile.encoding !== "utf8") throw new Error("lifecycle_snapshot_game_spec_missing");
+      let gameSpec: GameSpec;
+      try { gameSpec = GameSpecSchema.parse(JSON.parse(specFile.content)); }
+      catch { throw new Error("lifecycle_snapshot_game_spec_invalid"); }
+      const snapshot: VersionSnapshot = {
+        schemaVersion: 1,
+        projectId: identity.projectId,
+        versionId: identity.versionId,
+        runId: null,
+        parentVersionId: null,
+        gameSpec,
+        verification: { status: "passed", checks: [{ check: "lifecycle_snapshot", status: "passed", summary: "Snapshot validado por manifiesto y checksum." }] },
+        files,
+        totalBytes: files.reduce((total, file) => total + file.bytes, 0),
+      };
+      const written = await snapshots.write(identity, snapshot);
+      const verified = await snapshots.read(identity, written);
+      if (!sameChecksums(snapshot.files, verified.files)) throw new Error("lifecycle_snapshot_verification_failed");
+      return written;
+    },
+
+    async restoreLifecycleSnapshot(projectId: string, identity: VersionSnapshotIdentity, metadata: VersionSnapshotMetadata) {
+      if (identity.projectId !== projectId) throw new Error("lifecycle_snapshot_identity_mismatch");
+      const snapshot = await snapshots.read(identity, metadata);
+      if (snapshot.projectId !== projectId || snapshot.versionId !== identity.versionId) throw new Error("lifecycle_snapshot_identity_mismatch");
+      await applyFileSet(input.sandbox, projectId, snapshot.files, async () => undefined, limits);
+      return { files: snapshot.files.length, bytes: snapshot.totalBytes };
+    },
+
+    async deleteLifecycleSnapshot(identity: VersionSnapshotIdentity) {
+      await snapshots.delete(identity);
+    },
+
+    async deleteVersionSnapshot(identity: VersionSnapshotIdentity) {
+      await snapshots.delete(identity);
+    },
+
     async captureVerifiedRun(args: {
       identity: VerifiedIdentityContext;
       claim: RunWorkerClaim;
@@ -105,6 +149,7 @@ export function createVersionService(input: {
           versionId,
           sha256,
           sizeBytes: body.byteLength,
+          ...(input.maxStorageBytes ? { storageLimitBytes: input.maxStorageBytes } : {}),
           parentVersionId: parent?.id ?? null,
           manifest: summary as unknown as Record<string, unknown>,
         });
@@ -237,6 +282,7 @@ export function createVersionService(input: {
               versionId: newVersionId,
               projectId,
               ...metadata,
+              ...(input.maxStorageBytes ? { storageLimitBytes: input.maxStorageBytes } : {}),
               parentVersionId: source.id,
               manifest: manifest as unknown as Record<string, unknown>,
             });

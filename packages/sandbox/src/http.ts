@@ -17,6 +17,8 @@ import {
 const projectPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox$/i;
 const execPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/exec$/i;
 const stopPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/stop$/i;
+const cleanupPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/cleanup$/i;
+const quiescePath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/quiesce$/i;
 const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|read-binary-file|write-file|delete-file|write-binary-file|list-files|install-dependencies|run-command|start-dev-server|read-logs|verify-game)$/i;
 const projectIdSchema = z.uuid();
 const execSchema = z.object({
@@ -49,7 +51,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     return;
   }
   const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-  const match = projectPath.exec(pathname) ?? execPath.exec(pathname) ?? stopPath.exec(pathname) ?? toolPath.exec(pathname);
+  const match = projectPath.exec(pathname) ?? execPath.exec(pathname) ?? stopPath.exec(pathname) ?? cleanupPath.exec(pathname) ?? quiescePath.exec(pathname) ?? toolPath.exec(pathname);
   if (!match) {
     send(response, 404, { error: "not_found" });
     return;
@@ -75,6 +77,16 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     }
     if (request.method === "POST" && stopPath.test(pathname)) {
       send(response, 200, await service.stop(projectId));
+      return;
+    }
+    if (request.method === "POST" && cleanupPath.test(pathname)) {
+      await service.cleanupManagedProject(projectId);
+      send(response, 200, { cleaned: true });
+      return;
+    }
+    if (request.method === "POST" && quiescePath.test(pathname)) {
+      await service.quiesceManagedProject(projectId);
+      send(response, 200, { quiesced: true });
       return;
     }
     if (request.method === "POST" && execPath.test(pathname)) {

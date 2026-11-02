@@ -16,6 +16,7 @@ export async function POST(request: Request, context: Context): Promise<Response
       case "login": return handlers.login(request);
       case "logout": return handlers.logout(request);
       case "logout-all": return handlers.logoutAll(request);
+      case "delete-account": return handlers.deleteAccount(request);
       case "forgot-password": return handlers.forgotPassword(request);
       case "verify-email": return handlers.verifyEmail(request);
       case "reset-password": return handlers.resetPassword(request);

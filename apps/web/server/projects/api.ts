@@ -1,5 +1,6 @@
 import "server-only";
 import { createDatabaseFromEnvironment, createRepositories } from "@meta-game/db";
+import { parseRunEnvironment } from "@meta-game/config";
 import type { VerifiedIdentityContext } from "@meta-game/db";
 import { apiErrorResponse } from "../auth/http";
 import { requireUser } from "../auth/auth";
@@ -17,7 +18,16 @@ export async function withProjectApi(action: (context: ProjectApiContext) => Pro
   try {
     const identity = await requireUser();
     database = createDatabaseFromEnvironment();
-    const response = await action({ identity, repositories: createRepositories(database.db), allowedOrigins: getAllowedOrigins() });
+    const quotas = parseRunEnvironment(process.env);
+    const response = await action({ identity, repositories: createRepositories(database.db, {
+      maxProjects: quotas.USER_MAX_PROJECTS,
+      maxStorageBytes: quotas.USER_MAX_STORAGE_MB * 1024 * 1024,
+      maxConcurrentJobs: quotas.USER_MAX_CONCURRENT_JOBS,
+      runMaxTokens: quotas.RUN_MAX_TOKENS,
+      dailyTokenLimit: quotas.USER_DAILY_TOKEN_LIMIT,
+      dailyImageLimit: quotas.USER_DAILY_IMAGE_LIMIT,
+      runMaxDurationMs: quotas.RUN_MAX_DURATION_MS,
+    }), allowedOrigins: getAllowedOrigins() });
     if (response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream") && response.body && database) {
       const reader = response.body.getReader();
       let released = false;

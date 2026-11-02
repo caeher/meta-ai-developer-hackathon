@@ -552,9 +552,41 @@ export async function reconcileExpiredRunLeases(database: GameDatabase, limit = 
       }
 
       if (run.cancelRequestedAt) {
-        await tx.update(runs).set({ status: "cancelled", errorCode: null, updatedAt: now }).where(eq(runs.id, run.id));
-        await tx.update(usageReservations).set({ status: "released", updatedAt: now }).where(and(eq(usageReservations.runId, run.id), eq(usageReservations.status, "reserved")));
-        await appendRunEvent(tx, run, "run.cancelled", { reason: "cancel_requested", fencingToken: lock.fencingToken.toString() });
+        const [reservation] = await tx.select().from(usageReservations).where(and(
+          eq(usageReservations.ownerUserId, lock.ownerUserId), eq(usageReservations.projectId, lock.projectId),
+          eq(usageReservations.runId, run.id), eq(usageReservations.status, "reserved"),
+        )).for("update").limit(1);
+        const persistedEvents = await tx.select({ type: runEvents.type, payload: runEvents.payload }).from(runEvents).where(and(
+          eq(runEvents.ownerUserId, lock.ownerUserId), eq(runEvents.runId, run.id), sql`${runEvents.type} like 'agent.%'`,
+        ));
+        const usage = measuredPersistedUsage(persistedEvents, reservation?.reservedImages ?? 0);
+        const reservationExceeded = Boolean(reservation && usage.tokens > reservation.reservedTokens);
+        if (reservation && (usage.tokens > 0 || usage.images > 0)) {
+          await tx.insert(usageLedger).values({
+            ownerUserId: lock.ownerUserId,
+            projectId: lock.projectId,
+            reservationId: reservation.id,
+            idempotencyKey: runChargeIdempotencyKey(run.id),
+            kind: "charge",
+            tokens: usage.tokens,
+            images: usage.images,
+            metadata: { fencingToken: lock.fencingToken.toString(), runId: run.id, reconciled: true },
+          }).onConflictDoNothing({ target: [usageLedger.ownerUserId, usageLedger.idempotencyKey] });
+        }
+        if (reservation) await tx.update(usageReservations).set({
+          status: usage.tokens > 0 || usage.images > 0 ? "committed" : "released", updatedAt: now,
+        }).where(and(eq(usageReservations.id, reservation.id), eq(usageReservations.status, "reserved")));
+        await tx.update(runs).set({
+          status: reservationExceeded ? "failed" : "cancelled",
+          errorCode: reservationExceeded ? "usage_reservation_exceeded" : null,
+          updatedAt: now,
+        }).where(eq(runs.id, run.id));
+        await appendRunEvent(tx, run, reservationExceeded ? "run.failed" : "run.cancelled", {
+          ...(reservationExceeded ? { errorCode: "usage_reservation_exceeded" } : { reason: "cancel_requested" }),
+          usage,
+          reservationReleased: !usage.tokens && !usage.images,
+          fencingToken: lock.fencingToken.toString(),
+        });
       } else {
         await tx.update(runs).set({ status: "queued", errorCode: null, updatedAt: now }).where(eq(runs.id, run.id));
         await tx.update(runOutbox).set({
@@ -574,4 +606,28 @@ export async function reconcileExpiredRunLeases(database: GameDatabase, limit = 
     }
     return reconciled;
   });
+}
+
+function measuredPersistedUsage(events: readonly { type: string; payload: unknown }[], reservedImages: number): RunUsage {
+  const usage: { tokens: number; images: number } = { tokens: 0, images: 0 };
+  const startedImages = new Set<string>();
+  const completedImages = new Set<string>();
+  for (const event of events) {
+    if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) continue;
+    const payload = event.payload as Record<string, unknown>;
+    if (event.type === "agent.meta_response_completed") {
+      const responseUsage = payload.usage;
+      if (responseUsage && typeof responseUsage === "object" && !Array.isArray(responseUsage)) {
+        const values = responseUsage as Record<string, unknown>;
+        if (typeof values.tokens === "number" && Number.isSafeInteger(values.tokens) && values.tokens >= 0) usage.tokens += values.tokens;
+        if (typeof values.images === "number" && Number.isSafeInteger(values.images) && values.images >= 0) usage.images += values.images;
+      }
+      if (payload.kind === "image" && typeof payload.requestKey === "string") completedImages.add(payload.requestKey);
+    } else if (event.type === "agent.meta_request_started" && payload.kind === "image" && typeof payload.requestKey === "string") {
+      startedImages.add(payload.requestKey);
+    }
+  }
+  const ambiguousImages = [...startedImages].filter((requestKey) => !completedImages.has(requestKey)).length;
+  usage.images = Math.min(reservedImages, usage.images + ambiguousImages);
+  return usage;
 }

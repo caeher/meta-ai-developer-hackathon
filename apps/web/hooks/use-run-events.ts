@@ -27,7 +27,12 @@ function emptyProgress(status: RunResponse["status"]): EditorProgress {
 function runErrorMessage(code: unknown): string {
   if (code === "orchestrator_pending") return "La ejecución no está habilitada en este entorno. El mensaje quedó guardado y puedes reintentar cuando el worker y el sandbox estén disponibles.";
   if (code === "project_run_busy") return "Este proyecto ya tiene una ejecución activa.";
-  if (typeof code === "string" && code.startsWith("usage_limit_")) return "Se alcanzó el límite de uso configurado.";
+  if (code === "usage_limit_tokens") return "Se alcanzó la cuota diaria de tokens; revisa el uso consumido y reservado en Proyectos.";
+  if (code === "usage_limit_images") return "Se alcanzó la cuota diaria de imágenes; revisa el uso consumido y reservado en Proyectos.";
+  if (code === "usage_limit_concurrency") return "Ya tienes todas las ejecuciones simultáneas permitidas en curso.";
+  if (code === "usage_limit_storage") return "Se alcanzó la cuota de almacenamiento privado; libera espacio antes de generar más assets o versiones.";
+  if (code === "usage_limit_projects") return "Se alcanzó el máximo de proyectos de la cuenta.";
+  if (code === "usage_limit_time") return "La ejecución alcanzó el límite de tiempo configurado.";
   if (code === "not_found") return "El proyecto o la ejecución ya no está disponible.";
   if (code === "contributor_consent_required") return "Confirma los términos de uso de Meta y el requisito de edad antes de iniciar.";
   if (code === "unauthenticated" || code === "authentication_not_configured") return "Inicia sesión para ejecutar el agente.";
@@ -200,7 +205,7 @@ export function useRunEvents(projectId: string) {
       });
       if (event.type === "preview.ready") setPreviewRevision(event.sequence);
       if (event.type === "run.finished") setAssistantSummary(event.payload.summary || "La ejecución terminó correctamente.");
-      if (event.type === "run.failed") setAssistantSummary(`La ejecución terminó con error (${event.payload.errorCode}).`);
+      if (event.type === "run.failed") setAssistantSummary(runErrorMessage(event.payload.errorCode));
       if (event.type === "run.cancelled") setAssistantSummary("La ejecución se detuvo.");
       if (isTerminalEvent(event)) terminal = true;
     };

@@ -37,13 +37,23 @@ export {
   createOrGetProjectSandbox,
   claimProjectDevServerStart,
   getProjectSandbox,
+  getProjectSandboxForCleanup,
   touchProjectSandbox,
   updateProjectSandbox,
   claimExpiredSandboxes,
+  claimIdleSandboxes,
+  claimDeletedProjectSandboxes,
+  releaseDeletedProjectSandboxLease,
+  beginSandboxSuspension,
+  finishSandboxSuspension,
+  releaseSandboxLifecycleLease,
+  clearSandboxLifecycleSnapshot,
 } from "./sandboxes";
 export type { SandboxRecord, SandboxState } from "./sandboxes";
 export { getPreviewTarget } from "./preview";
 export type { PreviewTarget } from "./preview";
+export { claimProjectCleanupBatch, getProjectCleanupResources, failProjectCleanup, completeProjectCleanup } from "./resource-lifecycle";
+export type { ClaimedProjectCleanup } from "./resource-lifecycle";
 export { assertRunQuotaAvailable, RunQuotaPolicySchema, runChargeIdempotencyKey, utcDayStart } from "./usage";
 export type { RunQuotaPolicy } from "./usage";
 export * from "./schema/index";

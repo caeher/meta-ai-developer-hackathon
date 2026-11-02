@@ -74,11 +74,13 @@ export class SandboxService {
 
   async create(projectId: string): Promise<PublicSandboxState> {
     let record = await this.registry.createOrGet(projectId);
-    if (record.status === "stopping") throw new SandboxBusyError();
+    if (record.status === "stopping" || record.status === "suspending" ||
+      (record.lifecycleLeaseExpiresAt && record.lifecycleLeaseExpiresAt.getTime() > this.clock())) throw new SandboxBusyError();
     if (record.status === "failed" || (record.leaseExpiresAt && record.leaseExpiresAt.getTime() <= this.clock())) {
       await this.reapExpired();
       record = await this.registry.createOrGet(projectId);
-      if (record.status === "stopping") throw new SandboxBusyError();
+      if (record.status === "stopping" || record.status === "suspending" ||
+        (record.lifecycleLeaseExpiresAt && record.lifecycleLeaseExpiresAt.getTime() > this.clock())) throw new SandboxBusyError();
     }
     try {
       await this.driver.create({
@@ -121,7 +123,7 @@ export class SandboxService {
       const fresh = await this.requiredRecord(projectId);
       return this.publicState(fresh);
     }
-    if (record.status === "stopped" && record.runtimeId === null) return this.publicState(record);
+    if ((record.status === "stopped" || record.status === "suspended") && record.runtimeId === null) return this.publicState(record);
     const inspection = await this.driver.inspect(record.id, record.projectId, record.runtimeUid);
     if (inspection.state === "missing") {
       await this.registry.update(record, {
@@ -179,11 +181,12 @@ export class SandboxService {
     }
     try {
       await this.driver.destroy(record.id, record.projectId, record.runtimeUid);
+      const status: SandboxState = record.lifecycleLeaseToken ? "suspending" : "stopped";
       await this.registry.update(record, {
-        status: "stopped", runtimeId: null, leaseExpiresAt: null,
+        status, runtimeId: null, leaseExpiresAt: null,
         devServerStatus: "stopped", devServerPort: null, devServerLeaseExpiresAt: null,
       });
-      return this.publicState({ ...record, status: "stopped", runtimeId: null, leaseExpiresAt: null, devServerStatus: "stopped", devServerPort: null, devServerLeaseExpiresAt: null });
+      return this.publicState({ ...record, status, runtimeId: null, leaseExpiresAt: null, devServerStatus: "stopped", devServerPort: null, devServerLeaseExpiresAt: null });
     } catch {
       await this.registry.update(record, {
         status: "failed", leaseExpiresAt: null,
@@ -191,6 +194,28 @@ export class SandboxService {
       });
       throw new SandboxRuntimeError("sandbox_destroy_failed");
     }
+  }
+
+  async cleanupManagedProject(projectId: string): Promise<void> {
+    const record = await this.registry.getForCleanup(projectId);
+    if (!record) return;
+    await this.driver.destroy(record.id, record.projectId, record.runtimeUid);
+    await this.registry.update(record, {
+      status: "stopped", runtimeId: null, leaseExpiresAt: null,
+      devServerStatus: "stopped", devServerPort: null, devServerLeaseExpiresAt: null,
+      lifecycleLeaseToken: null, lifecycleLeaseExpiresAt: null,
+    });
+  }
+
+  async quiesceManagedProject(projectId: string): Promise<void> {
+    const record = await this.registry.getForCleanup(projectId);
+    if (!record) return;
+    await this.driver.stop(record.id, record.projectId, record.runtimeUid);
+    await this.registry.update(record, {
+      status: "stopped", leaseExpiresAt: null,
+      devServerStatus: "stopped", devServerPort: null, devServerLeaseExpiresAt: null,
+      lifecycleLeaseToken: null, lifecycleLeaseExpiresAt: null,
+    });
   }
 
   async exec(projectId: string, argv: readonly string[], cwd = "", timeoutMs = this.environment.SANDBOX_COMMAND_TIMEOUT_MS): Promise<SandboxToolCommandResult> {

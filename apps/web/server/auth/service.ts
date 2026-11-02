@@ -1,7 +1,7 @@
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { GameDatabase } from "@meta-game/db";
-import { authRateLimits, authSessions, authTokens, users } from "@meta-game/db";
+import { assets, authRateLimits, authSessions, authTokens, projectCleanupTasks, projects, publications, runs, sandboxes, usageReservations, users, versions } from "@meta-game/db";
 import {
   clearSessionCookie,
   createOpaqueToken,
@@ -28,6 +28,7 @@ const registerSchema = z.object({ email: z.string(), password: z.string() }).str
 const loginSchema = z.object({ email: z.string(), password: z.string() }).strict();
 const tokenSchema = z.object({ token: z.string().min(20).max(256) }).strict();
 const resetSchema = z.object({ token: z.string().min(20).max(256), password: z.string() }).strict();
+const deleteAccountSchema = z.object({ password: z.string().min(1).max(128) }).strict();
 const metadata = {
   "cache-control": "private, no-store",
   "referrer-policy": "no-referrer",
@@ -42,7 +43,9 @@ type PublicUser = { userId: string; email: string };
 export function createDrizzleSessionStore(database: GameDatabase): SessionStore {
   return {
     async create(record) {
-      const [user] = await database.select({ id: users.id }).from(users).where(eq(users.userId, record.userId)).limit(1);
+      const [user] = await database.select({ id: users.id }).from(users).where(and(
+        eq(users.userId, record.userId), isNull(users.deletedAt),
+      )).limit(1);
       if (!user) throw new Error("auth_session_user_missing");
       await database.insert(authSessions).values({
         tokenHash: record.tokenHash,
@@ -64,7 +67,7 @@ export function createDrizzleSessionStore(database: GameDatabase): SessionStore 
         absoluteExpiresAt: authSessions.absoluteExpiresAt,
         revokedAt: authSessions.revokedAt,
       }).from(authSessions).innerJoin(users, eq(users.id, authSessions.userRowId))
-        .where(eq(authSessions.tokenHash, tokenHashValue)).limit(1);
+        .where(and(eq(authSessions.tokenHash, tokenHashValue), isNull(users.deletedAt))).limit(1);
       return row ?? null;
     },
     async extend(tokenHashValue, now, expiresAt) {
@@ -84,7 +87,11 @@ export function createDrizzleSessionStore(database: GameDatabase): SessionStore 
   };
 }
 
-export function createAuthHandlers(options: { database: GameDatabase; mailer: Mailer | null }) {
+export function createAuthHandlers(options: {
+  database: GameDatabase;
+  mailer: Mailer | null;
+  revokePreviewSessions?: (projectIds: readonly string[]) => Promise<void>;
+}) {
   const { database, mailer } = options;
   const sessions = createSessionManager(createDrizzleSessionStore(database));
 
@@ -147,6 +154,72 @@ export function createAuthHandlers(options: { database: GameDatabase; mailer: Ma
         const active = await sessions.resolve(token);
         if (active) await sessions.revokeAll(active.userId);
         return response(200, { ok: true }, clearSessionCookie(isSecureCookie()));
+      } catch (error) { return apiErrorResponse(error); }
+    },
+
+    async deleteAccount(request: Request): Promise<Response> {
+      try {
+        assertSameOriginRequest(request, getAllowedOrigins());
+        const session = await sessions.resolve(readSessionCookie(request.headers.get("cookie")));
+        if (!session) return response(401, { error: "unauthenticated" });
+        const { password } = deleteAccountSchema.parse(await readLimitedJson(request, 8 * 1024));
+        const user = await findUserById(database, session.userId);
+        if (!user?.passwordHash || !await verifyPassword(password, user.passwordHash)) {
+          return response(401, { error: "invalid_credentials" });
+        }
+        const now = new Date();
+        const deletedProjects = await database.transaction(async (tx) => {
+          const [owner] = await tx.select({ id: users.id }).from(users).where(and(
+            eq(users.userId, session.userId), isNull(users.deletedAt),
+          )).for("update").limit(1);
+          if (!owner) return [] as string[];
+          const ownedProjects = await tx.select({ id: projects.id }).from(projects).where(and(
+            eq(projects.ownerUserId, owner.id), isNull(projects.deletedAt),
+          )).for("update");
+          const projectIds = ownedProjects.map(({ id }) => id);
+          await options.revokePreviewSessions?.(projectIds);
+          await tx.update(users).set({
+            deletedAt: now, email: null, passwordHash: null, emailVerifiedAt: null, updatedAt: now,
+          }).where(eq(users.id, owner.id));
+          await tx.update(authSessions).set({ revokedAt: now }).where(and(
+            eq(authSessions.userRowId, owner.id), isNull(authSessions.revokedAt),
+          ));
+          await tx.update(authTokens).set({ consumedAt: now }).where(and(
+            eq(authTokens.userRowId, owner.id), isNull(authTokens.consumedAt),
+          ));
+          if (projectIds.length) {
+            const ownedProjectIds = inArray(projects.id, projectIds);
+            await tx.update(projects).set({ deletedAt: now, name: "Proyecto eliminado", updatedAt: now }).where(ownedProjectIds);
+            await tx.update(runs).set({ status: "cancelled", errorCode: "project_deleted", updatedAt: now }).where(and(
+              eq(runs.ownerUserId, owner.id), inArray(runs.projectId, projectIds), inArray(runs.status, ["queued", "planning", "running", "verifying"]),
+            ));
+            await tx.update(sandboxes).set({
+              status: "stopping", lifecycleLeaseToken: null, lifecycleLeaseExpiresAt: null, updatedAt: now,
+            }).where(and(eq(sandboxes.ownerUserId, owner.id), inArray(sandboxes.projectId, projectIds)));
+            await tx.update(assets).set({ status: "delete_requested", updatedAt: now }).where(and(
+              eq(assets.ownerUserId, owner.id), inArray(assets.projectId, projectIds),
+            ));
+            await tx.update(versions).set({ status: "delete_requested" }).where(and(
+              eq(versions.ownerUserId, owner.id), inArray(versions.projectId, projectIds),
+            ));
+            await tx.update(publications).set({
+              status: "revoked", buildLeaseToken: null, buildLeaseExpiresAt: null, updatedAt: now,
+            }).where(and(eq(publications.ownerUserId, owner.id), inArray(publications.projectId, projectIds)));
+            await tx.update(usageReservations).set({ status: "released", updatedAt: now }).where(and(
+              eq(usageReservations.ownerUserId, owner.id), inArray(usageReservations.projectId, projectIds), eq(usageReservations.status, "reserved"),
+            ));
+            await tx.insert(projectCleanupTasks).values(projectIds.map((projectId) => ({ ownerUserId: owner.id, projectId })))
+              .onConflictDoNothing({ target: [projectCleanupTasks.ownerUserId, projectCleanupTasks.projectId] });
+          }
+          return projectIds;
+        });
+        if (!deletedProjects.length) {
+          const [stillActive] = await database.select({ id: users.id }).from(users).where(and(
+            eq(users.userId, session.userId), isNull(users.deletedAt),
+          )).limit(1);
+          if (stillActive) return response(200, { deleted: true, projectsQueued: 0 }, clearSessionCookie(isSecureCookie()));
+        }
+        return response(202, { deleted: true, projectsQueued: deletedProjects.length }, clearSessionCookie(isSecureCookie()));
       } catch (error) { return apiErrorResponse(error); }
     },
 
@@ -213,7 +286,7 @@ async function findUserByEmail(database: GameDatabase, email: string) {
 }
 
 async function findUserById(database: GameDatabase, userId: string) {
-  const [user] = await database.select().from(users).where(eq(users.userId, userId)).limit(1);
+  const [user] = await database.select().from(users).where(and(eq(users.userId, userId), isNull(users.deletedAt))).limit(1);
   return user ?? null;
 }
 

@@ -33,6 +33,7 @@ describe("preview Redis: consumo atómico y revocación", () => {
       `preview:epoch:${projectId}`,
       `preview:grant:${grantId}`,
       `preview:session:${sessionIdHash}`,
+      `preview:project-sessions:${projectId}`,
     ];
     store = createRedisPreviewStore(redisUrl!);
     peerStore = createRedisPreviewStore(redisUrl!);
@@ -55,8 +56,10 @@ describe("preview Redis: consumo atómico y revocación", () => {
     ]);
     expect(consumed.filter(Boolean)).toHaveLength(1);
     expect(await store.readSession(sessionIdHash, projectId)).toMatchObject({ projectId, userId: "user_previewRedis", epoch: 0 });
+    expect(await store.hasActiveProjectSessions(projectId)).toBe(true);
 
     expect(await store.revokeProject(projectId)).toBe(1);
     expect(await store.readSession(sessionIdHash, projectId)).toBeUndefined();
+    expect(await store.hasActiveProjectSessions(projectId)).toBe(false);
   });
 });

@@ -7,6 +7,8 @@ import {
   createDatabaseFromEnvironment,
   createRepositories,
   claimRun,
+  appendClaimedRunAgentEvents,
+  reserveClaimedRunImage,
   finishClaimedRun,
   identityFromAuthenticatedSession,
   ProjectRunBusyError,
@@ -174,6 +176,37 @@ describe.skipIf(!integrationEnabled)("cola durable, cuotas y fencing con Postgre
     expect(reservation?.status).toBe("committed");
     expect(charges).toHaveLength(1);
     expect(charges[0]).toMatchObject({ kind: "charge", tokens: 12, images: 0 });
+  });
+
+  it("reconcilia uso durable y reserva ambigua al cancelar tras la caída del worker", async () => {
+    const owner = await fixture("CrashUsage");
+    const created = await repositories.runs.enqueueRun(owner.identity, {
+      projectId: owner.project.id,
+      idempotencyKey: `crash-usage-${randomUUID()}`,
+      policy: basePolicy,
+    });
+    const payload = { runId: created.run.id, idempotencyKey: created.run.idempotencyKey, generation: 0 };
+    const worker = await claimRun(database.db, { ...payload, leaseMs: 3_000 });
+    expect(worker).toBeDefined();
+    await appendClaimedRunAgentEvents(database.db, worker!.claim, [
+      { type: "agent.meta_request_started", payload: { kind: "plan", requestKey: "plan", round: 0 } },
+      { type: "agent.meta_response_completed", payload: {
+        kind: "plan", requestKey: "plan", responseId: "fixture-plan", model: "fixture-model", usage: { tokens: 17, images: 0 },
+      } },
+    ]);
+    await reserveClaimedRunImage(database.db, worker!.claim, { requestKey: "image-after-plan", round: 0, dailyImageLimit: 10 });
+    await repositories.runs.cancelRun(owner.identity, created.run.id);
+    await database.db.update(projectRunLocks).set({ leaseExpiresAt: new Date(Date.now() - 1) })
+      .where(eq(projectRunLocks.runId, created.run.id));
+
+    expect(await reconcileExpiredRunLeases(database.db)).toBe(1);
+    const [run] = await database.db.select().from(runs).where(eq(runs.id, created.run.id)).limit(1);
+    const [reservation] = await database.db.select().from(usageReservations).where(eq(usageReservations.runId, created.run.id)).limit(1);
+    const charges = reservation ? await database.db.select().from(usageLedger).where(eq(usageLedger.reservationId, reservation.id)) : [];
+    expect(run?.status).toBe("cancelled");
+    expect(reservation?.status).toBe("committed");
+    expect(charges).toHaveLength(1);
+    expect(charges[0]).toMatchObject({ kind: "charge", tokens: 17, images: 1 });
   });
 
   it("publica el outbox en Redis y procesa el run una sola vez con consumo durable", async () => {

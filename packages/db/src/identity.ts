@@ -27,7 +27,7 @@ export class IdempotencyConflictError extends Error {
   constructor() { super("La clave de idempotencia ya se usó para otra operación"); this.name = "IdempotencyConflictError"; }
 }
 export class UsageLimitExceededError extends Error {
-  constructor(public readonly limit: "tokens" | "images" | "concurrency") { super(`Se superó el límite de uso: ${limit}`); this.name = "UsageLimitExceededError"; }
+  constructor(public readonly limit: "tokens" | "images" | "concurrency" | "storage" | "projects" | "time") { super(`Se superó el límite de uso: ${limit}`); this.name = "UsageLimitExceededError"; }
 }
 export class ProjectRunBusyError extends Error {
   constructor() { super("El proyecto ya tiene un run activo"); this.name = "ProjectRunBusyError"; }

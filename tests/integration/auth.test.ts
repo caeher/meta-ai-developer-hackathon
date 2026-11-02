@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, or } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { authRateLimits, authSessions, authTokens, createDatabaseFromEnvironment, users } from "@meta-game/db";
+import { authRateLimits, authSessions, authTokens, createDatabaseFromEnvironment, createRepositories, identityFromAuthenticatedSession, projectCleanupTasks, projects, sandboxes, users } from "@meta-game/db";
 import { createAuthHandlers } from "../../apps/web/server/auth/service.js";
 import { hashRateLimitKey } from "../../apps/web/server/auth/core.js";
 import type { Mailer } from "../../apps/web/server/auth/mailer.js";
@@ -11,6 +11,8 @@ const integrationEnabled = process.env.PERSISTENCE_TEST_ENABLED === "1";
 describe.skipIf(!integrationEnabled)("autenticación propia con PostgreSQL", () => {
   const suffix = randomUUID().replaceAll("-", "");
   const email = `auth-${suffix}@example.test`;
+  const deletionEmail = `account-delete-${suffix}@example.test`;
+  const createdUserIds: string[] = [];
   let database: ReturnType<typeof createDatabaseFromEnvironment>;
   const delivered: { verification?: string; reset?: string } = {};
   const mailer: Mailer = {
@@ -29,8 +31,10 @@ describe.skipIf(!integrationEnabled)("autenticación propia con PostgreSQL", () 
 
   afterAll(async () => {
     if (!database) return;
-    await database.db.delete(users).where(eq(users.email, email));
-    await database.db.delete(authRateLimits).where(inArray(authRateLimits.bucketHash, rateKeys));
+    if (createdUserIds.length) await database.db.delete(users).where(inArray(users.userId, createdUserIds));
+    await database.db.delete(users).where(or(eq(users.email, email), eq(users.email, deletionEmail)));
+    const deletionRateKeys = ["register", "login", "recovery"].map((scope) => hashRateLimitKey(`${scope}:${deletionEmail}`, { ...process.env, NODE_ENV: "test" }));
+    await database.db.delete(authRateLimits).where(inArray(authRateLimits.bucketHash, [...rateKeys, ...deletionRateKeys]));
     await database.close();
   });
 
@@ -105,6 +109,45 @@ describe.skipIf(!integrationEnabled)("autenticación propia con PostgreSQL", () 
     const blocked = await database.db.select().from(authRateLimits).where(eq(authRateLimits.bucketHash, rateKeys[0]!)).limit(1);
     expect(blocked[0]?.failures).toBe(5);
     expect(blocked[0]?.lockedUntil?.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("elimina cuenta propia, revoca sesiones y encola la limpieza privada con auditoría", async () => {
+    const password = "cuenta-de-prueba-segura";
+    expect((await handlers.register(post("register", { email: deletionEmail, password }))).status).toBe(202);
+    const verification = await handlers.verifyEmail(post("verify-email", { token: queryToken(delivered.verification!) }));
+    expect(verification.status).toBe(200);
+    const loggedIn = await handlers.login(post("login", { email: deletionEmail, password }));
+    expect(loggedIn.status).toBe(200);
+    const cookie = sessionToken(loggedIn);
+    const [user] = await database.db.select().from(users).where(eq(users.email, deletionEmail)).limit(1);
+    if (!user) throw new Error("Account deletion test user missing");
+    createdUserIds.push(user.userId);
+    const identity = identityFromAuthenticatedSession({ userId: user.userId });
+    const repositories = createRepositories(database.db);
+    const project = await repositories.projects.create(identity, { name: "Cuenta para borrar" });
+    const sandbox = await repositories.sandboxes.upsert(identity, { projectId: project.id, status: "ready", runtimeId: `account-delete-${suffix}` });
+    const revokedProjects: string[] = [];
+    const deletionHandlers = createAuthHandlers({
+      database: database.db,
+      mailer,
+      revokePreviewSessions: async (projectIds) => { revokedProjects.push(...projectIds); },
+    });
+    expect((await deletionHandlers.deleteAccount(post("delete-account", { password: "incorrecta" }, cookie))).status).toBe(401);
+    const deleted = await deletionHandlers.deleteAccount(post("delete-account", { password }, cookie));
+    expect(deleted.status).toBe(202);
+    expect(await sessionUser(deletionHandlers, cookie)).toBeNull();
+    const [tombstone] = await database.db.select().from(users).where(eq(users.userId, user.userId)).limit(1);
+    const [deletedProject] = await database.db.select().from(projects).where(eq(projects.id, project.id)).limit(1);
+    const [stoppingSandbox] = await database.db.select().from(sandboxes).where(eq(sandboxes.id, sandbox.id)).limit(1);
+    const [cleanup] = await database.db.select().from(projectCleanupTasks).where(eq(projectCleanupTasks.projectId, project.id)).limit(1);
+    expect(tombstone).toMatchObject({ email: null, passwordHash: null, emailVerifiedAt: null });
+    expect(tombstone?.deletedAt).toBeInstanceOf(Date);
+    expect(deletedProject).toMatchObject({ name: "Proyecto eliminado" });
+    expect(deletedProject?.deletedAt).toBeInstanceOf(Date);
+    expect(stoppingSandbox?.status).toBe("stopping");
+    expect(cleanup).toMatchObject({ status: "queued", projectId: project.id });
+    expect(revokedProjects).toEqual([project.id]);
+    await expect(repositories.projects.create(identity, { name: "No debe reactivarse" })).rejects.toThrow("Recurso no encontrado");
   });
 });
 

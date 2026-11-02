@@ -2,12 +2,19 @@ import { z } from "zod";
 
 const positiveInteger = (fallback: number, maximum: number) =>
   z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(maximum)).default(fallback);
+const retentionDays = z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0).max(3_650)).default(30);
 
 export const RunEnvironmentSchema = z.object({
   RUNS_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   PUBLISHING_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  RESOURCE_LIFECYCLE_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  PREVIEW_SESSION_TTL_SECONDS: positiveInteger(900, 86_400),
   REDIS_URL: z.string().url().refine((value) => ["redis:", "rediss:"].includes(new URL(value).protocol)).default("redis://127.0.0.1:6379"),
   USER_MAX_CONCURRENT_JOBS: positiveInteger(1, 100),
+  USER_MAX_PROJECTS: positiveInteger(50, 10_000),
+  USER_MAX_STORAGE_MB: positiveInteger(1_024, 1_048_576),
+  SANDBOX_IDLE_TTL_SECONDS: positiveInteger(900, 86_400),
+  PROJECT_DELETION_RETENTION_DAYS: retentionDays,
   PROJECT_MAX_RUN_STEPS: positiveInteger(20, 1000),
   RUN_MAX_TOKENS: positiveInteger(16_000, 2_000_000),
   RUN_MAX_DURATION_MS: positiveInteger(600_000, 3_600_000),

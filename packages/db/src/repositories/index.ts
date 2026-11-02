@@ -8,6 +8,7 @@ import {
   OwnedResourceNotFoundError,
   ProjectRunBusyError,
   StaleRunWorkerError,
+  UsageLimitExceededError,
   type VerifiedIdentityContext,
 } from "../identity";
 import { assertRunQuotaAvailable, RunQuotaPolicySchema, utcDayStart, type RunQuotaPolicy } from "../usage";
@@ -64,6 +65,7 @@ const versionInputSchema = z.object({
   sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   parentVersionId: uuidSchema.nullable().optional(),
   manifest: versionManifestSchema.optional(),
+  storageLimitBytes: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 });
 const runVersionInputSchema = z.object({
   versionId: uuidSchema,
@@ -71,6 +73,7 @@ const runVersionInputSchema = z.object({
   sizeBytes: z.number().int().positive().max(25 * 1024 * 1024),
   parentVersionId: uuidSchema.nullable(),
   manifest: versionManifestSchema,
+  storageLimitBytes: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 }).strict();
 const usageInputSchema = z.object({
   projectId: uuidSchema,
@@ -107,6 +110,15 @@ const enqueueRunInputSchema = z.object({
   contributorConsent: z.boolean().default(false),
   reservedImages: z.number().int().nonnegative().max(100_000).default(0),
   policy: RunQuotaPolicySchema,
+});
+const repositoryPolicySchema = z.object({
+  maxProjects: z.number().int().min(1).max(10_000).default(50),
+  maxStorageBytes: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).default(1_024 * 1024 * 1024),
+  maxConcurrentJobs: z.number().int().min(1).max(100).default(1),
+  runMaxTokens: z.number().int().min(1).max(2_000_000).default(16_000),
+  dailyTokenLimit: z.number().int().min(1).max(20_000_000).default(100_000),
+  dailyImageLimit: z.number().int().min(1).max(100_000).default(10),
+  runMaxDurationMs: z.number().int().min(1_000).max(3_600_000).default(600_000),
 });
 const runEventInputSchema = z.object({
   type: z.string().trim().min(1).max(100),
@@ -154,7 +166,7 @@ async function resolveOwnerId(db: GameDatabase, identity: VerifiedIdentityContex
   const [owner] = await db
     .select({ id: users.id })
     .from(users)
-    .where(eq(users.userId, userId))
+    .where(and(eq(users.userId, userId), isNull(users.deletedAt)))
     .limit(1);
   if (!owner) throw new OwnedResourceNotFoundError();
   return owner.id;
@@ -173,27 +185,44 @@ async function assertOwnedProject(
   if (!project) throw new OwnedResourceNotFoundError();
 }
 
-export function createRepositories(db: GameDatabase) {
+export function createRepositories(db: GameDatabase, policyInput: Partial<z.input<typeof repositoryPolicySchema>> = {}) {
+  const policy = repositoryPolicySchema.parse(policyInput);
+  async function storageBytes(tx: Parameters<Parameters<GameDatabase["transaction"]>[0]>[0], ownerUserId: string) {
+    const [assetUsage] = await tx.select({ bytes: sql<number>`coalesce(sum(${assets.sizeBytes}), 0)` }).from(assets)
+      .where(eq(assets.ownerUserId, ownerUserId));
+    const [snapshotUsage] = await tx.select({ bytes: sql<number>`coalesce(sum(${versions.sizeBytes}), 0)` }).from(versions)
+      .where(eq(versions.ownerUserId, ownerUserId));
+    const [reservedUsage] = await tx.select({ bytes: sql<number>`coalesce(sum(${usageReservations.reservedStorageBytes}), 0)` }).from(usageReservations)
+      .where(and(eq(usageReservations.ownerUserId, ownerUserId), eq(usageReservations.status, "reserved")));
+    const [lifecycleUsage] = await tx.select({ bytes: sql<number>`coalesce(sum(${sandboxes.lifecycleSnapshotSizeBytes}), 0)` }).from(sandboxes)
+      .where(eq(sandboxes.ownerUserId, ownerUserId));
+    return Number(assetUsage?.bytes ?? 0) + Number(snapshotUsage?.bytes ?? 0) + Number(reservedUsage?.bytes ?? 0) + Number(lifecycleUsage?.bytes ?? 0);
+  }
+  async function assertStorageCapacity(tx: Parameters<Parameters<GameDatabase["transaction"]>[0]>[0], ownerUserId: string, bytesToAdd: number, limit = policy.maxStorageBytes) {
+    const [owner] = await tx.select({ id: users.id }).from(users).where(eq(users.id, ownerUserId)).for("update").limit(1);
+    if (!owner) throw new OwnedResourceNotFoundError();
+    if (await storageBytes(tx, ownerUserId) + bytesToAdd > limit) throw new UsageLimitExceededError("storage");
+  }
   return {
     projects: {
       async create(identity: VerifiedIdentityContext, input: { name: string }) {
         const userId = requireContext(identity);
         const name = projectNameSchema.parse(input.name);
-        const [owner] = await db
-          .insert(users)
-          .values({ userId })
-          .onConflictDoUpdate({
-            target: users.userId,
-            set: { updatedAt: new Date() },
-          })
-          .returning({ id: users.id });
-        if (!owner) throw new Error("No se pudo resolver el dueño del proyecto");
-        const [project] = await db
-          .insert(projects)
-          .values({ ownerUserId: owner.id, name })
-          .returning();
-        if (!project) throw new Error("No se pudo crear el proyecto");
-        return project;
+        return db.transaction(async (tx) => {
+          const [owner] = await tx.insert(users).values({ userId }).onConflictDoUpdate({
+            target: users.userId, set: { updatedAt: new Date() },
+          }).returning({ id: users.id, deletedAt: users.deletedAt });
+          if (!owner) throw new Error("No se pudo resolver el dueño del proyecto");
+          if (owner.deletedAt) throw new OwnedResourceNotFoundError();
+          await tx.select({ id: users.id }).from(users).where(eq(users.id, owner.id)).for("update").limit(1);
+          const [activeProjects] = await tx.select({ count: sql<number>`count(*)` }).from(projects).where(and(
+            eq(projects.ownerUserId, owner.id), isNull(projects.deletedAt), eq(projects.isInternal, false),
+          ));
+          if (Number(activeProjects?.count ?? 0) >= policy.maxProjects) throw new UsageLimitExceededError("projects");
+          const [project] = await tx.insert(projects).values({ ownerUserId: owner.id, name }).returning();
+          if (!project) throw new Error("No se pudo crear el proyecto");
+          return project;
+        });
       },
 
       async createBuildWorkspace(identity: VerifiedIdentityContext) {
@@ -313,7 +342,7 @@ export function createRepositories(db: GameDatabase) {
               inArray(runs.status, ["queued", "planning", "running", "verifying"]),
             ));
           await tx.update(sandboxes)
-            .set({ status: "stopping", updatedAt: deletedAt })
+            .set({ status: "stopping", lifecycleLeaseToken: null, lifecycleLeaseExpiresAt: null, updatedAt: deletedAt })
             .where(and(eq(sandboxes.ownerUserId, ownerUserId), eq(sandboxes.projectId, parsedProjectId)));
           await tx.update(assets)
             .set({ status: "delete_requested", updatedAt: deletedAt })
@@ -438,6 +467,13 @@ export function createRepositories(db: GameDatabase) {
             and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
+          const [sandbox] = await tx.select({ status: sandboxes.status, lifecycleLeaseExpiresAt: sandboxes.lifecycleLeaseExpiresAt })
+            .from(sandboxes).where(and(
+              eq(sandboxes.ownerUserId, ownerUserId), eq(sandboxes.projectId, parsed.projectId),
+            )).for("update").limit(1);
+          if (sandbox?.status === "suspending" || (sandbox?.lifecycleLeaseExpiresAt && sandbox.lifecycleLeaseExpiresAt > new Date())) {
+            throw new ProjectRunBusyError();
+          }
 
           const [sourceMessage] = parsed.messageRequestId
             ? await tx.select().from(messages).where(and(
@@ -627,6 +663,7 @@ export function createRepositories(db: GameDatabase) {
         const parsed = runInputSchema.parse(input);
         const ownerUserId = await resolveOwnerId(db, identity);
         return db.transaction(async (tx) => {
+          await tx.select({ id: users.id }).from(users).where(eq(users.id, ownerUserId)).for("update").limit(1);
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
             eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
@@ -828,10 +865,12 @@ export function createRepositories(db: GameDatabase) {
         const id = randomUUID();
         const objectKey = `private/${ownerUserId}/projects/${parsed.projectId}/assets/${id}`;
         return db.transaction(async (tx) => {
+          await tx.select({ id: users.id }).from(users).where(eq(users.id, ownerUserId)).for("update").limit(1);
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
             eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
+          await assertStorageCapacity(tx, ownerUserId, parsed.sizeBytes);
           const [asset] = await tx.insert(assets)
             .values({ id, ownerUserId, objectKey, status: "pending", ...parsed })
             .returning();
@@ -989,6 +1028,7 @@ export function createRepositories(db: GameDatabase) {
         const projectId = uuidSchema.parse(claim.projectId);
         const runId = uuidSchema.parse(claim.runId);
         return db.transaction(async (tx) => {
+          await tx.select({ id: users.id }).from(users).where(eq(users.id, ownerUserId)).for("update").limit(1);
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
             eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
@@ -1015,6 +1055,7 @@ export function createRepositories(db: GameDatabase) {
             if (existing.id !== parsed.versionId) throw new IdempotencyConflictError();
             return existing;
           }
+          await assertStorageCapacity(tx, ownerUserId, parsed.sizeBytes, parsed.storageLimitBytes ?? policy.maxStorageBytes);
           if (parsed.parentVersionId) {
             const [parent] = await tx.select({ id: versions.id }).from(versions).where(and(
               eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, projectId),
@@ -1176,6 +1217,7 @@ export function createRepositories(db: GameDatabase) {
         const ownerUserId = await resolveOwnerId(db, identity);
         const id = parsed.versionId ?? randomUUID();
         return db.transaction(async (tx) => {
+          await tx.select({ id: users.id }).from(users).where(eq(users.id, ownerUserId)).for("update").limit(1);
           const [project] = await tx
             .select({ id: projects.id })
             .from(projects)
@@ -1183,6 +1225,7 @@ export function createRepositories(db: GameDatabase) {
             .for("update")
             .limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
+          await assertStorageCapacity(tx, ownerUserId, parsed.sizeBytes, parsed.storageLimitBytes ?? policy.maxStorageBytes);
           if (parsed.parentVersionId) {
             const [parent] = await tx.select({ id: versions.id }).from(versions).where(and(
               eq(versions.ownerUserId, ownerUserId), eq(versions.projectId, parsed.projectId),
@@ -1230,6 +1273,7 @@ export function createRepositories(db: GameDatabase) {
         if (ownerUserId !== lock.ownerUserId || parsed.projectId !== lock.projectId) throw new StaleRunWorkerError();
         const id = parsed.versionId ?? randomUUID();
         return db.transaction(async (tx) => {
+          await tx.select({ id: users.id }).from(users).where(eq(users.id, ownerUserId)).for("update").limit(1);
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
             eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
@@ -1246,6 +1290,7 @@ export function createRepositories(db: GameDatabase) {
             inArray(runs.status, ["queued", "planning", "running", "verifying"]),
           )).limit(1);
           if (activeRun) throw new ProjectRunBusyError();
+          await assertStorageCapacity(tx, ownerUserId, parsed.sizeBytes, parsed.storageLimitBytes ?? policy.maxStorageBytes);
           const parentVersionId = parsed.parentVersionId ?? null;
           if (parentVersionId) {
             const [parent] = await tx.select({ id: versions.id }).from(versions).where(and(
@@ -1416,6 +1461,7 @@ export function createRepositories(db: GameDatabase) {
         const versionId = uuidSchema.parse(input.versionId);
         const idempotencyKey = z.string().trim().min(8).max(128).parse(input.idempotencyKey ?? randomUUID());
         return db.transaction(async (tx) => {
+          await tx.select({ id: users.id }).from(users).where(eq(users.id, ownerUserId)).for("update").limit(1);
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
             eq(projects.ownerUserId, ownerUserId), eq(projects.id, projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
@@ -1651,14 +1697,63 @@ export function createRepositories(db: GameDatabase) {
     },
 
     usage: {
+      async getSummary(identity: VerifiedIdentityContext) {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const dayStart = utcDayStart(new Date());
+        const [projectsUsed] = await db.select({ count: sql<number>`count(*)` }).from(projects).where(and(
+          eq(projects.ownerUserId, ownerUserId), isNull(projects.deletedAt), eq(projects.isInternal, false),
+        ));
+        const [activeRuns] = await db.select({ count: sql<number>`count(*)` }).from(runs).where(and(
+          eq(runs.ownerUserId, ownerUserId), sql`${runs.status} in ('queued', 'planning', 'running', 'verifying')`,
+        ));
+        const [consumed] = await db.select({
+          tokens: sql<number>`coalesce(sum(case when ${usageLedger.kind} = 'refund' then -${usageLedger.tokens} else ${usageLedger.tokens} end), 0)`,
+          images: sql<number>`coalesce(sum(case when ${usageLedger.kind} = 'refund' then -${usageLedger.images} else ${usageLedger.images} end), 0)`,
+        }).from(usageLedger).where(and(
+          eq(usageLedger.ownerUserId, ownerUserId), sql`${usageLedger.createdAt} >= ${dayStart}`,
+        ));
+        const [held] = await db.select({
+          tokens: sql<number>`coalesce(sum(${usageReservations.reservedTokens}), 0)`,
+          images: sql<number>`coalesce(sum(${usageReservations.reservedImages}), 0)`,
+          storage: sql<number>`coalesce(sum(${usageReservations.reservedStorageBytes}), 0)`,
+        }).from(usageReservations).where(and(
+          eq(usageReservations.ownerUserId, ownerUserId), eq(usageReservations.status, "reserved"),
+        ));
+        const [assetUsage] = await db.select({
+          used: sql<number>`coalesce(sum(case when ${assets.status} = 'pending' then 0 else ${assets.sizeBytes} end), 0)`,
+          reserved: sql<number>`coalesce(sum(case when ${assets.status} = 'pending' then ${assets.sizeBytes} else 0 end), 0)`,
+        }).from(assets).where(eq(assets.ownerUserId, ownerUserId));
+        const [snapshotUsage] = await db.select({
+          used: sql<number>`coalesce(sum(case when ${versions.status} = 'creating' then 0 else ${versions.sizeBytes} end), 0)`,
+          reserved: sql<number>`coalesce(sum(case when ${versions.status} = 'creating' then ${versions.sizeBytes} else 0 end), 0)`,
+        }).from(versions).where(eq(versions.ownerUserId, ownerUserId));
+        const [lifecycleUsage] = await db.select({ bytes: sql<number>`coalesce(sum(${sandboxes.lifecycleSnapshotSizeBytes}), 0)` })
+          .from(sandboxes).where(eq(sandboxes.ownerUserId, ownerUserId));
+        return {
+          projects: { used: Number(projectsUsed?.count ?? 0), limit: policy.maxProjects },
+          concurrency: { used: Number(activeRuns?.count ?? 0), limit: policy.maxConcurrentJobs },
+          tokens: { used: Number(consumed?.tokens ?? 0), reserved: Number(held?.tokens ?? 0), limit: policy.dailyTokenLimit },
+          images: { used: Number(consumed?.images ?? 0), reserved: Number(held?.images ?? 0), limit: policy.dailyImageLimit },
+          storage: {
+            usedBytes: Number(assetUsage?.used ?? 0) + Number(snapshotUsage?.used ?? 0) + Number(lifecycleUsage?.bytes ?? 0),
+            reservedBytes: Number(assetUsage?.reserved ?? 0) + Number(snapshotUsage?.reserved ?? 0) + Number(held?.storage ?? 0),
+            limitBytes: policy.maxStorageBytes,
+          },
+          run: { maxTokens: policy.runMaxTokens, maxDurationMs: policy.runMaxDurationMs },
+          asOf: new Date().toISOString(),
+        };
+      },
+
       async reserve(identity: VerifiedIdentityContext, input: z.input<typeof usageInputSchema>) {
         const parsed = usageInputSchema.parse(input);
         const ownerUserId = await resolveOwnerId(db, identity);
         return db.transaction(async (tx) => {
+          await tx.select({ id: users.id }).from(users).where(eq(users.id, ownerUserId)).for("update").limit(1);
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
             eq(projects.ownerUserId, ownerUserId), eq(projects.id, parsed.projectId), and(isNull(projects.deletedAt), eq(projects.isInternal, false)),
           )).for("update").limit(1);
           if (!project) throw new OwnedResourceNotFoundError();
+          if (parsed.reservedStorageBytes) await assertStorageCapacity(tx, ownerUserId, parsed.reservedStorageBytes);
           const [inserted] = await tx.insert(usageReservations).values({ ...parsed, ownerUserId })
             .onConflictDoNothing({ target: [usageReservations.ownerUserId, usageReservations.idempotencyKey] }).returning();
           if (inserted) return inserted;

@@ -309,7 +309,10 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
                 checks,
                 signal,
               });
-            } catch {
+            } catch (error) {
+              if (error instanceof UsageLimitExceededError && error.limit === "storage") {
+                throw new RunProcessingError("usage_limit_storage", false, state.usage);
+              }
               throw new RunProcessingError("version_snapshot_failed", false, state.usage);
             }
           }
@@ -543,8 +546,9 @@ async function executeCachedTool(
     if (call.name === "generate_image" && error instanceof ImagePipelineError) {
       throw new RunProcessingError(error.code, false, state.usage);
     }
-    if (call.name === "generate_image" && error instanceof UsageLimitExceededError && error.limit === "images") {
-      throw new RunProcessingError("daily_image_limit_exceeded", false, state.usage);
+    if (call.name === "generate_image" && error instanceof UsageLimitExceededError) {
+      if (error.limit === "images") throw new RunProcessingError("daily_image_limit_exceeded", false, state.usage);
+      if (error.limit === "storage") throw new RunProcessingError("usage_limit_storage", false, state.usage);
     }
     if (call.name === "generate_image" && error instanceof MetaApiError) {
       throw providerFailure(error, state.usage, state.signal, state.userSignal);

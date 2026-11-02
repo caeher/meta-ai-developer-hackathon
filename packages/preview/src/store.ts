@@ -14,6 +14,7 @@ export type PreviewStore = Readonly<{
     sessionTtlSeconds: number;
   }): Promise<boolean>;
   readSession(sessionIdHash: string, projectId: string, nowSeconds?: number): Promise<PreviewSession | undefined>;
+  hasActiveProjectSessions(projectId: string, nowSeconds?: number): Promise<boolean>;
   revokeProject(projectId: string): Promise<number>;
   allowRateLimit(key: string, limit: number, windowSeconds: number): Promise<boolean>;
   subscribeRevocations(listener: (projectId: string) => void): Promise<() => Promise<void>>;
@@ -27,6 +28,7 @@ export function hashPreviewSessionId(sessionId: string): string {
 function projectEpochKey(projectId: string): string { return `preview:epoch:${projectId}`; }
 function usedGrantKey(grantId: string): string { return `preview:grant:${grantId}`; }
 function sessionKey(sessionIdHash: string): string { return `preview:session:${sessionIdHash}`; }
+function projectSessionsKey(projectId: string): string { return `preview:project-sessions:${projectId}`; }
 
 const createSessionScript = `
 local epoch = tonumber(redis.call('GET', KEYS[1]) or '0')
@@ -36,6 +38,8 @@ local grant = redis.call('SET', KEYS[2], '1', 'EX', ARGV[2], 'NX')
 if not grant then return -1 end
 local session = redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4], 'NX')
 if not session then redis.call('DEL', KEYS[2]); return -2 end
+redis.call('ZADD', KEYS[4], ARGV[5], ARGV[6])
+redis.call('PEXPIRE', KEYS[4], tonumber(ARGV[4]) * 1000)
 return 1
 `;
 
@@ -49,6 +53,7 @@ return { session, epoch }
 const revokeProjectScript = `
 local epoch = redis.call('INCR', KEYS[1])
 redis.call('PUBLISH', KEYS[2], ARGV[1])
+redis.call('DEL', KEYS[3])
 return epoch
 `;
 
@@ -83,9 +88,10 @@ export function createRedisPreviewStore(redisUrl: string): PreviewStore {
     },
     async createSessionFromGrant(input) {
       await ensureConnected();
-      const result = Number(await client.eval(createSessionScript, 3,
-        projectEpochKey(input.projectId), usedGrantKey(input.grantId), sessionKey(input.sessionIdHash),
-        String(input.epoch), String(input.grantTtlSeconds), JSON.stringify(input.session), String(input.sessionTtlSeconds)));
+      const result = Number(await client.eval(createSessionScript, 4,
+        projectEpochKey(input.projectId), usedGrantKey(input.grantId), sessionKey(input.sessionIdHash), projectSessionsKey(input.projectId),
+        String(input.epoch), String(input.grantTtlSeconds), JSON.stringify(input.session), String(input.sessionTtlSeconds),
+        String(input.session.expiresAt), input.sessionIdHash));
       return result === 1;
     },
     async readSession(sessionIdHash, projectId, nowSeconds = Math.floor(Date.now() / 1000)) {
@@ -99,9 +105,16 @@ export function createRedisPreviewStore(redisUrl: string): PreviewStore {
         return session;
       } catch { return undefined; }
     },
+    async hasActiveProjectSessions(projectId, nowSeconds = Math.floor(Date.now() / 1000)) {
+      if (!Number.isSafeInteger(nowSeconds) || nowSeconds < 0) return false;
+      await ensureConnected();
+      const key = projectSessionsKey(projectId);
+      await client.zremrangebyscore(key, "-inf", String(nowSeconds));
+      return (await client.zcard(key)) > 0;
+    },
     async revokeProject(projectId) {
       await ensureConnected();
-      return Number(await client.eval(revokeProjectScript, 2, projectEpochKey(projectId), `preview:revoke:${projectId}`, projectId));
+      return Number(await client.eval(revokeProjectScript, 3, projectEpochKey(projectId), `preview:revoke:${projectId}`, projectSessionsKey(projectId), projectId));
     },
     async allowRateLimit(key, limit, windowSeconds) {
       if (!/^[a-f0-9]{64}$/.test(key) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1_000_000 ||

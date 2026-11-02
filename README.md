@@ -72,6 +72,7 @@ npm run infra:down
 npm run db:migrate
 npm run db:seed
 npm run test:integration
+npm run resources:reconcile
 npm run test:e2e
 npm run lint
 npm run typecheck
@@ -98,7 +99,7 @@ La issue #3 incorpora el esquema Drizzle, migraciones y adaptador S3 privado. La
 
 Cada mensaje tiene `requestId` idempotente y secuencia por proyecto. Si un reintento repite la clave con el mismo rol/contenido, se devuelve el registro existente; si cambia el contenido, la API responde `409 idempotency_conflict`. Los transcript se sirven en orden de secuencia con cursor y texto plano, sin HTML activo.
 
-Eliminar un proyecto establece `deleted_at` en una transacción, oculta el proyecto y sus recursos, cancela runs activos, marca sandbox/assets/snapshots para limpieza, revoca publicaciones y crea una tarea `project_cleanup_tasks` en estado `queued`. La ruta incrementa también el epoch de preview antes del borrado para revocar sesiones y WebSockets. Todavía no existe un worker de reconciliación; los objetos S3 y volúmenes no se destruyen desde la petición web. `RUNS_ENABLED=false` y `PREVIEW_GATEWAY_ENABLED=false` por defecto, por lo que una entrega local con fixtures no equivale a generación ni preview reales.
+Eliminar un proyecto o una cuenta corta el acceso de inmediato y crea tareas privadas de limpieza con leases y trazabilidad. El worker quiesce sandboxes borrados, conserva los volúmenes durante la retención y después borra solo objetos/IDs recuperados de PostgreSQL. Las cuentas propias exigen contraseña, revocan sesiones y scrubbean email/hash antes del borrado asíncrono de proyectos. Las cuotas incluyen proyectos, storage, tokens, imágenes, concurrencia y tiempo; `/projects` muestra uso/reservas y motivos de rechazo. Consulta [docs/resource-lifecycle.md](docs/resource-lifecycle.md). `RESOURCE_LIFECYCLE_ENABLED=false`, `RUNS_ENABLED=false` y `PREVIEW_GATEWAY_ENABLED=false` por defecto: mocks y servicios locales no acreditan un host rootless real.
 
 Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQL de Drizzle y se puede repetir. `npm run db:seed` inserta dos usuarios, proyectos y actividad sintéticos; solo acepta PostgreSQL en loopback y es idempotente. `npm run test:integration` crea recursos temporales y verifica ownership, claves foráneas, paginación, idempotencia, ledger, sandboxes, almacenamiento y eliminación reconciliable de proyectos.
 

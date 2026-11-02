@@ -43,6 +43,14 @@ export class SandboxControllerClient {
     return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox`, "DELETE", undefined, signal);
   }
 
+  cleanupManagedProject(projectId: string, signal?: AbortSignal): Promise<{ cleaned: boolean }> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/cleanup`, "POST", undefined, signal);
+  }
+
+  quiesceManagedProject(projectId: string, signal?: AbortSignal): Promise<{ quiesced: boolean }> {
+    return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/quiesce`, "POST", undefined, signal);
+  }
+
   exec(projectId: string, argv: readonly string[], cwd = "", timeoutMs?: number, signal?: AbortSignal): Promise<SandboxToolCommandResult> {
     return this.request(`/v1/projects/${encodeURIComponent(projectId)}/sandbox/exec`, "POST", { argv, cwd, ...(timeoutMs ? { timeoutMs } : {}) }, signal);
   }

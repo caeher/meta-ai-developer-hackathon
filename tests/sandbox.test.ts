@@ -111,15 +111,21 @@ function fixture() {
           runtimeId: null,
           status: "provisioning",
           leaseExpiresAt: null,
-      devServerStatus: "stopped",
-      devServerPort: null,
-      devServerLeaseExpiresAt: null,
+          devServerStatus: "stopped",
+          devServerPort: null,
+          devServerLeaseExpiresAt: null,
+          lifecycleLeaseToken: null,
+          lifecycleLeaseExpiresAt: null,
+          lifecycleSnapshotId: null,
+          lifecycleSnapshotSha256: null,
+          lifecycleSnapshotSizeBytes: null,
           updatedAt: new Date(now),
         };
       }
       return record;
     }),
     get: vi.fn(async (projectId: string) => record?.projectId === projectId ? record : undefined),
+    getForCleanup: vi.fn(async (projectId: string) => record?.projectId === projectId ? record : undefined),
     update: vi.fn(async (_record: SandboxRecord, patch: {
       status: SandboxState;
       runtimeId?: string | null;
@@ -127,6 +133,11 @@ function fixture() {
       devServerStatus?: SandboxRecord["devServerStatus"];
       devServerPort?: number | null;
       devServerLeaseExpiresAt?: Date | null;
+      lifecycleLeaseToken?: string | null;
+      lifecycleLeaseExpiresAt?: Date | null;
+      lifecycleSnapshotId?: string | null;
+      lifecycleSnapshotSha256?: string | null;
+      lifecycleSnapshotSizeBytes?: number | null;
     }) => {
       if (record) record = { ...record, ...patch };
     }),
@@ -161,7 +172,7 @@ function fixture() {
     claimExpired: vi.fn(async () => {
       if (!record) return [];
       const leaseExpired = !record.leaseExpiresAt || record.leaseExpiresAt.getTime() <= now;
-      if (!leaseExpired || !["ready", "stopped", "failed"].includes(record.status)) return [];
+      if (!leaseExpired || !["stopped", "failed"].includes(record.status)) return [];
       const claimed = { ...record, status: "stopping" as const };
       record = claimed;
       return [claimed];
@@ -398,13 +409,41 @@ describe("sandbox rootless contract", () => {
     expect(crossProject.status).toBe(404);
   });
 
-  it("reclama y destruye sandboxes vencidos usando el TTL guardado", async () => {
+  it("deja los sandboxes listos vencidos para el sweeper con snapshot recuperable", async () => {
     const f = fixture();
     await f.service.create(PROJECT_ID);
     f.advance(901_000);
-    expect(await f.service.reapExpired()).toBe(1);
-    expect(f.driver.destroy).toHaveBeenCalledWith(SANDBOX_ID, PROJECT_ID, 23451);
-    expect(f.status()).toBe("stopped");
+    expect(await f.service.reapExpired()).toBe(0);
+    expect(f.driver.destroy).not.toHaveBeenCalled();
+    expect(f.status()).toBe("ready");
+  });
+
+  it("detiene un sandbox de proyecto borrado sin destruir antes la retención", async () => {
+    const test = fixture();
+    await test.service.create(PROJECT_ID);
+    await test.service.quiesceManagedProject(PROJECT_ID);
+    expect(test.driver.stop).toHaveBeenCalledTimes(1);
+    expect(test.driver.destroy).not.toHaveBeenCalled();
+    expect(test.status()).toBe("stopped");
+  });
+
+  it("mantiene la suspensión bajo lease hasta que el worker confirme el CAS", async () => {
+    const test = fixture();
+    await test.service.create(PROJECT_ID);
+    const record = await test.registry.get(PROJECT_ID);
+    expect(record).toBeDefined();
+    await test.registry.update(record!, {
+      status: "suspending",
+      lifecycleLeaseToken: "lease-token-for-test",
+      lifecycleLeaseExpiresAt: new Date(1_800_000_060_000),
+      lifecycleSnapshotId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      lifecycleSnapshotSha256: "a".repeat(64),
+      lifecycleSnapshotSizeBytes: 128,
+    });
+
+    await expect(test.service.destroy(PROJECT_ID)).resolves.toMatchObject({ state: "suspending" });
+    expect(test.status()).toBe("suspending");
+    expect(test.driver.destroy).toHaveBeenCalledTimes(1);
   });
 
   it("mantiene TTL al detener y destruye luego el volumen inactivo", async () => {

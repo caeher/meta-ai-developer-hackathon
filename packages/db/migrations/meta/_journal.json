@@ -78,6 +78,27 @@
       "when": 1793640674882,
       "tag": "0010_publication_artifacts",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793643405772,
+      "tag": "0011_resource_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793643563252,
+      "tag": "0012_cleanup_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793644039124,
+      "tag": "0013_account_deletion",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Badge, Button, Card, Dialog, Flex, Heading, Text, TextField } from "@radix-ui/themes";
 import styles from "./ProjectsDashboard.module.css";
 
@@ -17,15 +17,47 @@ interface ProjectPage {
   nextCursor: string | null;
 }
 
+interface UsageSummary {
+  projects: { used: number; limit: number };
+  concurrency: { used: number; limit: number };
+  tokens: { used: number; reserved: number; limit: number };
+  images: { used: number; reserved: number; limit: number };
+  storage: { usedBytes: number; reservedBytes: number; limitBytes: number };
+  run: { maxTokens: number; maxDurationMs: number };
+}
+
+function formatBytes(value: number): string {
+  return value < 1_048_576 ? `${Math.ceil(value / 1_024)} KiB` : `${(value / 1_048_576).toFixed(1)} MiB`;
+}
+
+function UsageMeter({ label, used, reserved = 0, limit, display }: { label: string; used: number; reserved?: number; limit: number; display?: string }) {
+  const total = Math.max(0, used + reserved);
+  const percent = Math.min(100, Math.round((total / Math.max(limit, 1)) * 100));
+  return (
+    <div className={styles.usageMeter}>
+      <div className={styles.usageLabel}><span>{label}</span><span>{display ?? `${used.toLocaleString()} usados${reserved ? ` · ${reserved.toLocaleString()} reservados` : ""} / ${limit.toLocaleString()}`}</span></div>
+      <div className={styles.usageTrack} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={limit} aria-valuenow={Math.min(total, limit)}>
+        <div className={styles.usageFill} style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
 async function readError(response: Response): Promise<string> {
   const body = await response.json().catch(() => ({})) as { error?: string };
+  if (body.error === "invalid_credentials") return "La contraseña no coincide.";
+  if (body.error === "unauthenticated") return "Tu sesión terminó. Inicia sesión de nuevo.";
   if (body.error === "authentication_not_configured") return "La autenticación no está configurada.";
   if (body.error === "not_found") return "El proyecto ya no está disponible.";
+  if (body.error === "usage_limit_projects") return "Alcanzaste el máximo de proyectos de tu cuenta.";
+  if (body.error === "usage_limit_storage") return "El almacenamiento reservado alcanzó la cuota de tu cuenta.";
   return "No se pudo completar la solicitud. Inténtalo de nuevo.";
 }
 
-export function ProjectsDashboard({ initialPage }: { initialPage: ProjectPage }) {
+export function ProjectsDashboard({ initialPage, initialUsage }: { initialPage: ProjectPage; initialUsage: UsageSummary }) {
+  const [usage, setUsage] = useState(initialUsage);
   const [projects, setProjects] = useState(initialPage.items);
+  const [projectsUsed, setProjectsUsed] = useState(initialUsage.projects.used);
   const [nextCursor, setNextCursor] = useState(initialPage.nextCursor);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -35,6 +67,29 @@ export function ProjectsDashboard({ initialPage }: { initialPage: ProjectPage })
   const [busyId, setBusyId] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [status, setStatus] = useState("");
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [accountPassword, setAccountPassword] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const refresh = async () => {
+      try {
+        const response = await fetch("/api/usage", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) return;
+        const summary = await response.json() as UsageSummary;
+        setUsage(summary);
+        setProjectsUsed(summary.projects.used);
+      } catch { /* Keep the last durable summary while the API is unavailable. */ }
+    };
+    const interval = window.setInterval(() => { void refresh(); }, 30_000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
 
   async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -49,6 +104,7 @@ export function ProjectsDashboard({ initialPage }: { initialPage: ProjectPage })
       if (!response.ok) throw new Error(await readError(response));
       const project = await response.json() as ProjectSummary;
       setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)]);
+      setProjectsUsed((current) => current + 1);
       setName("");
       setStatus("Proyecto creado. Ya puedes abrir su conversación.");
       window.location.assign(`/projects/${project.id}`);
@@ -90,6 +146,7 @@ export function ProjectsDashboard({ initialPage }: { initialPage: ProjectPage })
       const response = await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
       if (!response.ok) throw new Error(await readError(response));
       setProjects((current) => current.filter((item) => item.id !== project.id));
+      setProjectsUsed((current) => Math.max(0, current - 1));
       setPendingDelete(null);
       setStatus("Proyecto eliminado. La limpieza privada quedó en cola.");
     } catch (error) {
@@ -119,6 +176,26 @@ export function ProjectsDashboard({ initialPage }: { initialPage: ProjectPage })
     }
   }
 
+  async function deleteAccount() {
+    setDeletingAccount(true);
+    setStatus("");
+    try {
+      const response = await fetch("/api/auth/delete-account", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: accountPassword }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      setDeleteAccountOpen(false);
+      window.location.assign("/sign-in");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "No se pudo eliminar la cuenta.");
+    } finally {
+      setDeletingAccount(false);
+      setAccountPassword("");
+    }
+  }
+
   return (
     <section className={styles.dashboard} aria-labelledby="projects-title">
       <div className={styles.heading}>
@@ -127,8 +204,40 @@ export function ProjectsDashboard({ initialPage }: { initialPage: ProjectPage })
           <Heading as="h1" id="projects-title" size="8">Tus proyectos</Heading>
           <Text as="p" color="gray">Cada proyecto y conversación solo está disponible para su propietario.</Text>
         </div>
-        <Badge color="cyan" variant="soft">Generación deshabilitada</Badge>
+        <Flex gap="3" wrap="wrap" align="center">
+          <Badge color="cyan" variant="soft">Generación deshabilitada</Badge>
+          <Dialog.Root open={deleteAccountOpen} onOpenChange={(open) => { if (!deletingAccount) setDeleteAccountOpen(open); }}>
+            <Dialog.Trigger><Button size="2" variant="soft" color="red">Eliminar cuenta</Button></Dialog.Trigger>
+            <Dialog.Content>
+              <Dialog.Title>Eliminar cuenta</Dialog.Title>
+              <Dialog.Description>
+                Se cerrarán tus sesiones y el acceso a tus proyectos de inmediato. Los archivos, sandboxes y publicaciones se eliminarán mediante tareas auditables según la retención configurada.
+              </Dialog.Description>
+              <label className={styles.accountPasswordLabel} htmlFor="delete-account-password">Confirma tu contraseña</label>
+              <TextField.Root id="delete-account-password" type="password" autoComplete="current-password" value={accountPassword} onChange={(event) => setAccountPassword(event.target.value)} />
+              <Flex gap="3" justify="end" mt="5">
+                <Dialog.Close><Button variant="soft" disabled={deletingAccount}>Cancelar</Button></Dialog.Close>
+                <Button color="red" onClick={deleteAccount} disabled={deletingAccount || !accountPassword}>{deletingAccount ? "Eliminando…" : "Eliminar cuenta"}</Button>
+              </Flex>
+            </Dialog.Content>
+          </Dialog.Root>
+        </Flex>
       </div>
+
+      <Card className={styles.usageCard} size="3">
+        <div className={styles.usageHeading}>
+          <Heading as="h2" size="4">Uso y límites</Heading>
+          <Text size="1" color="gray">Las reservas se cuentan antes de ejecutar un trabajo.</Text>
+        </div>
+        <div className={styles.usageGrid}>
+          <UsageMeter label="Proyectos" used={projectsUsed} limit={usage.projects.limit} display={`${projectsUsed} activos / ${usage.projects.limit}`} />
+          <UsageMeter label="Ejecuciones simultáneas" used={usage.concurrency.used} limit={usage.concurrency.limit} />
+          <UsageMeter label="Tokens diarios" used={usage.tokens.used} reserved={usage.tokens.reserved} limit={usage.tokens.limit} />
+          <UsageMeter label="Imágenes diarias" used={usage.images.used} reserved={usage.images.reserved} limit={usage.images.limit} />
+          <UsageMeter label="Storage privado" used={usage.storage.usedBytes} reserved={usage.storage.reservedBytes} limit={usage.storage.limitBytes} display={`${formatBytes(usage.storage.usedBytes)} usados · ${formatBytes(usage.storage.reservedBytes)} reservados / ${formatBytes(usage.storage.limitBytes)}`} />
+          <Text className={styles.runLimit}>Por ejecución: hasta {usage.run.maxTokens.toLocaleString()} tokens y {Math.ceil(usage.run.maxDurationMs / 60_000)} min.</Text>
+        </div>
+      </Card>
 
       <Card className={styles.createCard} size="3">
         <form className={styles.createForm} onSubmit={createProject}>

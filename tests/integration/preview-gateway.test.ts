@@ -50,6 +50,10 @@ class MemoryPreviewStore implements PreviewStore {
     return session;
   }
 
+  async hasActiveProjectSessions(projectId: string, nowSeconds = Math.floor(Date.now() / 1000)) {
+    return [...this.sessions.values()].some((session) => session.projectId === projectId && session.expiresAt > nowSeconds && session.epoch === (this.epochs.get(projectId) ?? 0));
+  }
+
   async revokeProject(projectId: string) {
     const epoch = (this.epochs.get(projectId) ?? 0) + 1;
     this.epochs.set(projectId, epoch);

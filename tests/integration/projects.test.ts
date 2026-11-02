@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createResourceLifecycleService } from "../../apps/worker/src/lifecycle/service";
 import {
   assets,
   createDatabaseFromEnvironment,
@@ -8,6 +9,11 @@ import {
   identityFromAuthenticatedSession,
   IdempotencyConflictError,
   OwnedResourceNotFoundError,
+  ProjectRunBusyError,
+  UsageLimitExceededError,
+  claimIdleSandboxes,
+  beginSandboxSuspension,
+  finishSandboxSuspension,
   projectCleanupTasks,
   publications,
   runs,
@@ -22,6 +28,8 @@ describe.skipIf(!integrationEnabled)("proyectos privados y chat persistente", ()
   const suffix = randomUUID().replaceAll("-", "");
   const authA = `user_projectA${suffix}`;
   const authB = `user_projectB${suffix}`;
+  const authQuota = `user_quota${suffix}`;
+  const authLifecycle = `user_lifecycle${suffix}`;
   const identityA = identityFromAuthenticatedSession({ userId: authA });
   const identityB = identityFromAuthenticatedSession({ userId: authB });
   let database: ReturnType<typeof createDatabaseFromEnvironment>;
@@ -34,7 +42,7 @@ describe.skipIf(!integrationEnabled)("proyectos privados y chat persistente", ()
 
   afterAll(async () => {
     if (database) {
-      await database.db.delete(users).where(inArray(users.userId, [authA, authB]));
+      await database.db.delete(users).where(inArray(users.userId, [authA, authB, authQuota, authLifecycle]));
       await database.close();
     }
   });
@@ -53,6 +61,96 @@ describe.skipIf(!integrationEnabled)("proyectos privados y chat persistente", ()
     expect(await repositories.projects.get(identityB, first.id)).toBeUndefined();
     expect((await repositories.projects.rename(identityA, first.id, "Renombrado")).name).toBe("Renombrado");
     expect((await repositories.projects.list(identityB)).items.map((item) => item.id)).toEqual([foreign.id]);
+  });
+
+  it("serializa las cuotas de proyectos y storage ante solicitudes simultáneas", async () => {
+    const quotaIdentity = identityFromAuthenticatedSession({ userId: authQuota });
+    const quotaRepositories = createRepositories(database.db, { maxProjects: 2, maxStorageBytes: 512 });
+    const project = await quotaRepositories.projects.create(quotaIdentity, { name: "Cuota de storage" });
+    const projectAttempts = await Promise.allSettled([
+      quotaRepositories.projects.create(quotaIdentity, { name: "Proyecto concurrente A" }),
+      quotaRepositories.projects.create(quotaIdentity, { name: "Proyecto concurrente B" }),
+    ]);
+    expect(projectAttempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    const projectRejection = projectAttempts.find((attempt) => attempt.status === "rejected");
+    expect(projectRejection).toMatchObject({ status: "rejected", reason: expect.any(UsageLimitExceededError) });
+    if (projectRejection?.status === "rejected") expect(projectRejection.reason.limit).toBe("projects");
+
+    const assets = await Promise.allSettled([1, 2].map(() => quotaRepositories.assets.createPending(quotaIdentity, {
+      projectId: project.id, contentType: "image/png", sizeBytes: 300, sha256: "d".repeat(64),
+    })));
+    expect(assets.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    const storageRejection = assets.find((attempt) => attempt.status === "rejected");
+    expect(storageRejection).toMatchObject({ status: "rejected", reason: expect.any(UsageLimitExceededError) });
+    if (storageRejection?.status === "rejected") expect(storageRejection.reason.limit).toBe("storage");
+  });
+
+  it("solo reclama workspaces inactivos y persiste una suspensión con snapshot bajo lease", async () => {
+    const lifecycleIdentity = identityFromAuthenticatedSession({ userId: authLifecycle });
+    const idleProject = await repositories.projects.create(lifecycleIdentity, { name: "Sandbox inactivo" });
+    const activeProject = await repositories.projects.create(lifecycleIdentity, { name: "Sandbox con run activo" });
+    const leasedProject = await repositories.projects.create(lifecycleIdentity, { name: "Sandbox con lease activo" });
+    await repositories.sandboxes.upsert(lifecycleIdentity, {
+      projectId: idleProject.id, status: "ready", runtimeId: `managed-${suffix}`, leaseExpiresAt: new Date(Date.now() - 1),
+    });
+    await repositories.sandboxes.upsert(lifecycleIdentity, {
+      projectId: activeProject.id, status: "ready", runtimeId: `managed-run-${suffix}`, leaseExpiresAt: new Date(Date.now() - 1),
+    });
+    await repositories.runs.create(lifecycleIdentity, { projectId: activeProject.id, idempotencyKey: `active-run-${suffix}` });
+    await repositories.sandboxes.upsert(lifecycleIdentity, {
+      projectId: leasedProject.id, status: "ready", runtimeId: `managed-lease-${suffix}`, leaseExpiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const claims = await claimIdleSandboxes(database.db, { limit: 10 });
+    expect(claims.map((record) => record.projectId)).toEqual([idleProject.id]);
+    await expect(repositories.runs.enqueueRun(lifecycleIdentity, {
+      projectId: idleProject.id, idempotencyKey: `lifecycle-race-${suffix}`,
+      policy: { maxConcurrentJobs: 1, runMaxTokens: 100, dailyTokenLimit: 1_000, dailyImageLimit: 10 },
+    })).rejects.toBeInstanceOf(ProjectRunBusyError);
+    const claimed = claims[0]!;
+    const snapshot = { id: randomUUID(), sha256: "e".repeat(64), sizeBytes: 128 };
+    expect(await beginSandboxSuspension(database.db, {
+      record: claimed, leaseToken: claimed.lifecycleLeaseToken!, snapshot, maxStorageBytes: 2_048,
+    })).toBe(true);
+    expect(await finishSandboxSuspension(database.db, claimed, claimed.lifecycleLeaseToken!)).toBe(true);
+    const [suspended] = await database.db.select().from(sandboxes).where(eq(sandboxes.projectId, idleProject.id)).limit(1);
+    expect(suspended).toMatchObject({ status: "suspended", runtimeId: null, lifecycleSnapshotId: snapshot.id, lifecycleSnapshotSizeBytes: 128 });
+
+    const interruptedProject = await repositories.projects.create(lifecycleIdentity, { name: "Interrupted sandbox" });
+    const interrupted = await repositories.sandboxes.upsert(lifecycleIdentity, {
+      projectId: interruptedProject.id, status: "stopping", runtimeId: `managed-interrupted-${suffix}`,
+    });
+    const expiredLeaseToken = randomUUID();
+    await database.db.update(sandboxes).set({
+      lifecycleLeaseToken: expiredLeaseToken,
+      lifecycleLeaseExpiresAt: new Date(Date.now() - 1),
+    }).where(eq(sandboxes.id, interrupted.id));
+    const recoveryClaims = await claimIdleSandboxes(database.db, { limit: 10 });
+    expect(recoveryClaims).toHaveLength(1);
+    expect(recoveryClaims[0]).toMatchObject({ projectId: interruptedProject.id, status: "suspending" });
+    expect(recoveryClaims[0]?.lifecycleLeaseToken).not.toBe(expiredLeaseToken);
+    await database.db.update(sandboxes).set({ lifecycleLeaseExpiresAt: new Date(Date.now() - 1) })
+      .where(eq(sandboxes.id, interrupted.id));
+    const destroyedProjects: string[] = [];
+    const lifecycle = createResourceLifecycleService({
+      database: database.db,
+      sandbox: { destroy: async (projectId: string) => { destroyedProjects.push(projectId); } } as never,
+      snapshots: {
+        captureLifecycleSnapshot: async () => { throw new Error("recovery must reuse the persisted snapshot"); },
+        restoreLifecycleSnapshot: async () => ({ files: 0, bytes: 0 }),
+        deleteLifecycleSnapshot: async () => undefined,
+        deleteVersionSnapshot: async () => undefined,
+      },
+      idleTtlSeconds: 900,
+      retentionDays: 30,
+      maxStorageBytes: 2_048,
+      privateObjects: { delete: async () => undefined },
+      checkpoints: { delete: async () => undefined },
+    });
+    await expect(lifecycle.suspendExpired()).resolves.toMatchObject({ scanned: 1, suspended: 1, failed: 0 });
+    expect(destroyedProjects).toEqual([interruptedProject.id]);
+    const [recovered] = await database.db.select().from(sandboxes).where(eq(sandboxes.id, interrupted.id)).limit(1);
+    expect(recovered).toMatchObject({ status: "suspended", runtimeId: null, lifecycleLeaseToken: null });
   });
 
   it("deduplica requestId, detecta conflictos y pagina el transcript en orden estable", async () => {
