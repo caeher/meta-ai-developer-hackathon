@@ -116,12 +116,17 @@ npm run build:game-template
 npm run test:e2e:game-templates
 ```
 
-El E2E de la plantilla valida el canvas, teclado, botón táctil, pause/mute, reinicio, victoria/derrota y solicitudes locales en Chromium, Firefox y WebKit. El build de Vite no requiere conexión de assets externos. Materializar esta plantilla desde un run del agente en un sandbox aún requiere la integración posterior; no se afirma validación con Docker rootless ni con gateway/dominio real.
+El E2E de la plantilla valida el canvas, teclado, botón táctil, pause/mute, reinicio, victoria/derrota y solicitudes locales en Chromium, Firefox y WebKit. El build de Vite no requiere conexión de assets externos. Desde #20 el worker materializa la plantilla en workspaces vacíos, verifica test/lint/build y pide al runner aislado que pruebe movimiento antes de declarar `preview.ready`. El host Linux rootless, gateway y dominio/TLS reales siguen pendientes.
 
 ## Assets generados con Meta (issue #19)
 
 El worker ofrece `generate_image` para briefs de sprites, fondos, tilesets y UI. Reserva cuota por imagen, solicita el modelo configurado, valida firma/formato/dimensiones/transparencia/grilla, normaliza PNG, genera hoja de contacto y registra procedencia en S3 privado. Copia el PNG al sandbox por una operación binaria de ruta acotada y registra el manifest que Phaser carga. Cada asset queda marcado `pending-in-live-preview` para inspección humana en contexto; los checks no certifican calidad artística ni seams perfectos. Los runs siguen apagados por defecto. Límites, manejo de ambigüedad, checks y dependencias externas están en [docs/generated-assets.md](docs/generated-assets.md).
 
+## Generación y reparación (#20)
+
+El worker normaliza preferencias a `GameSpec`, conserva la especificación del último run exitoso para cambios incrementales y guarda checkpoints privados antes de editar. `npm test`, `npm run lint`, `npm run build`, health check y verificación Playwright dentro del sandbox deben pasar; entonces emite `preview.ready`. Tiene un intento de reparación y restaura el último estado verificable si falla o se cancela. Ver [docs/generation.md](docs/generation.md).
+
+La imagen del sandbox ahora debe incluir el runner Chromium fijado a Playwright 1.64.1. Hay que construirla, publicarla con digest y ejecutar el preflight rootless en el host Linux dedicado; `RUNS_ENABLED=false` hasta completar esa validación externa. La suite local prueba el template, no afirma una generación real con Meta ni un sandbox Docker real.
 ## Capacidades planificadas
 
 `dev:gateway` y `build:gateway` ya existen. El gateway resuelve únicamente sandboxes listos desde PostgreSQL, consume grants de un uso en Redis y autoriza cada HTTP/WebSocket; `npm run infra:up -- --preview` activa el perfil solo con claves válidas. El editor monta un iframe con sandbox mínimo, renovación de sesión, navegación por rutas comunicadas y fallback de primer nivel por formulario sin grant en URL. Las versiones guardadas se muestran, pero su restauración espera a #21. Los E2E de navegador usan un fixture; aún faltan dominio wildcard con TLS, cookies del dominio real, host Linux dedicado y un recorrido autenticado con dos cuentas Clerk. Las issues están enumeradas en [docs/ROADMAP.md](docs/ROADMAP.md). La conexión de Clerk está implementada; falta validarla con la instancia real del operador antes de cerrar su issue. El acceso real a Meta se informa por separado del resultado de los tests con fixtures.
