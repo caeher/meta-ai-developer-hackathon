@@ -1,6 +1,6 @@
 # Forja — plataforma de juegos 2D
 
-Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, autenticación propia, persistencia Drizzle y storage privado S3. El editor conecta el chat con runs y transmite progreso durable por SSE. Runs, preview y publicación siguen apagados por defecto hasta configurar los proveedores, DNS/TLS y un host Linux dedicado. El flujo de publicación de builds estáticas verificadas está implementado, pendiente de validación operativa externa.
+Forja es una plataforma en construcción para crear juegos web 2D mediante chat. El monorepo incluye Next.js, autenticación propia, persistencia Drizzle y storage privado S3. El editor conecta el chat con runs y transmite progreso durable por SSE. Los runs, preview y publicación conservan flags apagados por defecto; Compose ofrece una aceptación local reproducible con Docker Desktop, Caddy, Silo y dominios `*.localhost`.
 
 Los proyectos privados abren un editor de dos paneles en `/projects/[projectId]`: chat persistido, consentimiento de Meta Contributor y opciones rápidas a la izquierda; iframe privado con navegación a la derecha cuando el gateway está habilitado. Enviar un mensaje lo guarda y encola un run cuando `RUNS_ENABLED=true`. Publish/Share aparecen cuando `PUBLISHING_ENABLED=true` y solo sirven builds estáticas verificadas desde un origen de juego separado. Consulta [docs/publications.md](docs/publications.md).
 
@@ -47,14 +47,13 @@ La issue #10 añade `@meta-game/skills`: un subconjunto vendorizado en un SHA fi
 
 ## Cola durable y runs (issue #11)
 
-`apps/worker` ejecuta BullMQ aparte de Next. El outbox Postgres garantiza entrega recuperable a Redis; el presupuesto, consumo, eventos y leases con fencing quedan en la base. #16 conecta plan previo, skills, herramientas confinadas y verificación. #17 integra consentimiento explícito, enqueue, cancelación y SSE con replay. La API sigue cerrada con `RUNS_ENABLED=false`; activarla requiere Meta configurado, controlador rootless y host Linux validado. Comandos y operación en [docs/runs-and-queue.md](docs/runs-and-queue.md), [docs/run-events.md](docs/run-events.md) y [docs/agent-loop.md](docs/agent-loop.md); decisiones en [ADR 0003](docs/adr/0003-cola-durable-y-cuotas-atomicas.md) y [ADR 0005](docs/adr/0005-orquestador-agente.md).
+`apps/worker` ejecuta BullMQ aparte de Next. El outbox Postgres garantiza entrega recuperable a Redis; el presupuesto, consumo, eventos y leases con fencing quedan en la base. #16 conecta plan previo, skills, herramientas confinadas y verificación. #17 integra consentimiento explícito, enqueue, cancelación y SSE con replay. `RUNS_ENABLED=false` por defecto; habilitarlo requiere Meta configurado y el perfil runtime local validado. Comandos y operación en [docs/runs-and-queue.md](docs/runs-and-queue.md), [docs/run-events.md](docs/run-events.md) y [docs/agent-loop.md](docs/agent-loop.md); decisiones en [ADR 0003](docs/adr/0003-cola-durable-y-cuotas-atomicas.md) y [ADR 0005](docs/adr/0005-orquestador-agente.md).
 
-## Controlador rootless y herramientas confinadas (issues #12-13)
+## Controlador sandbox y herramientas confinadas (issues #12-13)
 
-`apps/sandbox-controller` es un servicio privado separado del worker. Resuelve el proyecto y su owner desde PostgreSQL, autentica servicios con Bearer y usa la API local Docker por socket Unix rootless. Cada proyecto recibe UID, contenedor y volumen local distintos. La red del codigo es interna con gateway aislado, sin puertos publicados; las instalaciones npm pasan por un proxy privado de destinos limitados. `readFile`, `writeFile`, `listFiles`, `installDependencies`, `runCommand`, `startDevServer` y `readLogs` validan entradas y solo usan `/workspace`, el puerto fijo 4173 y lease del controlador. No montes el socket runtime en Compose, web, worker o juegos.
+`apps/sandbox-controller` es un servicio privado separado del worker. Resuelve proyecto y owner desde PostgreSQL, autentica servicios con Bearer y usa la API Docker solo dentro del perfil `runtime`; los sandboxes no reciben el socket. Cada proyecto recibe UID, contenedor y workspace aislados. La red del código es interna con proxy npm limitado, sin puertos publicados. `readFile`, `writeFile`, `listFiles`, `installDependencies`, `runCommand`, `startDevServer` y `readLogs` validan entradas y usan `/workspace`, el puerto 4173 y lease del controlador.
 
-Las herramientas siguen cerradas con `SANDBOX_DRIVER=disabled`. En el host Linux dedicado, monta el filesystem del Docker root como ext4/XFS con `usrquota`/`uquota`, aprovisiona cuotas con `scripts/provision-sandbox-user-quotas.sh`, publica la imagen sandbox fijada por digest y configura Docker Engine 28+ rootless con cgroups v2/systemd. Despues ejecuta `npm run sandbox:host-check`: prueba cuota `ENOSPC`, gateway aislado, DNS/egress, rechazo de symlinks, instalacion exacta con hook malicioso, compilacion fixture, timeout y limite de salida. Windows/Docker Desktop no valida aislamiento rootless de produccion. La instalacion Linux y el driver real aun no se han validado; consulta [docs/sandbox-controller.md](docs/sandbox-controller.md) y [docs/sandbox-tools.md](docs/sandbox-tools.md).
-
+`SANDBOX_DRIVER=disabled` por defecto. `npm run infra:up -- --acceptance` construye el sandbox local, valida Docker Desktop con cgroups v2, workspace tmpfs acotado y UID no root, y arranca controlador, editor, gateway y origen bajo Caddy. El daemon Docker Desktop es rootful; esta prueba no lo presenta como rootless ni valida cuotas de volúmenes XFS/ext4. Consulta [docs/sandbox-controller.md](docs/sandbox-controller.md), [docs/sandbox-tools.md](docs/sandbox-tools.md) y [despliegue interno](docs/deployment.md).
 ## Capturas del tema Tokyo Night
 
 Para repetir la revisión visual a 390 y 1440 px, inicia `npm run dev` y en otra terminal ejecuta `npx playwright install chromium` (solo la primera vez) y `npm run screenshots:theme`. El script verifica contraste, desbordamiento, foco por teclado, diálogo e hidratación del navegador y guarda las capturas en `docs/screenshots/`. Puedes indicar otra URL local con `THEME_SCREENSHOT_BASE_URL`.
@@ -121,7 +120,7 @@ npm run build:game-template
 npm run test:e2e:game-templates
 ```
 
-El E2E de la plantilla valida el canvas, teclado, botón táctil, pause/mute, reinicio, victoria/derrota y solicitudes locales en Chromium, Firefox y WebKit. El build de Vite no requiere conexión de assets externos. Desde #20 el worker materializa la plantilla en workspaces vacíos, verifica test/lint/build y pide al runner aislado que pruebe movimiento antes de declarar `preview.ready`. El host Linux rootless, gateway y dominio/TLS reales siguen pendientes.
+El E2E de la plantilla valida el canvas, teclado, botón táctil, pause/mute, reinicio, victoria/derrota y solicitudes locales en Chromium, Firefox y WebKit. El build de Vite no requiere conexión de assets externos. Desde #20 el worker materializa la plantilla en workspaces vacíos, verifica test/lint/build y pide al runner aislado que pruebe movimiento antes de declarar `preview.ready`. La aceptación local usa `app.localhost`, `*.preview.localhost` y `*.games.localhost` con TLS interno de Caddy.
 
 ## Assets generados con Meta (issue #19)
 
@@ -131,10 +130,10 @@ El worker ofrece `generate_image` para briefs de sprites, fondos, tilesets y UI.
 
 El worker normaliza preferencias a `GameSpec`, conserva la especificación del último run exitoso para cambios incrementales y guarda checkpoints privados antes de editar. `npm test`, `npm run lint`, `npm run build`, health check y verificación Playwright dentro del sandbox deben pasar; entonces emite `preview.ready`. Tiene un intento de reparación y restaura el último estado verificable si falla o se cancela. Ver [docs/generation.md](docs/generation.md).
 
-La imagen del sandbox incluye el runner Chromium fijado a Playwright 1.64.1; se construyó localmente para `linux/amd64` y la sonda Chromium pasó en Docker Desktop sin red. Falta publicarla con digest y ejecutar el preflight rootless en el host Linux dedicado; `RUNS_ENABLED=false` hasta completar esa validación externa. `npm run meta:smoke` pasó con texto sintético, pero la suite local y el smoke no acreditan una generación real con Meta dentro de un sandbox rootless.
+La imagen del sandbox incluye el runner Chromium fijado a Playwright 1.64.1. La aceptación construye localmente para el motor Linux de Docker Desktop y fija el ID de contenido de la imagen en esa ejecución. `RUNS_ENABLED=false` evita llamadas reales a Meta; los fixtures y el smoke de texto no acreditan una generación facturable real.
 ## Capacidades planificadas
 
-`dev:gateway` y `build:gateway` ya existen. El gateway resuelve únicamente sandboxes listos desde PostgreSQL, consume grants de un uso en Redis y autoriza cada HTTP/WebSocket; `npm run infra:up -- --preview` activa el perfil solo con claves válidas. El editor monta un iframe con sandbox mínimo, renovación de sesión, navegación por rutas comunicadas y fallback de primer nivel por formulario sin grant en URL. Las versiones verificadas se guardan en S3 privado y pueden restaurarse como una nueva versión; la revisión muestra cambios y verificaciones. La preview jugable de snapshots históricos sin tocar el workspace sigue pendiente. Aún faltan dominio wildcard con TLS, cookies del dominio real y host Linux dedicado. Consulta [docs/versions.md](docs/versions.md) y [docs/ROADMAP.md](docs/ROADMAP.md). El acceso real a Meta se informa por separado de los tests con fixtures.
+`dev:gateway` y `build:gateway` ya existen. El gateway resuelve únicamente sandboxes listos desde PostgreSQL, consume grants de un uso en Redis y autoriza cada HTTP/WebSocket. El editor monta un iframe con sandbox mínimo, renovación de sesión, navegación por rutas comunicadas y fallback de primer nivel por formulario sin grant en URL. Las versiones verificadas se guardan en S3 privado y pueden restaurarse como una nueva versión; la revisión muestra cambios y verificaciones. La preview de snapshots históricos sin modificar el workspace sigue pendiente. La aceptación de gateway y TLS local se ejecuta con `npm run infra:up -- --acceptance`; consulta [docs/versions.md](docs/versions.md) y [docs/ROADMAP.md](docs/ROADMAP.md). El acceso real a Meta se informa por separado de los tests con fixtures.
 
 ## Estructura
 
@@ -169,3 +168,14 @@ npm run backup:create
 ```
 
 El endpoint de metrics web es `/api/metrics`; los servicios internos mantienen `/livez`, `/readyz` y `/metrics` en la red Compose, sin publicar el puerto 9090.
+
+## Despliegue interno de aceptación (#27)
+
+El staging interno de Docker Compose sirve el editor por `https://app.localhost`, el gateway por `*.preview.localhost` y publicaciones por `*.games.localhost`. Caddy emite certificados autofirmados locales y publica HTTPS solo en loopback. La guía operativa, rollback y matriz están en [despliegue](docs/deployment.md), [rollback](docs/rollback.md) y [verificación](docs/staging-verification.md).
+
+```sh
+npm run infra:up -- --acceptance
+npm run infra:down
+```
+
+El perfil acepta el runtime local y mantiene runs de Meta apagados. La publicación pública y el smoke facturable real de Meta no forman parte de este entorno.
