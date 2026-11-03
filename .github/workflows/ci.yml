@@ -28,6 +28,8 @@ jobs:
         run: npm run typecheck
       - name: Test contracts and health
         run: npm test
+      - name: Offline security regressions
+        run: npm run test:security:offline
       - name: Build web app
         run: npm run build
       - name: Build sandbox controller and worker

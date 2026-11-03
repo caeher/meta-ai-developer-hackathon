@@ -300,6 +300,46 @@ services:
       - control
       - sandbox-egress
 
+  security-sandbox-image:
+    profiles: [security]
+    image: meta-game-sandbox:security
+    build:
+      context: ..
+      dockerfile: infra/sandbox/Dockerfile
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    network_mode: none
+
+  security-runner:
+    profiles: [security]
+    build:
+      context: ..
+      dockerfile: infra/security-runner.Dockerfile
+    init: true
+    restart: "no"
+    environment:
+      SECURITY_TEST_ENABLED: "true"
+      SECURITY_TEST_DISPOSABLE_HOST: "1"
+      SECURITY_TEST_COMPOSE_RUNNER: "true"
+      SANDBOX_DRIVER: rootless
+      SANDBOX_IMAGE: meta-game-sandbox:security
+      SANDBOX_DOCKER_SOCKET: /var/run/docker.sock
+      SANDBOX_CPU_LIMIT: "1"
+      SANDBOX_MEMORY_MB: "1024"
+      SANDBOX_DISK_MB: "2048"
+      SANDBOX_PIDS_LIMIT: "128"
+      SANDBOX_COMMAND_TIMEOUT_MS: "60000"
+      SANDBOX_EGRESS_ALLOWLIST: registry.npmjs.org
+    volumes:
+      # Este runner es de confianza y existe solo para tests hostiles; los sandboxes hijos nunca montan el socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    network_mode: none
+
   local-router:
     profiles: [local-domains]
     image: docker.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d

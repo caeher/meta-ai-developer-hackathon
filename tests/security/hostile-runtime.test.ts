@@ -1,5 +1,6 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SandboxEnvironmentSchema } from "../../packages/config/src/sandbox-environment";
 import { RootlessDockerDriver } from "../../packages/sandbox/src/rootless";
@@ -8,6 +9,7 @@ import type { SandboxCreateSpec, SandboxLimits } from "../../packages/sandbox/sr
 const enabled = process.platform === "linux" &&
   process.env.SECURITY_TEST_ENABLED === "true" &&
   process.env.SECURITY_TEST_DISPOSABLE_HOST === "1" &&
+  process.env.SECURITY_TEST_COMPOSE_RUNNER === "true" &&
   process.env.SANDBOX_DRIVER === "rootless";
 
 const hostileLimits: SandboxLimits = {
@@ -15,25 +17,28 @@ const hostileLimits: SandboxLimits = {
   memoryMb: 256,
   diskMb: 128,
   pids: 16,
-  commandTimeoutMs: 10_000,
+  commandTimeoutMs: 60_000,
 };
 
 let driver: RootlessDockerDriver;
 
-describe.skipIf(!enabled)("aislamiento hostil con Docker rootless real", () => {
+describe.skipIf(!enabled)("aislamiento hostil con sandboxes no privilegiados de Docker Desktop", () => {
   let sandboxes: SandboxCreateSpec[] = [];
 
   beforeAll(async () => {
     const parsed = SandboxEnvironmentSchema.omit({ SANDBOX_CONTROLLER_TOKEN: true })
+      .extend({ SANDBOX_IMAGE: z.string().min(1) })
       .passthrough()
       .parse(process.env);
     if (parsed.SANDBOX_DRIVER !== "rootless") throw new Error("security_rootless_driver_required");
+    if (parsed.SANDBOX_DOCKER_SOCKET !== "/var/run/docker.sock") throw new Error("security_compose_socket_required");
 
     driver = new RootlessDockerDriver(
       parsed.SANDBOX_DOCKER_SOCKET,
       parsed.SANDBOX_IMAGE,
       hostileLimits,
       parsed.SANDBOX_EGRESS_ALLOWLIST,
+      { hostRuntimeMode: "docker-desktop-security", workspaceMode: "tmpfs" },
     );
     await driver.verifyHost();
 
@@ -62,8 +67,12 @@ describe.skipIf(!enabled)("aislamiento hostil con Docker rootless real", () => {
     if (!driver) return;
     const results = await Promise.allSettled(sandboxes.map((sandbox) =>
       driver.destroy(sandbox.sandboxId, sandbox.projectId, sandbox.uid)));
-    if (results.some((result) => result.status === "rejected")) throw new Error("security_sandbox_cleanup_failed");
-  });
+    try {
+      if (results.some((result) => result.status === "rejected")) throw new Error("security_sandbox_cleanup_failed");
+    } finally {
+      await driver.disposeSecurityRuntime();
+    }
+  }, 60_000);
 
   it("separa los workspaces de A y B para lectura y escritura", async () => {
     const [ownerA, ownerB] = sandboxes;
@@ -87,11 +96,13 @@ describe.skipIf(!enabled)("aislamiento hostil con Docker rootless real", () => {
       "const fs=require('node:fs');",
       "const sensitiveName=/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|DATABASE|REDIS|S3_|PRIVATE)/i;",
       "const envLeak=Object.keys(process.env).some(name=>sensitiveName.test(name));",
-      "const socketLeak=['/var/run/docker.sock','/run/docker.sock','/run/user/1000/docker.sock'].some(path=>fs.existsSync(path));",
+      "const socketLeak=['/var/run/docker.sock','/run/docker.sock','/run/user/1000/docker.sock','/run/secrets'].some(path=>fs.existsSync(path));",
+      "const mountInfo=fs.readFileSync('/proc/self/mountinfo','utf8');const hostMount=['docker.sock','/mnt/host'].some(value=>mountInfo.includes(value));",
       "const status=fs.readFileSync('/proc/self/status','utf8');",
       "const capabilities=/^CapEff:\\s*([0-9a-f]+)$/mi.exec(status)?.[1];",
+      "const seccomp=Number(/^Seccomp:\\s*(\\d+)$/mi.exec(status)?.[1]);",
       "let rootReadOnly=false;try{fs.writeFileSync('/etc/security-probe','x')}catch(error){rootReadOnly=['EROFS','EACCES'].includes(error.code)}",
-      "if(process.getuid()===0||envLeak||socketLeak||capabilities!=='0000000000000000'||!rootReadOnly)process.exit(31);",
+      "if(process.getuid()===0||envLeak||socketLeak||hostMount||capabilities!=='0000000000000000'||seccomp!==2||!rootReadOnly)process.exit(31);",
       "process.stdout.write('confined');",
     ].join("");
     const result = await runNode(sandbox, probe);
@@ -107,9 +118,11 @@ describe.skipIf(!enabled)("aislamiento hostil con Docker rootless real", () => {
       "(async()=>{",
       "const targets=['http://127.0.0.1:80/','http://169.254.169.254/latest/meta-data/','http://10.0.0.1/','http://[fd00::1]/','http://[::ffff:127.0.0.1]/','http://[::ffff:169.254.169.254]/'];",
       "const blocked=await Promise.all(targets.map(url=>fetch(url,{signal:AbortSignal.timeout(700)}).then(()=>false,()=>true)));",
+      "const proxyTargets=['127.0.0.1','169.254.169.254','10.0.0.1','[::1]','[::ffff:127.0.0.1]'].map(host=>`http://npm-proxy:8080/registry/${host}/latest`);",
+      "const proxyBlocked=await Promise.all(proxyTargets.map(url=>fetch(url,{signal:AbortSignal.timeout(1000)}).then(response=>response.status===403,()=>false)));",
       "const resolver=new Resolver();resolver.setServers(['127.0.0.11']);",
       "const dnsBlocked=await new Promise(resolve=>resolver.resolve4('registry.npmjs.org',error=>resolve(Boolean(error))));",
-      "if(!blocked.every(Boolean)||!dnsBlocked)process.exit(32);",
+      "if(!blocked.every(Boolean)||!proxyBlocked.every(Boolean)||!dnsBlocked)process.exit(32);",
       "process.stdout.write('egress-confined');",
       "})().catch(()=>process.exit(33));",
     ].join("");
@@ -169,14 +182,14 @@ describe.skipIf(!enabled)("aislamiento hostil con Docker rootless real", () => {
       sandbox.uid,
       ["npm", "install", "--ignore-scripts", "--package-lock=false", "--no-audit", "--no-fund", "--cache=/tmp/npm-cache"],
       "",
-      10_000,
+      60_000,
       { maxOutputBytes: 4_096 },
     );
     expect(install.exitCode).toBe(0);
     const verify = await runNode(sandbox, "if(require('node:fs').existsSync('/tmp/security-lifecycle-ran'))process.exit(40);process.stdout.write('hook-suppressed')");
     expect(verify.exitCode).toBe(0);
     expect(verify.stdout).toBe("hook-suppressed");
-  }, 30_000);
+  }, 90_000);
 
   it("aplica límites reales de cgroups y cuota dura del workspace", async () => {
     const [ownerA, ownerB] = sandboxes;

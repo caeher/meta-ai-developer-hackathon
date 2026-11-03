@@ -40,6 +40,7 @@
     "test:e2e:server": "node scripts/check-node-version.mjs && vite --config tests/e2e/vite.config.ts",
     "test:security:offline": "node scripts/check-node-version.mjs && node --import tsx scripts/security-runner.ts --offline",
     "test:security": "node scripts/check-node-version.mjs && node --import tsx scripts/security-runner.ts",
+    "test:security:compose": "node scripts/check-node-version.mjs && node --import tsx scripts/security-runner.ts --compose-runtime",
     "db:migrate": "node scripts/check-node-version.mjs && node scripts/db-migrate.mjs",
     "db:seed": "node scripts/check-node-version.mjs && node scripts/db-seed.mjs",
     "meta:smoke": "node scripts/check-node-version.mjs && node --conditions=react-server --import tsx scripts/meta-smoke.ts",
