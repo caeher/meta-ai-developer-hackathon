@@ -26,7 +26,9 @@ COPY packages/config/src packages/config/src
 COPY packages/contracts/src packages/contracts/src
 COPY packages/db/src packages/db/src
 COPY packages/meta/src packages/meta/src
+COPY packages/preview/src packages/preview/src
 COPY packages/sandbox/src packages/sandbox/src
+COPY packages/storage/src packages/storage/src
 COPY packages/skills/src packages/skills/src
 COPY packages/skills/catalog.json packages/skills/catalog.json
 COPY packages/skills/local packages/skills/local
