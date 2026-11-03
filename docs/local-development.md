@@ -59,7 +59,7 @@ npm run test:integration
 
 La suite de integración crea recursos temporales en Postgres, Redis y Silo locales, verifica ownership y almacenamiento privado, y limpia esos recursos al terminar. Los datos de seed son sintéticos.
 
-La suite unitaria y de regresión offline es `npm test` y `npm run test:security:offline`. Las pruebas de runtime deben ejecutarse también desde el perfil Docker local correspondiente y comprobar límites observables dentro de contenedores; un mock no acredita el runtime. No se debe sustituir esta validación por una referencia a un host remoto.
+La suite unitaria es `npm test`; la matriz de seguridad offline es `npm run test:security:offline`. `npm run test:security` construye y ejecuta el perfil Compose `security`, que prueba sandboxes Linux reales desechables, egress, filesystem, ownership, cgroups, cuotas y timeout. El runner temporal y de confianza es el único servicio con socket Docker; los sandboxes no reciben el socket ni secretos. El perfil prueba contenedores no root en Docker Desktop y no habilita `SANDBOX_DRIVER` para el producto, que permanece `disabled` hasta integrar el controlador y su modo de producción.
 
 ## Imágenes y almacenamiento
 

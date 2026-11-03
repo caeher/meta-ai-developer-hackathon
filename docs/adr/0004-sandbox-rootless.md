@@ -1,6 +1,6 @@
 # ADR 0004: controlador privado y sandboxes locales
 
-Estado: aceptada para Docker Compose local; `ESTADO: PARCIAL` hasta integrar el runtime y pasar sus pruebas Docker en esta máquina.
+Estado: aceptada para Docker Compose local; la matriz hostil de #24 pasa en Docker Desktop. `ESTADO: PARCIAL` para la integración del controlador/driver rootless de producción.
 
 ## Contexto
 
@@ -17,10 +17,9 @@ Los juegos y comandos son código no confiable. Ni Next ni el worker de confianz
 
 ## Consecuencias y validación
 
-El kernel sigue siendo el de Docker Desktop; esta arquitectura valida el producto en el entorno local elegido y no pretende probar un despliegue público. Docker Desktop 29.9.2 disponible informa `cgroupfs`, no modo rootless. Un daemon rootless anidado inicia, pero informa `CgroupDriver=none`, por lo que ignora límites cgroup; esa configuración no pasa el preflight actual. Falta el perfil Compose que aplique y pruebe recursos/cuotas en el runtime local. Hasta entonces `SANDBOX_DRIVER=disabled` y las funciones que dependen del sandbox permanecen apagadas.
+El kernel sigue siendo el de Docker Desktop. La suite `npm run test:security` pasa en el perfil Compose local: el runner de confianza valida sandboxes de UID no root, rootfs read-only, capabilities/seccomp, cgroups, cuota tmpfs, egress y aislamiento hostil. El daemon Docker Desktop 29.9.2 es rootful y usa `cgroupfs`; un daemon rootless anidado informa `CgroupDriver=none` y no aplica límites cgroup. Por eso la suite tiene un modo interno de aceptación que comprueba límites reales de contenedores en el motor local sin afirmar que el daemon sea rootless.
 
-La verificación se ejecuta con los comandos Docker-local registrados en [desarrollo local](../local-development.md) y [el informe de seguridad](../security-test-report.md). No se necesita ni se crea un host remoto.
-
+La prueba #24 no integra el controlador al Compose de producto ni habilita ejecución. `SANDBOX_DRIVER=disabled` y las funciones dependientes siguen apagadas hasta completar el flujo de producción con límites y cuota por volumen. Consulta [desarrollo local](../local-development.md) y [el informe de seguridad](../security-test-report.md).
 ## Reversión
 
 Detener el perfil local, respaldar Postgres si se conservarán sus datos y retirar solo recursos etiquetados `com.meta-game.managed=true`. `npm run infra:down` conserva volúmenes; el borrado total requiere el reset explícito de [desarrollo local](../local-development.md).

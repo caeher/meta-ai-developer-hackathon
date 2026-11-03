@@ -38,4 +38,4 @@ Los límites duros de CPU/RAM/PIDs/disco dependen de cgroups v2 y cuotas de file
 
 `npm run test:integration` pasó con 43 pruebas y una omitida, usando PostgreSQL, Redis y Silo locales; incluye cancelación del outbox y eliminación BullMQ por run/generación. `npm test` pasó con 226 pruebas y 37 omitidas. `npm run lint`, `npm run typecheck`, `npm run build:worker` y `npm run build` también pasaron. Estos servicios locales y fixtures no demuestran aislamiento del host.
 
-`npm run sandbox:host-check` se detuvo con `sandbox_host_requires_linux` porque el proceso Node corre en Windows. La validación pendiente debe ejecutarse desde el perfil Docker local e incluir suspensión/restauración, cuotas y borrado con el runtime local y Silo. No se requiere un host remoto.
+`npm run test:security` pasó la matriz Docker real de #24. La validación pendiente de #23 debe recorrer suspensión/restauración, snapshots, cuotas y borrado con el controlador y Silo integrados en Compose; `sandbox:host-check` no es un comando del repo. No se requiere un host remoto.

@@ -2,7 +2,7 @@
 
 ## Estado
 
-`ESTADO: PARCIAL`. `packages/sandbox` y `apps/sandbox-controller` implementan el contrato privado, ownership por PostgreSQL y el driver Docker. El controlador aún no forma parte de `infra/compose.yml`; no afirmar que el runtime, las cuotas o la suite hostil están validados. La decisión del propietario exige que se integren en Docker Compose con Docker Desktop; no se prepara un host remoto.
+`ESTADO: PARCIAL`. `packages/sandbox` y `apps/sandbox-controller` implementan el contrato privado, ownership por PostgreSQL y el driver Docker. La suite hostil #24 sí valida sandboxes reales no root y cuotas de tmpfs desde el perfil Compose `security`; el servicio del controlador y el driver rootless de producción todavía no forman parte del flujo Compose integrado. `SANDBOX_DRIVER=disabled` se mantiene por defecto.
 
 La ejecución permanece cerrada por defecto. `SANDBOX_DRIVER=disabled` hasta que el preflight dentro del Compose local compruebe el runtime, cgroups, seccomp, red aislada, egress, filesystem y cuota efectiva. Si el motor ignora un límite, el controlador debe fallar antes de aceptar jobs.
 
@@ -23,9 +23,7 @@ El controlador devuelve errores cerrados si la imagen no coincide con la configu
 
 ## Validación local requerida
 
-Una vez integrado el perfil Compose, ejecutar desde ese proyecto la suite `npm run sandbox:host-check` y `npm run test:security`. Deben pasar probes de cgroups/cuota `ENOSPC`, rootfs, usuario/capabilities, DNS/IPv4/IPv6, proxy npm, SSRF, symlink/traversal, lifecycle scripts, timeout y dos sandboxes concurrentes. La suite actual se detiene porque el proceso Node está en Windows y el daemon rootless anidado no aplica cgroups; por eso el estado sigue parcial.
-
-Levantar las partes ya disponibles del monolito local con [desarrollo local](local-development.md):
+La matriz de seguridad de #24 se ejecuta con `npm run test:security`: la suite offline y `tests/security/hostile-runtime.test.ts` corren desde el perfil Compose `security`, incluyendo `ENOSPC`, cgroups, rootfs, UID/capabilities, DNS/IPv4/IPv6, proxy npm, SSRF, symlinks, lifecycle scripts, timeout y dos sandboxes concurrentes. La aceptación de #24 pasó en Docker Desktop; eso no integra ni habilita aún el controlador de producto. El recorrido de integración usa:
 
 ```sh
 npm run infra:config
@@ -33,4 +31,4 @@ npm run infra:up -- --web --worker
 npm run test:integration
 ```
 
-Ese comando valida Postgres, Redis, Silo, web y worker; no se presenta como prueba del controlador.
+Ese comando valida Postgres, Redis, Silo, web y worker; el controlador no se presenta como servicio Compose activo.

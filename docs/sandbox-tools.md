@@ -28,6 +28,4 @@ El proxy acepta GET/HEAD de rutas registradas, rechaza CONNECT, URLs completas, 
 
 La imagen se construye con `infra/sandbox/Dockerfile`, Node 24 y las dependencias fijadas. `SANDBOX_DRIVER=disabled` sigue siendo el valor por defecto.
 
-Los tests offline de `tests/sandbox.test.ts` y `tests/security/` cubren schemas, rutas hostiles, comandos npm, ownership y políticas. No acreditan cuotas o aislamiento Docker. `ESTADO: PARCIAL`: falta integrar el runtime y proxy al Compose y ejecutar allí `npm run sandbox:host-check` y `npm run test:security`, incluyendo `ENOSPC`, cgroups, DNS/IPv4/IPv6, SSRF, symlinks, lifecycle scripts y timeout.
-
-El preflight actual requiere un proceso Linux y un daemon rootless con cgroups v2/systemd. Docker Desktop disponible informa `cgroupfs`; el daemon rootless anidado no aplica cgroups. La configuración debe adaptarse al motor Docker local y volver a comprobar cada límite desde dentro de los sandboxes antes de habilitar ejecuciones. No se usará un host remoto como sustituto.
+Los tests offline de `tests/sandbox.test.ts` y `tests/security/` cubren schemas, rutas hostiles, comandos npm, ownership y políticas. `npm run test:security` agrega la matriz real de Compose con UID no root, aislamiento, egress, cuota tmpfs, cgroups, symlinks, lifecycle y timeout. La validación de #24 pasó en Docker Desktop; el modo de cuota por volumen/rootless y la integración del controlador de producto permanecen pendientes en sus issues, no se atribuyen a esta suite.

@@ -2,54 +2,53 @@
 
 ## Estado
 
-`ESTADO: PARCIAL`. Las regresiones offline y las pruebas de integración con Postgres, Redis y Silo locales pasan. La suite hostil del runtime todavía no pasa en el Compose local: `npm run test:security` exige Linux y Docker rootless con cgroups v2/systemd; el daemon raíz de Docker Desktop informa `cgroupfs`, y el daemon rootless anidado inicia sin cgroups (`CgroupDriver=none`). La suite no debe ignorar esos checks ni afirmar que las cuotas están aplicadas.
+`ESTADO: COMPLETA` para la issue #24. La matriz offline y la suite hostil con contenedores Linux desechables pasan desde el perfil `security` de Docker Compose local. No se requiere VPS, servidor remoto, DNS público ni publicación.
 
-El criterio pendiente es código local: integrar un runtime compatible con Docker Desktop, aislarlo dentro de Compose y probar cuotas/cgroups desde sandboxes reales. No se necesita un runner self-hosted ni un host dedicado. La suite hostil debe seguir fallando cerrada cuando falte un límite.
+La suite usa el motor Linux de Docker Desktop 29.9.2. El daemon informa cgroups v2 con driver `cgroupfs` y no es rootless; por eso el test explícito de aceptación usa el modo interno `docker-desktop-security`, UID no root, capacidades eliminadas, seccomp, rootfs de solo lectura, cgroups efectivos y workspace tmpfs acotado. Esto valida los límites del contenedor en Docker Desktop; no afirma que el daemon sea rootless ni que el controlador de producción esté integrado. `SANDBOX_DRIVER=disabled` sigue siendo el valor predeterminado hasta completar esa integración.
 
-## Resultados verificados en este checkout
+## Resultados de la issue
 
-- Node `v24.22.1`.
-- `npm run test:security:offline`: 13 archivos y 88 pruebas aprobadas.
-- `npm test`: 36 archivos y 227 pruebas aprobadas; 10 archivos y 45 pruebas de integración se omitieron porque requieren servicios o flags explícitos.
+- `npm run test:security`: pasa la matriz offline (16 archivos, 101 pruebas) y el runtime hostil (8 pruebas) desde Compose.
+- La suite real crea sandboxes A y B como contenedores separados, valida que no compartan workspace y destruye los recursos etiquetados al terminar.
+- El runtime comprueba UID no root, rootfs, capabilities, seccomp, límites CPU/memoria/PIDs, cuota tmpfs, timeout, sockets/credenciales, aislamiento de red, DNS directo, SSRF IPv4/IPv6, proxy npm, carrera de symlinks e instalación sin lifecycle scripts.
+- El egress proxy resuelve y fija IPv4 pública, valida respuestas/redirects y conserva el hostname TLS. La prueba Docker usa `registry.npmjs.org` permitido y bloquea destinos directos y hosts privados.
+- Las pruebas offline cubren sesiones propias, ownership, SSE, versiones, publicaciones, preview, cookies, CSRF, storage y validación de egress/filesystem.
+
+## Checks de aceptación ejecutados
+
+- `npm run test:security`: 16 archivos/101 pruebas offline y 8 pruebas hostiles de Compose aprobadas.
+- `npm test`: 36 archivos y 227 pruebas aprobadas; 10 archivos y 45 pruebas omitidas por requerir servicios o flags explícitos.
+- `npm run test:integration`: 9 archivos/43 pruebas aprobadas y 1 prueba omitida con PostgreSQL, Redis y Silo locales.
 - `npm run lint` y `npm run typecheck`: aprobados.
-- `npm run infra:up`: Postgres, Redis y Silo locales quedaron saludables.
-- `npm run infra:up -- --web --worker --local-domains`: los servicios base, web, worker y Caddy iniciaron; Postgres, Redis, Silo, Mailpit, web y Caddy reportaron healthy. El worker está en ejecución y no declara healthcheck.
-- `npm run test:integration`: 9 archivos, 43 pruebas aprobadas y una omitida contra Postgres/Redis/Silo locales.
-- `npm run infra:config`: Compose válido. `caddy validate` pasó y una petición HTTPS a `*.preview.localhost` completó TLS (`ssl_verify_result=0`); devolvió 502 porque el perfil del gateway estaba apagado durante esa comprobación.
-- `npm run test:security`: las 88 regresiones offline pasan; la suite hostil no comienza en el proceso Windows y termina con `security_host_requires_linux`.
-- Docker Desktop `29.9.2`: motor Linux, cgroup v2, driver `cgroupfs`, daemon principal no rootless. Un daemon `docker:dind-rootless` local inicia, pero reporta `CgroupDriver=none`; por tanto no aplica límites de CPU/memoria/PIDs.
+- `npm run build`, `npm run build:controller`, `npm run build:worker`, `npm run build:gateway` y `npm run build:publishing-origin`: aprobados.
+- `docker compose --file infra/compose.yml --env-file infra/env.example --profile security config --quiet`: configuración válida.
 
-## Matriz de regresión offline
+## Matriz y evidencia
 
-| Área | Intento | Resultado esperado | Evidencia |
+| Área | Intento | Resultado | Evidencia |
 | --- | --- | --- | --- |
-| Sesión y ownership | A, B y anónimo consultan/mutan recursos de A | 404 uniforme o denegación; ningún enqueue ajeno | `tests/projects-api.test.ts`, `tests/unit/run-handlers.test.ts`, `tests/unit/run-events-handler.test.ts`, `tests/versions-api.test.ts`, `tests/publications-api.test.ts` |
-| Auth y CSRF | Sesión ausente/revocada, token de un uso repetido y origen ajeno | Denegación uniforme, CSRF rechazado y replay denegado | `tests/auth.test.ts`, `tests/integration/auth.test.ts` |
-| Preview | Firma, grant, epoch, Host, path, cookies y WebSocket hostiles | Solo owner accede; revocación cierra sesión; no se filtran credenciales | `tests/integration/preview-gateway.test.ts`, `tests/preview-protocol.test.ts` |
-| Egress/SSRF | IPv4/IPv6 privada, metadata, redirects, DNS rebinding y path encoding repetido | Rechazo; rutas registry exactas; DNS fijado a IPv4 pública | `tests/security/network.test.ts` |
-| Filesystem | Traversal, rutas absolutas, symlinks y carrera al reemplazar directorios | Ninguna lectura/escritura fuera de `/workspace` | `tests/security/filesystem.test.ts` |
-| Storage/publicación | Checksum/manifiesto, lectura anónima, owner ajeno y revocación | Objetos privados y publicación inmutable revocable | `tests/storage.test.ts`, `tests/publications-api.test.ts`, `tests/publishing-origin.test.ts`, `tests/integration/publications-s3.test.ts` |
+| Auth y ownership | Cuenta A, cuenta B, sesión ausente y recursos ajenos | No hay lectura, mutación ni enqueue cruzado | `tests/auth.test.ts`, `tests/projects-api.test.ts`, `tests/unit/run-handlers.test.ts`, `tests/worker-queue.test.ts` |
+| Preview | Grants alterados/repetidos/expirados, epochs, origen, Host/path, cookies y WebSocket/HMR | Solo owner accede; la revocación cierra conexiones; no se filtran credenciales | `tests/integration/preview-gateway.test.ts`, `tests/preview-protocol.test.ts` |
+| Egress y SSRF | Loopback, LAN, metadata, IPv4/IPv6, DNS directo, redirects y rebinding | Denegación salvo npm exacto a través del proxy | `tests/security/network.test.ts`, `tests/security/hostile-runtime.test.ts`, `infra/sandbox/egress-proxy.mjs` |
+| Filesystem | Traversal, symlinks, carrera de directorios y enlaces | Sin escape de `/workspace` | `tests/security/filesystem.test.ts`, `tests/security/hostile-runtime.test.ts` |
+| Sandbox real | Dos UID no root, rootfs, cgroups, cuota, lifecycle, timeout y memoria bajo presión | Límites efectivos; el vecino sigue operativo tras presión | `tests/security/hostile-runtime.test.ts`, `packages/sandbox/src/rootless.ts` |
+| Storage/publicación | Ownership, integridad, lectura anónima, publicación y revocación | Objetos privados; publicación revocable | `tests/storage.test.ts`, `tests/publications-api.test.ts`, `tests/publishing-origin.test.ts` |
 
-## Matriz pendiente de runtime Docker local
+## Alcance y límites
 
-La prueba existente `tests/security/hostile-runtime.test.ts` cubre dos sandboxes reales con payloads limitados:
+El perfil `security` crea una imagen de prueba y un runner desechable. Solo el runner de confianza monta `/var/run/docker.sock`; su red está desactivada. Los sandboxes no reciben socket, credenciales ni acceso al control plane. El modo tmpfs prueba una cuota real de workspace en Docker Desktop. La cuota por volumen del modo rootless de producción y la integración del controlador siguen pendientes en sus issues y continúan apagadas por defecto; no son requisitos para cerrar la matriz de pruebas #24.
 
-- UID no root, rootfs read-only, capacidades vacías, ausencia de secretos y de socket Docker.
-- Workspaces separados por owner, filesystem helper contra traversal y carrera de symlinks.
-- Bloqueo de loopback, LAN, metadata, IPv6 y DNS directo; acceso solo al proxy npm.
-- `npm install --ignore-scripts` con lifecycle hook hostil.
-- Cuotas de disco y límites efectivos de CPU, memoria, PIDs y timeout, mientras el sandbox vecino sigue respondiendo.
-
-No declarar esta matriz aprobada hasta ejecutarla en el perfil Compose local con límites que el motor aplique. No enviar prompts, tokens, cookies ni credenciales a logs.
+El host comparte el kernel Linux de Docker Desktop. La suite confirma restricciones de los contenedores y de la red dentro de ese motor local, no aislamiento de un daemon rootless ni despliegue público.
 
 ## Comandos reproducibles
 
 ```sh
-npm run infra:up -- --web --worker
-npm run test:integration
 npm run test:security:offline
 npm run test:security
+npm test
+npm run infra:up
+npm run test:integration
 npm run infra:down
 ```
 
-La parada conserva volúmenes. El reset completo se documenta en [desarrollo local](local-development.md) y borra los datos locales.
+`npm run test:security` construye y ejecuta el perfil Compose `security`; no requiere copiar secretos ni iniciar servicios de producto. `infra:down` conserva los volúmenes locales.
