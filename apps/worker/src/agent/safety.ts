@@ -13,7 +13,8 @@ const outputRedactionPatterns = [...sensitivePatterns, phoneLikePattern].map((pa
 const secretPathPattern = /(?:^|\/)(?:\.env(?:\.[^/]*)?|id_rsa(?:\.[^/]*)?|authorized_keys|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|service[-_]?account(?:\.[^/]*)?|kubeconfig|[^/]+\.(?:pem|key|p12|pfx))(?:$|\/)/i;
 
 export function sensitiveInputReason(value: string): "sensitive_content" | undefined {
-  return sensitivePatterns.some((pattern) => pattern.test(value)) || phoneLikePattern.test(value)
+  const text = value.replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, " ");
+  return sensitivePatterns.some((pattern) => pattern.test(text)) || phoneLikePattern.test(text)
     ? "sensitive_content"
     : undefined;
 }

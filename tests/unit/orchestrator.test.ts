@@ -76,6 +76,7 @@ function makeOptions(args: {
   maxSteps?: number;
   maxTokens?: number;
   imageGenerator?: AgentOrchestratorOptions["imageGenerator"];
+  spriteEditor?: AgentOrchestratorOptions["spriteEditor"];
 } = {}) {
   const trace = args.trace ?? [];
   const store = new MemoryRunStore(trace, args.prompt);
@@ -177,6 +178,7 @@ function makeOptions(args: {
     maxTokens: args.maxTokens ?? 16_000,
     maxDurationMs: 30_000,
     ...(args.imageGenerator ? { imageGenerator: args.imageGenerator } : {}),
+    ...(args.spriteEditor ? { spriteEditor: args.spriteEditor } : {}),
   };
   return { options, trace, store, planCall, streamCall, sandbox };
 }
@@ -258,6 +260,81 @@ describe("orquestador de runs", () => {
     })).rejects.toMatchObject({ code: "meta_request_ambiguous", usage: { images: 1 } });
     expect(imageGenerator).not.toHaveBeenCalled();
     expect(streamCall).not.toHaveBeenCalled();
+  });
+
+  it("reutiliza el resultado durable de edit_sprite y no vuelve a solicitar la edición a Meta", async () => {
+    const editCall = codeCall("call-edit-sprite", "edit_sprite", {
+      sourceAssetId: "10000000-0000-4000-8000-000000000131",
+      sourceFrameIndex: 1,
+      requestedChange: "Change the hero scarf to teal and keep its outline.",
+      preserve: { canvas: true, style: true, palette: true, characterIdentity: true },
+    });
+    const editor = vi.fn(async (_args: Record<string, unknown>, context: GeneratedImageToolContext) => {
+      await context.beforeRequest();
+      await context.onResponse({
+        bytes: new Uint8Array([137, 80, 78, 71]),
+        mimeType: "image/png",
+        width: 16,
+        height: 16,
+        model: "muse-image-1.0",
+        responseId: "response-sprite-edit",
+        requestId: "request-sprite-edit",
+        usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+      });
+      return { assetId: "10000000-0000-4000-8000-000000000132", provenance: "meta-image-edit" };
+    });
+    const response = (id: string) => completion([
+      { kind: "tool_call", callId: editCall.callId, name: editCall.name, arguments: editCall.arguments },
+      { kind: "message", role: "assistant", text: "El sprite quedó editado para revisión." },
+    ], id, 10);
+    const { options, store } = makeOptions({
+      spriteEditor: editor,
+      streams: [[editCall, response("response-edit-first")], [editCall, response("response-edit-repeat")], [completion([], "response-edit-final", 10)]],
+    });
+    const result = await createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    });
+    expect(editor).toHaveBeenCalledOnce();
+    expect(store.events.filter((event) => event.type === "agent.tool_completed" && event.payload.callId === editCall.callId)).toHaveLength(1);
+    expect(store.events.filter((event) => event.type === "agent.meta_request_started" && event.payload.requestKey === "image-call-edit-sprite")).toHaveLength(1);
+    expect(result.usage).toEqual({ tokens: 55, images: 1 });
+  });
+
+  it("no reintenta una edición con reserva durable sin respuesta de Meta", async () => {
+    const editCall = codeCall("call-edit-ambiguous", "edit_sprite", {
+      sourceAssetId: "10000000-0000-4000-8000-000000000141",
+      requestedChange: "Change the hero scarf to teal and keep its outline.",
+      preserve: { canvas: true, style: true, palette: true, characterIdentity: true },
+    });
+    const trace: string[] = [];
+    const editor = vi.fn(async (_args: Record<string, unknown>, context: GeneratedImageToolContext) => {
+      await context.beforeRequest();
+      trace.push("meta:edit_image");
+      throw new Error("The Meta response timed out after request start.");
+    });
+    const { options, store } = makeOptions({
+      spriteEditor: editor,
+      trace,
+      streams: [[editCall, completion([
+        { kind: "tool_call", callId: editCall.callId, name: editCall.name, arguments: editCall.arguments },
+        { kind: "message", role: "assistant", text: "Editando el sprite." },
+      ], "response-edit-ambiguous", 10)]],
+    });
+    store.events = [{
+      sequence: 1,
+      type: "agent.meta_request_started",
+      payload: { kind: "image", requestKey: "image-call-edit-ambiguous", round: 0 },
+    }];
+
+    await expect(createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    })).rejects.toMatchObject({ code: "meta_request_ambiguous", usage: { images: 1 } });
+    expect(editor).not.toHaveBeenCalled();
+    expect(trace).not.toContain("meta:edit_image");
   });
 
   it("frena antes de generar cuando la reserva diaria de imágenes se agota", async () => {

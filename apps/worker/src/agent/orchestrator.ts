@@ -33,6 +33,7 @@ import {
 } from "./tools";
 import { estimateTokens, redactSensitiveText, sensitiveInputReason } from "./safety";
 import type { GeneratedImageToolContext } from "../assets/image-generator";
+import type { SpriteEditToolContext } from "../assets/edit-sprite";
 import type { InspectAssetToolContext } from "../assets/inspect-asset";
 import { imageResponseTokenUsage } from "../assets/image-generator";
 import { ImagePipelineError } from "../assets/image-pipeline";
@@ -41,6 +42,7 @@ import { verifyGame } from "../pipelines/verify-game";
 
 type AgentMeta = Pick<MetaClient, "plan" | "streamCode" | "generateImage">;
 type AgentImageGenerator = (args: Record<string, unknown>, context: GeneratedImageToolContext) => Promise<unknown>;
+type AgentSpriteEditor = (args: Record<string, unknown>, context: SpriteEditToolContext) => Promise<unknown>;
 type AgentSkillRouter = {
   routeForRun(input: { runId: string; task: string; engineVersion: string; budget: number }): Promise<SkillSelection>;
 };
@@ -57,6 +59,7 @@ export interface AgentOrchestratorOptions {
   skillTokenBudget?: number;
   dailyImageLimit?: number;
   imageGenerator?: AgentImageGenerator;
+  spriteEditor?: AgentSpriteEditor;
   assetInspector?: (args: Record<string, unknown>, context: InspectAssetToolContext) => Promise<unknown>;
   versions?: {
     captureVerifiedRun(input: {
@@ -483,13 +486,13 @@ async function executeCachedTool(
   });
   let result: unknown;
   try {
-    if (call.name === "generate_image") {
-      const imageGenerator = options.imageGenerator;
-      if (!imageGenerator) throw new RunProcessingError("image_generation_unavailable", false, state.usage);
+    if (call.name === "generate_image" || call.name === "edit_sprite") {
+      const imageTool = call.name === "generate_image" ? options.imageGenerator : options.spriteEditor;
+      if (!imageTool) throw new RunProcessingError(call.name === "generate_image" ? "image_generation_unavailable" : "sprite_edit_unavailable", false, state.usage);
       const requestKey = `image-${call.callId}`;
       let startedImageRequest = false;
       let completedImageRequest = false;
-      result = await imageGenerator(call.args, {
+      result = await imageTool(call.args, {
         claim,
         projectId,
         signal: state.signal,
@@ -548,17 +551,17 @@ async function executeCachedTool(
   } catch (error) {
     if (state.signal.aborted) throw error;
     if (error instanceof RunProcessingError) throw error;
-    if (call.name === "inspect_asset" && error instanceof OwnedResourceNotFoundError) {
+    if ((call.name === "inspect_asset" || call.name === "edit_sprite") && error instanceof OwnedResourceNotFoundError) {
       throw new RunProcessingError("asset_not_found", false, state.usage);
     }
-    if (call.name === "generate_image" && error instanceof ImagePipelineError) {
+    if ((call.name === "generate_image" || call.name === "edit_sprite") && error instanceof ImagePipelineError) {
       throw new RunProcessingError(error.code, false, state.usage);
     }
-    if (call.name === "generate_image" && error instanceof UsageLimitExceededError) {
+    if ((call.name === "generate_image" || call.name === "edit_sprite") && error instanceof UsageLimitExceededError) {
       if (error.limit === "images") throw new RunProcessingError("daily_image_limit_exceeded", false, state.usage);
       if (error.limit === "storage") throw new RunProcessingError("usage_limit_storage", false, state.usage);
     }
-    if (call.name === "generate_image" && error instanceof MetaApiError) {
+    if ((call.name === "generate_image" || call.name === "edit_sprite") && error instanceof MetaApiError) {
       throw providerFailure(error, state.usage, state.signal, state.userSignal);
     }
     if (error instanceof Error && /^agent_[a-z0-9_]+$/.test(error.message)) {

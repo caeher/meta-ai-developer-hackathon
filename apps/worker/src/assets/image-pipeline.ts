@@ -183,6 +183,78 @@ export async function processGeneratedImage(
   };
 }
 
+export async function processEditedImage(
+  image: MetaImageResult,
+  options: {
+    sourceFrameWidth: number;
+    sourceFrameHeight: number;
+    preserveCanvas: boolean;
+    preserveTransparency: boolean;
+  },
+): Promise<ProcessedGeneratedImage> {
+  const normalized = await processGeneratedImage(image, {
+    assetType: "sprite",
+    description: "Edit the supplied game sprite while preserving its requested constraints.",
+    style: "preserve the supplied sprite style",
+    view: "side",
+    palette: [],
+    transparentBackground: options.preserveTransparency,
+    frameColumns: 1,
+    frameRows: 1,
+    tileable: false,
+  });
+  if (!options.preserveCanvas) return normalized;
+  if (!Number.isSafeInteger(options.sourceFrameWidth) || !Number.isSafeInteger(options.sourceFrameHeight) ||
+      options.sourceFrameWidth < 1 || options.sourceFrameHeight < 1 || options.sourceFrameWidth > GENERATED_ASSET_MAX_DIMENSION ||
+      options.sourceFrameHeight > GENERATED_ASSET_MAX_DIMENSION) {
+    throw new ImagePipelineError("edited_source_canvas_invalid");
+  }
+
+  const canvas = await sharp(normalized.bytes, { failOn: "error", limitInputPixels: GENERATED_ASSET_MAX_PIXELS })
+    .resize({
+      width: options.sourceFrameWidth,
+      height: options.sourceFrameHeight,
+      fit: "contain",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+      kernel: sharp.kernel.nearest,
+    })
+    .png({ compressionLevel: 9, adaptiveFiltering: false, palette: false })
+    .toBuffer({ resolveWithObject: true })
+    .catch(() => { throw new ImagePipelineError("edited_image_canvas_normalization_failed"); });
+  const bytes = canvas.data;
+  const info = canvas.info;
+  if (bytes.byteLength < 1 || bytes.byteLength > GENERATED_ASSET_MAX_BYTES || info.width !== options.sourceFrameWidth ||
+      info.height !== options.sourceFrameHeight || info.width * info.height > GENERATED_ASSET_MAX_PIXELS) {
+    throw new ImagePipelineError("edited_image_canvas_invalid");
+  }
+  const alpha = info.channels === 4
+    ? await sharp(bytes, { failOn: "error", limitInputPixels: GENERATED_ASSET_MAX_PIXELS }).extractChannel(3).raw().toBuffer()
+    : undefined;
+  const transparentPixels = Boolean(alpha?.some((value) => value < 255));
+  if (options.preserveTransparency && !transparentPixels) throw new ImagePipelineError("generated_image_alpha_missing");
+  const contactSheet = await createFrameContactSheet([await sharp(bytes)
+    .resize({ width: CONTACT_CELL_SIZE, height: CONTACT_CELL_SIZE, fit: "contain", background: { r: 36, g: 40, b: 59, alpha: 0 } })
+    .png({ compressionLevel: 9 }).toBuffer()], 1, 1);
+  const edits = [...normalized.edits];
+  if (normalized.width !== options.sourceFrameWidth || normalized.height !== options.sourceFrameHeight) {
+    if (!edits.includes("bounded-resize")) edits.push("bounded-resize");
+  }
+  return {
+    ...normalized,
+    bytes,
+    width: info.width,
+    height: info.height,
+    frameWidth: info.width,
+    frameHeight: info.height,
+    hasAlpha: info.channels === 4,
+    transparentPixels,
+    edits,
+    sha256: sha256(bytes),
+    contactSheet,
+    contactSheetSha256: sha256(contactSheet),
+  };
+}
+
 function detectMime(bytes: Uint8Array): MetaImageResult["mimeType"] | undefined {
   if (bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value)) return "image/png";
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";

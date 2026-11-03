@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import {
+  EditSpriteInputJsonSchema,
+  EditSpriteInputSchema,
   ImageGenerationBriefSchema,
   InspectAssetInputSchema,
   InspectAssetInputJsonSchema,
@@ -71,6 +73,13 @@ const definitions: ToolDefinition[] = [
     description: "Generate one original game image with Meta, validate and normalize it, store private provenance, and register it for Phaser loading.",
     inputSchema: ImageGenerationBriefSchema,
     summary: (args) => `Generar asset ${String(args.assetType)} y validarlo para Phaser`,
+  },
+  {
+    name: "edit_sprite",
+    description: "Create a new sprite by editing the exact private same-project sprite assetId supplied. Keeps the source unchanged, records derivation, and requires live preview review.",
+    inputSchema: EditSpriteInputSchema,
+    inputJsonSchema: EditSpriteInputJsonSchema as unknown as Record<string, unknown>,
+    summary: () => "Editar el sprite indicado y registrar su procedencia",
   },
   {
     name: "inspect_asset",

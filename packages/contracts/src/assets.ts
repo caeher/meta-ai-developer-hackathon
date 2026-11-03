@@ -42,6 +42,13 @@ export const GeneratedAssetMetadataSchema = z.object({
     assetId: z.string().uuid(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict().optional(),
+  provenance: z.literal("meta-image-edit").optional(),
+  derivation: z.object({
+    sourceAssetId: z.string().uuid(),
+    sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    sourceFrameIndex: z.number().int().min(0).max(63),
+    requestedChange: z.string().min(8).max(800),
+  }).strict().optional(),
   width: z.number().int().min(1).max(2_048),
   height: z.number().int().min(1).max(2_048),
   hasAlpha: z.boolean(),

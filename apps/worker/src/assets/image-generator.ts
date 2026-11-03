@@ -13,10 +13,10 @@ import { sensitiveInputReason } from "../agent/safety";
 import { ImagePipelineError, prepareImageReference, processGeneratedImage } from "./image-pipeline";
 
 const ASSET_FILE_LIMIT = 8 * 1024 * 1024;
-const GENERATED_MANIFEST_PATH = "public/assets/generated/manifest.json";
-const MAX_PROJECT_GENERATED_ASSETS = 128;
+export const GENERATED_MANIFEST_PATH = "public/assets/generated/manifest.json";
+export const MAX_PROJECT_GENERATED_ASSETS = 128;
 
-const RuntimeGeneratedAssetSchema = z.object({
+export const RuntimeGeneratedAssetSchema = z.object({
   assetId: z.string().uuid(),
   key: z.string().regex(/^generated-[0-9a-f-]{36}$/),
   path: z.string().regex(/^assets\/generated\/[0-9a-f-]{36}\.png$/),
@@ -31,7 +31,7 @@ const RuntimeGeneratedAssetSchema = z.object({
   }
 });
 
-const RuntimeGeneratedAssetManifestSchema = z.object({
+export const RuntimeGeneratedAssetManifestSchema = z.object({
   schemaVersion: z.literal(1),
   assets: z.array(RuntimeGeneratedAssetSchema).max(MAX_PROJECT_GENERATED_ASSETS),
 }).strict().superRefine((manifest, context) => {
@@ -41,6 +41,9 @@ const RuntimeGeneratedAssetManifestSchema = z.object({
     ids.add(asset.assetId);
   }
 });
+
+export type RuntimeGeneratedAsset = z.infer<typeof RuntimeGeneratedAssetSchema>;
+export type RuntimeGeneratedAssetManifest = z.infer<typeof RuntimeGeneratedAssetManifestSchema>;
 
 export type GeneratedImageToolContext = Readonly<{
   claim: RunWorkerClaim;
@@ -65,7 +68,7 @@ export interface GeneratedImageStorage {
 }
 
 type ImageMeta = Pick<MetaClient, "generateImage">;
-type ImageSandbox = Pick<SandboxControllerClient, "readFile" | "writeFile" | "writeBinaryFile">;
+export type ImageSandbox = Pick<SandboxControllerClient, "readFile" | "writeFile" | "writeBinaryFile">;
 type StoredImageReference = Readonly<{ assetId: string; sha256: string; bytes: Uint8Array }>;
 
 export function createGeneratedImageTool(input: {
@@ -277,7 +280,7 @@ async function loadLatestImageReference(
   return { assetId: entry.assetId, sha256: stored.asset.sha256, bytes };
 }
 
-async function loadRuntimeManifest(
+export async function loadRuntimeManifest(
   sandbox: ImageSandbox,
   projectId: string,
   signal: AbortSignal,

@@ -343,6 +343,17 @@ export class MetaClient {
     return parseImageResponse(result.response, result.requestId);
   }
 
+  async editImage(
+    prompt: string,
+    referenceImage: MetaImageReference,
+    options: Pick<MetaOperationOptions, "signal"> = {},
+  ): Promise<MetaImageResult> {
+    if (!referenceImage) {
+      throw new MetaApiError({ code: "invalid_request", message: "An explicit image reference is required for image editing." });
+    }
+    return this.generateImage(prompt, { ...options, referenceImage });
+  }
+
   async smokeTest(options: MetaSmokeOptions = {}, signal?: AbortSignal): Promise<MetaSmokeResult> {
     return runMetaSmoke(this.config, options, this.transport, signal);
   }

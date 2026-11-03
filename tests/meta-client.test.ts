@@ -120,15 +120,16 @@ describe("MetaClient plan and image contracts", () => {
     const reference = await new MetaClient(config(), seedFetch).generateImage("Pixel-art blue star.");
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(valid));
 
-    await new MetaClient(config(), fetchMock).generateImage("Pixel-art blue moon, matching the reference palette.", {
-      referenceImage: { mimeType: "image/png", bytes: reference.bytes },
-    });
+    await new MetaClient(config(), fetchMock).editImage(
+      "Edit the requested sprite frame while matching its source palette.",
+      { mimeType: "image/png", bytes: reference.bytes },
+    );
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as Record<string, unknown>;
     expect(body.input).toEqual([{
       type: "message",
       role: "user",
       content: [
-        { type: "input_text", text: "Pixel-art blue moon, matching the reference palette." },
+        { type: "input_text", text: "Edit the requested sprite frame while matching its source palette." },
         { type: "input_image", image_url: `data:image/png;base64,${Buffer.from(reference.bytes).toString("base64")}` },
       ],
     }]);
@@ -143,6 +144,25 @@ describe("MetaClient plan and image contracts", () => {
 });
 
 describe("MetaClient streaming and tool replay", () => {
+  it("expone edit_sprite con un sourceAssetId explícito y restricciones cerradas", async () => {
+    const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_edit_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));
+    const editTool = agentToolDefinitions.find(({ name }) => name === "edit_sprite");
+    expect(editTool?.inputJsonSchema).toBeDefined();
+    const client = new MetaClient(config(), fetchMock);
+    for await (const event of client.streamCode({ prompt: "Edit the supplied sprite only.", tools: editTool ? [editTool] : [] })) {
+      expect(event.type).toBe("completed");
+    }
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { tools: Array<{ name: string; parameters: Record<string, unknown> }> };
+    const schema = body.tools[0]?.parameters;
+    expect(body.tools[0]?.name).toBe("edit_sprite");
+    expect(schema?.required).toEqual(expect.arrayContaining(["sourceAssetId", "requestedChange", "preserve"]));
+    expect(schema?.additionalProperties).toBe(false);
+    expect((schema?.properties as Record<string, Record<string, unknown>>).sourceFrameIndex).toMatchObject({ minimum: 0, maximum: 63, default: 0 });
+    expect((schema?.properties as Record<string, Record<string, unknown>>).palette).toMatchObject({ uniqueItems: true, maxItems: 8 });
+    expect((schema?.properties as Record<string, Record<string, unknown>>).preserve).toMatchObject({ required: ["canvas", "style", "palette", "characterIdentity"] });
+  });
+
   it("sends the inspect_asset Draft-7 source exclusivity schema to the provider", async () => {
     const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));

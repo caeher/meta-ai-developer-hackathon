@@ -1,5 +1,62 @@
 import { z } from "zod";
 
+const spriteViewSchema = z.enum(["side", "front", "top-down", "isometric", "orthographic"]);
+const hexPaletteColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+
+const EditSpriteInputBaseSchema = z.object({
+  sourceAssetId: z.string().uuid(),
+  sourceFrameIndex: z.number().int().min(0).max(63).optional().default(0),
+  requestedChange: z.string().trim().min(8).max(800),
+  view: spriteViewSchema.optional(),
+  palette: z.array(hexPaletteColorSchema).max(8).optional(),
+  preserve: z.object({
+    canvas: z.boolean(),
+    style: z.boolean(),
+    palette: z.boolean(),
+    characterIdentity: z.boolean(),
+  }).strict(),
+}).strict();
+
+export const EditSpriteInputSchema = EditSpriteInputBaseSchema.superRefine((input, context) => {
+  if (input.palette && new Set(input.palette).size !== input.palette.length) {
+    context.addIssue({ code: "custom", path: ["palette"], message: "Palette colors must be unique." });
+  }
+});
+
+const editSpriteInputJsonSchema = z.toJSONSchema(EditSpriteInputBaseSchema, { target: "draft-7" });
+const editSpriteInputProperties = editSpriteInputJsonSchema.properties as Record<string, Record<string, unknown>>;
+export const EditSpriteInputJsonSchema = {
+  ...editSpriteInputJsonSchema,
+  properties: {
+    ...editSpriteInputProperties,
+    sourceFrameIndex: { ...editSpriteInputProperties.sourceFrameIndex, default: 0 },
+    palette: editSpriteInputProperties.palette
+      ? { ...editSpriteInputProperties.palette, uniqueItems: true }
+      : undefined,
+  },
+} as const;
+
+export const EditSpriteResultSchema = z.object({
+  assetId: z.string().uuid(),
+  sourceAssetId: z.string().uuid(),
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  path: z.string().regex(/^assets\/generated\/[0-9a-f-]{36}\.png$/),
+  width: z.number().int().min(1).max(2_048),
+  height: z.number().int().min(1).max(2_048),
+  reviewStatus: z.literal("pending-in-live-preview"),
+  provenance: z.literal("meta-image-edit"),
+}).strict().superRefine((result, context) => {
+  if (result.path !== `assets/generated/${result.assetId}.png` || result.assetId === result.sourceAssetId) {
+    context.addIssue({ code: "custom", path: ["path"], message: "Edited assets need a new ID-derived path." });
+  }
+});
+
+export const EditSpriteResultJsonSchema = z.toJSONSchema(EditSpriteResultSchema, { target: "draft-7" });
+
+export type EditSpriteInput = z.infer<typeof EditSpriteInputSchema>;
+export type EditSpriteResult = z.infer<typeof EditSpriteResultSchema>;
+
 export const ASSET_INSPECTION_MAX_REPORT_BYTES = 24_000;
 export const ASSET_INSPECTION_MAX_FINDINGS = 64;
 export const ASSET_INSPECTION_MAX_JSON_BYTES = 1_048_576;
