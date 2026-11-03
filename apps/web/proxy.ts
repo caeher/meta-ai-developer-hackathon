@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+// proxy is UX-only: presence of forja_session never authenticates.
+// Real auth happens in requirePageUser (pages) and session/ownership checks (APIs).
 const publicPaths = new Set(["/", "/sign-in", "/sign-up", "/forgot-password", "/reset-password", "/verify-email"]);
 
 function isProtectedPath(pathname: string): boolean {

@@ -36,7 +36,15 @@ const metadata = {
 };
 const EMAIL_TTL_MS = 30 * 60 * 1000;
 const RESET_TTL_MS = 30 * 60 * 1000;
-const dummyPasswordHash = hashPassword("not-a-real-account-password");
+let cachedDummyHash: Promise<string> | null = null;
+function getDummyPasswordHash(): Promise<string> {
+  if (!cachedDummyHash) {
+    cachedDummyHash = hashPassword('not-a-real-account-password-for-timing-mitigation');
+    cachedDummyHash.catch(() => { cachedDummyHash = null; });
+  }
+  return cachedDummyHash;
+}
+
 
 type PublicUser = { userId: string; email: string };
 
@@ -126,7 +134,7 @@ export function createAuthHandlers(options: {
         const bucket = `login:${email}`;
         if (await isEmailLocked(database, bucket)) return response(401, { error: "invalid_credentials" });
         const user = await findUserByEmail(database, email);
-        const storedHash = user?.passwordHash ?? await dummyPasswordHash;
+        const storedHash = user?.passwordHash ?? await getDummyPasswordHash();
         const passwordMatches = await verifyPassword(password, storedHash);
         if (!user || !user.passwordHash || !user.emailVerifiedAt || !passwordMatches) {
           await recordFailure(database, bucket);
@@ -284,7 +292,7 @@ export async function resolveCurrentUser(database: GameDatabase, token: string |
 }
 
 async function findUserByEmail(database: GameDatabase, email: string) {
-  const [user] = await database.select().from(users).where(eq(users.email, email)).limit(1);
+  const [user] = await database.select().from(users).where(and(eq(users.email, email), isNull(users.deletedAt))).limit(1);
   return user ?? null;
 }
 
@@ -376,6 +384,7 @@ async function isEmailLocked(database: GameDatabase, bucket: string): Promise<bo
 }
 
 async function recordAllowedAttempt(database: GameDatabase, bucket: string): Promise<boolean> {
+  if (await isEmailLocked(database, bucket)) return false;
   const state = await recordFailure(database, bucket);
   return !isRateLimited(state);
 }

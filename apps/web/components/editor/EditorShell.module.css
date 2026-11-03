@@ -51,6 +51,7 @@
 
 .chatPane { border-right: 1px solid var(--app-border); }
 .chatTabs { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.chatTabs [hidden] { display: none !important; }
 .chatToolbar { min-height: 52px; justify-content: space-between; padding: 7px 12px; border-bottom: 1px solid var(--app-border); }
 .progressTabs { min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 .progressTabs button { flex: none; }

@@ -1,14 +1,16 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button, DropdownMenu, Flex, Text } from "@radix-ui/themes";
+import { useToast } from "../ui/toast";
 
 type SessionUser = { userId: string; email: string };
 
 export function AuthControls() {
   const router = useRouter();
+  const { toast } = useToast();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -23,15 +25,21 @@ export function AuthControls() {
   }, []);
 
   async function signOut(allSessions = false) {
-    await fetch(`/api/auth/${allSessions ? "logout-all" : "logout"}`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
-    setUser(null);
-    router.push("/sign-in");
-    router.refresh();
+    try {
+      const response = await fetch(`/api/auth/${allSessions ? "logout-all" : "logout"}`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      if (!response.ok) throw new Error("logout_failed");
+      setUser(null);
+      toast({ tone: "ok", title: allSessions ? "Sesiones cerradas en todos los dispositivos." : "Sesión cerrada." });
+      router.push("/sign-in");
+      router.refresh();
+    } catch {
+      toast({ tone: "error", title: "No se pudo cerrar la sesión. Inténtalo de nuevo." });
+    }
   }
 
   if (!loaded || !user) {

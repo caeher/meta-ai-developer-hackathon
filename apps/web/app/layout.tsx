@@ -1,9 +1,10 @@
-﻿import type { Metadata } from "next";
+import type { Metadata } from "next";
 import { Theme } from "@radix-ui/themes";
 import "@radix-ui/themes/styles.css";
 import "../styles/tokens.css";
 import "../styles/radix.css";
 import "../styles/globals.css";
+import { ToastProvider } from "../components/ui/toast";
 
 export const metadata: Metadata = {
   title: "Forja - juegos 2D",
@@ -17,7 +18,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="es">
       <body>
         <Theme appearance="dark" accentColor="blue" grayColor="slate" hasBackground={false} panelBackground="solid" radius="medium">
-          {children}
+          <ToastProvider>{children}</ToastProvider>
         </Theme>
       </body>
     </html>

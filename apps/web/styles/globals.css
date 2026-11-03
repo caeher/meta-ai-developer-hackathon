@@ -374,3 +374,40 @@ p {
   .auth-mobile-brand { display: block; width: min(100%, 27rem); margin: 0 auto 1.5rem; }
   .auth-card { margin: auto; }
 }
+
+.forja-toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: min(22rem, calc(100vw - 2rem));
+}
+.forja-toast {
+  position: relative;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.35);
+  border-radius: var(--radius-3);
+}
+.forja-toast-close {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.35rem;
+  padding: 0.1rem 0.4rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.auth-noscript {
+  margin: 0 auto 1rem;
+  max-width: 27rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--red-7);
+  border-radius: var(--radius-3);
+  background: color-mix(in srgb, var(--red-9) 14%, transparent);
+}

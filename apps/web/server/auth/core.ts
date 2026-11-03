@@ -39,12 +39,6 @@ export function hashRateLimitKey(value: string, source: NodeJS.ProcessEnv = proc
   return createHmac("sha256", key).update(`auth:${value}`).digest("hex");
 }
 
-export function tokenHashMatches(left: string, right: string): boolean {
-  const leftBytes = Buffer.from(left, "hex");
-  const rightBytes = Buffer.from(right, "hex");
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
-}
-
 export async function hashPassword(password: string): Promise<string> {
   const parsed = passwordSchema.parse(password);
   const salt = randomBytes(16);
@@ -115,7 +109,7 @@ export function createSessionManager(
 
   return {
     async create(userId: string, previousToken?: string, now = new Date()) {
-      if (previousToken) await store.revoke(hashToken(previousToken), now);
+      if (previousToken && previousToken.length <= 128) { try { const previous = await store.get(hashToken(previousToken)); if (previous && previous.userId === userId && !previous.revokedAt) { await store.revoke(hashToken(previousToken), now); } } catch { } }
       const token = createOpaqueToken();
       const absoluteExpiresAt = new Date(now.getTime() + absoluteTtlMs);
       const expiresAt = new Date(Math.min(now.getTime() + slidingTtlMs, absoluteExpiresAt.getTime()));
@@ -209,6 +203,7 @@ export function sessionCookie(token: string, expiresAt: Date, secure: boolean): 
     "HttpOnly",
     "SameSite=Lax",
     `Expires=${expiresAt.toUTCString()}`,
+    `Max-Age=${Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000))}`,
     "Priority=High",
   ];
   if (secure) attributes.push("Secure");

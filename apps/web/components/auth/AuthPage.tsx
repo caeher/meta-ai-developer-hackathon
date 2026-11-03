@@ -28,6 +28,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "forgot-passwo
       </aside>
       <section className="auth-main">
         <div className="auth-mobile-brand"><Link className="brand" href="/"><span className="brand-mark" aria-hidden="true">F</span><span>Forja</span></Link></div>
+        <noscript><p className="auth-noscript">Esta página necesita JavaScript para crear tu cuenta o iniciar sesión. Actívalo en tu navegador (o permite este sitio en tu bloqueador) y recarga la página.</p></noscript>
         <AuthForm mode={mode} />
         <p className="auth-privacy-note">Al continuar, tu espacio y tus proyectos son solo tuyos.</p>
       </section>
