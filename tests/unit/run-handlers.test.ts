@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { identityFromAuthenticatedSession } from "@meta-game/db";
+import { ContributorConsentRequiredError, identityFromAuthenticatedSession } from "@meta-game/db";
 import { RunQueueJobSchema } from "@meta-game/contracts";
 import { createRunHandlers } from "../../apps/web/server/projects/run-handlers";
 
@@ -34,15 +34,16 @@ function makeHandlers(input: { enabled?: boolean; projectOwned?: boolean } = {})
   const get = vi.fn(async () => run);
   const latest = vi.fn<() => Promise<typeof run | undefined>>(async () => run);
   const cancelRun = vi.fn(async () => ({ ...run, status: "cancelled" }));
+  const requireContributorConsent = vi.fn(async () => undefined);
   const handlers = createRunHandlers({
     identity,
     projects: { get: async () => input.projectOwned === false ? undefined : ({ id: projectId }) },
-    runs: { enqueueRun, get, latest, cancelRun } as never,
+    runs: { enqueueRun, get, latest, cancelRun, requireContributorConsent } as never,
     allowedOrigins: ["https://app.example.test"],
     enabled: input.enabled ?? true,
     policy,
   });
-  return { handlers, enqueueRun, get, latest, cancelRun };
+  return { handlers, enqueueRun, get, latest, cancelRun, requireContributorConsent };
 }
 
 describe("run API handlers", () => {
@@ -123,14 +124,61 @@ describe("run API handlers", () => {
     expect(enqueueRun).not.toHaveBeenCalled();
   });
 
-  it("requires explicit Contributor terms and 18+ confirmation before enqueue", async () => {
-    const { handlers, enqueueRun } = makeHandlers();
+  it("encola sin campo de consentimiento cuando el usuario tiene consentimiento (compatibilidad)", async () => {
+    const { handlers, enqueueRun, requireContributorConsent } = makeHandlers();
     const response = await handlers.POST(request("POST", {
       idempotencyKey: "run-request-005",
       messageRequestId: "message-request-005",
     }), { params: Promise.resolve({ projectId }) });
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(202);
+    expect(requireContributorConsent).toHaveBeenCalledWith(identity);
+    expect(enqueueRun).toHaveBeenCalledWith(identity, {
+      projectId,
+      idempotencyKey: "run-request-005",
+      messageRequestId: "message-request-005",
+      policy,
+    });
+  });
+
+  it("ignora el campo contributorConsent del body y deriva del usuario", async () => {
+    const { handlers, enqueueRun } = makeHandlers();
+    const response = await handlers.POST(request("POST", {
+      idempotencyKey: "run-request-006",
+      messageRequestId: "message-request-006",
+      contributorConsent: true,
+    }), { params: Promise.resolve({ projectId }) });
+    expect(response.status).toBe(202);
+    const input = enqueueRun.mock.calls.at(0)?.at(1) as unknown as Record<string, unknown>;
+    expect(input).not.toHaveProperty("contributorConsent");
+    expect(input).toMatchObject({ projectId, idempotencyKey: "run-request-006", messageRequestId: "message-request-006" });
+  });
+
+  it("rechaza con 403 si el usuario no tiene consentimiento, sin crear run ni reserva", async () => {
+    const { handlers, enqueueRun, requireContributorConsent } = makeHandlers();
+    requireContributorConsent.mockRejectedValueOnce(new ContributorConsentRequiredError());
+    const response = await handlers.POST(request("POST", {
+      idempotencyKey: "run-request-007",
+      messageRequestId: "message-request-007",
+    }), { params: Promise.resolve({ projectId }) });
+    expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "contributor_consent_required" });
+    expect(enqueueRun).not.toHaveBeenCalled();
+  });
+
+  it("no duplica ni reserva en un doble intento idempotente sin consentimiento", async () => {
+    const { handlers, enqueueRun, requireContributorConsent } = makeHandlers();
+    requireContributorConsent.mockRejectedValue(new ContributorConsentRequiredError());
+    const context = { params: Promise.resolve({ projectId }) };
+    const first = await handlers.POST(request("POST", {
+      idempotencyKey: "run-request-008",
+      messageRequestId: "message-request-008",
+    }), context);
+    const second = await handlers.POST(request("POST", {
+      idempotencyKey: "run-request-008",
+      messageRequestId: "message-request-008",
+    }), context);
+    expect(first.status).toBe(403);
+    expect(second.status).toBe(403);
     expect(enqueueRun).not.toHaveBeenCalled();
   });
 

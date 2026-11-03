@@ -14,7 +14,10 @@ export const EnqueueRunRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(128),
   /** requestId of an already stored user message; linked to the run before it reaches the queue. */
   messageRequestId: z.string().trim().min(8).max(128).optional(),
-  /** User confirmation of the Contributor data terms and 18+ requirement. */
+  /**
+   * @deprecated El consentimiento deriva de users.contributor_consent_at en el servidor;
+   * se acepta por compatibilidad con clientes viejos y se ignora.
+   */
   contributorConsent: z.literal(true).optional(),
 }).strict();
 

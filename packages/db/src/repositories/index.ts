@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { GameDatabase } from "../database";
 import {
   assertVerifiedIdentityContext,
+  ContributorConsentRequiredError,
   IdempotencyConflictError,
   OwnedResourceNotFoundError,
   ProjectRunBusyError,
@@ -108,7 +109,8 @@ const enqueueRunInputSchema = z.object({
   projectId: uuidSchema,
   idempotencyKey: z.string().min(8).max(128),
   messageRequestId: z.string().trim().min(8).max(128).optional(),
-  contributorConsent: z.boolean().default(false),
+  /** @deprecated El consentimiento deriva de users.contributor_consent_at; se acepta y se ignora. */
+  contributorConsent: z.boolean().optional(),
   reservedImages: z.number().int().nonnegative().max(100_000).default(0),
   policy: RunQuotaPolicySchema,
 });
@@ -457,6 +459,12 @@ export function createRepositories(db: GameDatabase, policyInput: Partial<z.inpu
     },
 
     runs: {
+      async requireContributorConsent(identity: VerifiedIdentityContext): Promise<void> {
+        const ownerUserId = await resolveOwnerId(db, identity);
+        const [row] = await db.select({ contributorConsentAt: users.contributorConsentAt }).from(users).where(eq(users.id, ownerUserId)).limit(1);
+        if (!row?.contributorConsentAt) throw new ContributorConsentRequiredError();
+      },
+
       async enqueueRun(identity: VerifiedIdentityContext, input: z.input<typeof enqueueRunInputSchema>) {
         const parsed = enqueueRunInputSchema.parse(input);
         const policy: RunQuotaPolicy = RunQuotaPolicySchema.parse(parsed.policy);
@@ -465,6 +473,9 @@ export function createRepositories(db: GameDatabase, policyInput: Partial<z.inpu
           const [owner] = await tx.select({ id: users.id }).from(users)
             .where(eq(users.id, ownerUserId)).for("update").limit(1);
           if (!owner) throw new OwnedResourceNotFoundError();
+          const [consent] = await tx.select({ contributorConsentAt: users.contributorConsentAt }).from(users)
+            .where(eq(users.id, ownerUserId)).for("update").limit(1);
+          if (!consent?.contributorConsentAt) throw new ContributorConsentRequiredError();
           const [project] = await tx.select({ id: projects.id }).from(projects).where(and(
             eq(projects.ownerUserId, ownerUserId),
             eq(projects.id, parsed.projectId),
@@ -550,7 +561,7 @@ export function createRepositories(db: GameDatabase, policyInput: Partial<z.inpu
             ownerUserId,
             projectId: parsed.projectId,
             idempotencyKey: parsed.idempotencyKey,
-            contributorConsent: parsed.contributorConsent,
+            contributorConsent: true,
           }).returning();
           if (!run) throw new Error("No se pudo crear el run");
           if (sourceMessage) {
@@ -587,7 +598,7 @@ export function createRepositories(db: GameDatabase, policyInput: Partial<z.inpu
             payload: {
               reservationId: reservation.id,
               outboxGeneration: 0,
-              contributorConsent: parsed.contributorConsent,
+              contributorConsent: true,
               ...(sourceMessage ? { sourceMessageId: sourceMessage.id } : {}),
             },
           });

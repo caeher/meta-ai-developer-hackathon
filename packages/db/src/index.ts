@@ -2,6 +2,7 @@ export { createDatabase, createDatabaseFromEnvironment } from "./database";
 export type { GameDatabase } from "./database";
 export {
   assertVerifiedIdentityContext,
+  ContributorConsentRequiredError,
   IdempotencyConflictError,
   identityFromAuthenticatedSession,
   OwnedResourceNotFoundError,

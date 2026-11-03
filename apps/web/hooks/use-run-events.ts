@@ -35,7 +35,7 @@ function runErrorMessage(code: unknown): string {
   if (code === "usage_limit_projects") return "Se alcanzó el máximo de proyectos de la cuenta.";
   if (code === "usage_limit_time") return "La ejecución alcanzó el límite de tiempo configurado.";
   if (code === "not_found") return "El proyecto o la ejecución ya no está disponible.";
-  if (code === "contributor_consent_required") return "Confirma los términos de uso de Meta y el requisito de edad antes de iniciar.";
+  if (code === "contributor_consent_required") return "Tu cuenta no registra la confirmación de mayoría de edad y términos. Vuelve a registrarte aceptándola.";
   if (code === "unauthenticated" || code === "authentication_not_configured") return "Inicia sesión para ejecutar el agente.";
   return "No se pudo iniciar la ejecución. Puedes reintentarlo sin duplicar el run.";
 }
@@ -46,7 +46,7 @@ export async function enqueueProjectRun(projectId: string, messageRequestId: str
     cache: "no-store",
     credentials: "same-origin",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ idempotencyKey, messageRequestId, contributorConsent: true }),
+    body: JSON.stringify({ idempotencyKey, messageRequestId }),
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({})) as { error?: unknown };

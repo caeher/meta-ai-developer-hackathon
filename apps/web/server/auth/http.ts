@@ -1,4 +1,5 @@
 import {
+  ContributorConsentRequiredError,
   IdempotencyConflictError,
   OwnedResourceNotFoundError,
   ProjectRunBusyError,
@@ -72,6 +73,9 @@ export function apiErrorResponse(error: unknown): Response {
   } else if (error instanceof UsageLimitExceededError) {
     status = 429;
     code = `usage_limit_${error.limit}`;
+  } else if (error instanceof ContributorConsentRequiredError) {
+    status = 403;
+    code = "contributor_consent_required";
   } else if (error instanceof OriginValidationError) {
     status = 403;
     code = "origin_not_allowed";

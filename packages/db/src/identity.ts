@@ -32,6 +32,9 @@ export class UsageLimitExceededError extends Error {
 export class ProjectRunBusyError extends Error {
   constructor() { super("El proyecto ya tiene un run activo"); this.name = "ProjectRunBusyError"; }
 }
+export class ContributorConsentRequiredError extends Error {
+  constructor() { super("La cuenta no registra la confirmación de mayoría de edad y términos de Meta Contributor"); this.name = "ContributorConsentRequiredError"; }
+}
 export class StaleRunWorkerError extends Error {
   constructor() { super("El worker perdió el lease y no puede modificar este run"); this.name = "StaleRunWorkerError"; }
 }
