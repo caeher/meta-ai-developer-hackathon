@@ -202,6 +202,7 @@ export function createGeneratedImageTool(input: {
       return {
         assetId: primaryAsset.id,
         contactSheetAssetId: contactSheet.id,
+        assetType: brief.assetType,
         path: assetPath.slice("public/".length),
         manifestPath: GENERATED_MANIFEST_PATH,
         bytesWritten: written.bytesWritten,

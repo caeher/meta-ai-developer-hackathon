@@ -29,8 +29,9 @@ type TilemapArtifact = {
   tilesetMetadataBase64: string;
 };
 
-const spritesheetArtifactPath = process.env.ISSUE_34_SPRITESHEET_PREVIEW_ARTIFACT;
-const tilemapArtifactPath = process.env.ISSUE_33_TILEMAP_PREVIEW_ARTIFACT;
+const issue36Acceptance = Boolean(process.env.ISSUE_36_SPRITESHEET_PREVIEW_ARTIFACT && process.env.ISSUE_36_TILEMAP_PREVIEW_ARTIFACT);
+const spritesheetArtifactPath = process.env.ISSUE_36_SPRITESHEET_PREVIEW_ARTIFACT ?? process.env.ISSUE_34_SPRITESHEET_PREVIEW_ARTIFACT;
+const tilemapArtifactPath = process.env.ISSUE_36_TILEMAP_PREVIEW_ARTIFACT ?? process.env.ISSUE_33_TILEMAP_PREVIEW_ARTIFACT;
 
 test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, animation timing, rendered tiles, and collisions", async ({ page, baseURL }) => {
   test.skip(!spritesheetArtifactPath || !tilemapArtifactPath, "Run npm run test:assets:acceptance to load the PostgreSQL/Silo artifacts.");
@@ -155,7 +156,8 @@ test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, anima
 
   const evidenceDirectory = path.resolve(process.cwd(), "docs/evidence");
   await mkdir(evidenceDirectory, { recursive: true });
-  const screenshotPath = path.join(evidenceDirectory, "issue-35-phaser-animations.png");
+  const evidenceId = issue36Acceptance ? 36 : 35;
+  const screenshotPath = path.join(evidenceDirectory, `issue-${evidenceId}-phaser-animations.png`);
   const screenshot = await page.locator("canvas").screenshot({ path: screenshotPath });
   const renderedColors: number[][] = [];
   for (const x of [8, 24, 40, 56]) {
@@ -178,20 +180,22 @@ test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, anima
   expect(pageErrors).toEqual([]);
 
   const report = [
-    "# Evidencia de aceptación #35",
+    `# Evidencia de aceptación #${evidenceId}`,
     "",
     "Fecha UTC: " + new Date().toISOString(),
     "",
     "pack_spritesheet procesó cuatro frames privados y define_animation validó el atlas registrado de PostgreSQL/Silo y guardó su manifiesto versionado también en PostgreSQL/Silo. Phaser 3.90 cargó los bytes exactos en la preview.",
     "Atlas: cuatro rectángulos con dimensiones originales; Phaser resolvió run_0, run_1, run_2 y run_3, todos dentro de la textura, sin solapes y con pivote (0.5, 1).",
     "Animación: acceptance-run recorrió run_0 → run_1 → run_2 a 6 fps (ciclo mediano " + medianCycleMs.toFixed(1) + " ms); acceptance-yoyo validó run_0 → run_1 → run_0, repeat=1, yoyo, 8 fps y delays de 50/25 ms. La escena se reinició conservando solo las dos claves.",
-    "Tilemap y tileset de #33 recuperados de Silo: las cuatro muestras renderizadas fueron RGB " + renderedColors.map((color) => "(" + color.join(",") + ")").join(", ") + ". El actor cayó y quedó en y=" + (state?.playerBottom ?? 0).toFixed(1) + " sobre ground; la capa props no activó colisión.",
-    "La integración creó los PNG sintéticos localmente y los subió a PostgreSQL/Silo; no llamó a Meta ni utilizó un mock de almacenamiento.",
+    (issue36Acceptance ? "Tilemap y tileset creados en el mismo run" : "Tilemap y tileset de #33 recuperados de Silo") + ": las cuatro muestras renderizadas fueron RGB " + renderedColors.map((color) => "(" + color.join(",") + ")").join(", ") + ". El actor cayó y quedó en y=" + (state?.playerBottom ?? 0).toFixed(1) + " sobre ground; la capa props no activó colisión.",
+    issue36Acceptance
+      ? "El orquestador ejecutó generate_image y edit_sprite contra Meta simulado; inspect_asset, create_tileset, create_tilemap, pack_spritesheet y define_animation escribieron en PostgreSQL/Silo. Phaser cargó los bytes recuperados por los IDs persistidos."
+      : "La integración creó los PNG sintéticos localmente y los subió a PostgreSQL/Silo; no llamó a Meta ni utilizó un mock de almacenamiento.",
     "",
-    "Captura: docs/evidence/issue-35-phaser-animations.png.",
+    `Captura: docs/evidence/issue-${evidenceId}-phaser-animations.png.`,
     "",
   ].join("\n");
-  await writeFile(path.join(evidenceDirectory, "issue-35-phaser-animations.md"), report, "utf8");
+  await writeFile(path.join(evidenceDirectory, `issue-${evidenceId}-phaser-animations.md`), report, "utf8");
 });
 
 function median(values: number[]): number {

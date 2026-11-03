@@ -10,6 +10,7 @@ import { appendPromptText, MAX_PROMPT_LENGTH } from "./prompt";
 import { PreviewFrame } from "./preview-frame";
 import type { PreviewVersion } from "./preview-toolbar";
 import { PublishDialog, type EditorPublication } from "./publish-dialog";
+import { AssetToolCard as AssetToolCardView } from "./AssetToolCard";
 import styles from "./EditorShell.module.css";
 
 export interface PersistedMessage {
@@ -630,6 +631,11 @@ export function EditorShell({
                     <p>{runEvents.assistantSummary}</p>
                   </li>
                 ) : null}
+                {runEvents.progress?.assetCards.map((card) => (
+                  <li key={`asset-card-${card.callId}`} className={styles.assetCardItem}>
+                    <AssetToolCardView card={card} projectId={projectId} />
+                  </li>
+                ))}
                 {messages.length === 0 ? (
                   <li className={styles.emptyTranscript}><Text as="p" color="gray">Tus mensajes privados aparecerán aquí.</Text></li>
                 ) : null}

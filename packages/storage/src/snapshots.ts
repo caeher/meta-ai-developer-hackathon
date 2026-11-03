@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { z } from "zod";
 import { GameSpecSchema, SANDBOX_FILE_MAX_BYTES } from "@meta-game/contracts";
-import { PrivateStorageError, createS3PrivateObjectClient, readStorageEnvironment, type PrivateObjectClient } from "./index.js";
+import { PrivateStorageError, createS3PrivateObjectClient, readStorageEnvironment, type PrivateObjectClient } from "./private-objects";
 
 const UUID = z.string().uuid();
 const MAX_FILE_COUNT = 512;

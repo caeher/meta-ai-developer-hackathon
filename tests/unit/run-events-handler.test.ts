@@ -138,6 +138,49 @@ describe("SSE de runs", () => {
     expect(body).not.toContain("00000000-0000-4000-8000-000000000202");
   });
 
+  it("reconstruye tarjetas de assets y errores desde eventos durables con campos allowlisted", async () => {
+    const successfulCard = {
+      callId: "atlas-call",
+      toolName: "pack_spritesheet",
+      status: "succeeded",
+      title: "Spritesheet empaquetado",
+      summary: "4 frames en atlas Phaser.",
+      assetType: "spritesheet",
+      assets: [{ assetId: "00000000-0000-4000-8000-000000000221", role: "texture", sha256: "c".repeat(64), previewable: true }],
+      previewAssetId: "00000000-0000-4000-8000-000000000221",
+      frameCount: 4,
+      verificationStatus: "passed",
+      verificationSummary: "Rectángulos y checksum validados.",
+    } as const;
+    const failedCard = {
+      callId: "tilemap-call",
+      toolName: "create_tilemap",
+      status: "failed",
+      title: "Crear tilemap",
+      summary: "La herramienta no pudo completar este asset.",
+      assetType: "tilemap",
+      assets: [],
+      verificationStatus: "failed",
+      verificationSummary: "Revisa el código de error antes de volver a intentarlo.",
+      errorCode: "tilemap_tileset_missing",
+    } as const;
+    const { handler } = makeHandler({ rows: [
+      stored(1, "agent.tool_started", { callId: "atlas-call", toolName: "pack_spritesheet", argsHash: hash }),
+      stored(2, "agent.asset_result", { card: successfulCard }),
+      stored(3, "agent.tool_failed", { callId: "tilemap-call", toolName: "create_tilemap", argsHash: hash, errorCode: "tilemap_tileset_missing", assetCard: failedCard }),
+      stored(4, "run.failed", { errorCode: "tilemap_tileset_missing" }),
+    ] });
+    const response = await handler(request(), { params: Promise.resolve({ runId }) });
+    const body = await response.text();
+    const frames = parseFrames(body);
+    expect(frames.map(({ event }) => event)).toEqual(["step.started", "asset.card", "asset.card", "run.failed"]);
+    expect(frames[1]?.data.payload).toMatchObject(successfulCard);
+    expect(frames[2]?.data.payload).toMatchObject({ callId: "tilemap-call", status: "failed", errorCode: "tilemap_tileset_missing" });
+    expect(body).not.toContain("argsHash");
+    expect(body).not.toContain("private-model-id");
+    expect(body).not.toContain("grant=");
+  });
+
   it("oculta runs ajenos con 404 uniforme", async () => {
     const { handler, listEvents } = makeHandler({ owned: false });
     const response = await handler(request(), { params: Promise.resolve({ runId }) });

@@ -8,6 +8,7 @@ export default defineConfig({
     alias: [
       { find: "next/link", replacement: fileURLToPath(new URL("./LinkFixture.tsx", import.meta.url)) },
       { find: "next/navigation", replacement: fileURLToPath(new URL("./NavigationFixture.ts", import.meta.url)) },
+      { find: "next/image", replacement: fileURLToPath(new URL("./ImageFixture.tsx", import.meta.url)) },
     ],
   },
   server: {

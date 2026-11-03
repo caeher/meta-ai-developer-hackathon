@@ -52,7 +52,6 @@ export function createCreateTilemapTool(input: {
 
     const request = parsed.data;
     const identity = await input.identity(context.claim);
-    if (identity.userId !== context.claim.ownerUserId) throw new OwnedResourceNotFoundError();
     const tileset = await loadTileset(input.storage, input.sandbox, identity, context.projectId, request.tilesetAssetId, context.signal);
     const collisionLayerNames = resolveCollisionLayerNames(request);
     const tilemapAssetId = deterministicUuid(`${context.claim.runId}\0${context.callId}\0tilemap-json`);

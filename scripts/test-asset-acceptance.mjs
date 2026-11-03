@@ -10,12 +10,16 @@ const artifactPath = join(temporaryDirectory, "sprite-edit.json");
 const tilesetArtifactPath = join(temporaryDirectory, "tileset.json");
 const tilemapArtifactPath = join(temporaryDirectory, "tilemap.json");
 const spritesheetArtifactPath = join(temporaryDirectory, "spritesheet.json");
+const issue36SpritesheetArtifactPath = join(temporaryDirectory, "issue36-spritesheet.json");
+const issue36TilemapArtifactPath = join(temporaryDirectory, "issue36-tilemap.json");
 const environment = {
   ...process.env,
   ISSUE_31_ASSET_PREVIEW_ARTIFACT: artifactPath,
   ISSUE_32_TILESET_PREVIEW_ARTIFACT: tilesetArtifactPath,
   ISSUE_33_TILEMAP_PREVIEW_ARTIFACT: tilemapArtifactPath,
   ISSUE_34_SPRITESHEET_PREVIEW_ARTIFACT: spritesheetArtifactPath,
+  ISSUE_36_SPRITESHEET_PREVIEW_ARTIFACT: issue36SpritesheetArtifactPath,
+  ISSUE_36_TILEMAP_PREVIEW_ARTIFACT: issue36TilemapArtifactPath,
 };
 
 function run(args) {

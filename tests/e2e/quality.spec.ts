@@ -53,5 +53,11 @@ test("editor y estados de progreso no tienen fallos graves de accesibilidad", as
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "Opciones rápidas" }).click();
+  const quickOptionsDialog = page.getByRole("dialog");
+  await expect(quickOptionsDialog).toBeVisible();
+  await quickOptionsDialog.evaluate(async (element) => {
+    const animations = element.getAnimations({ subtree: true });
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+  });
   await expectNoSeriousAccessibilityIssues(page, "quick options dialog");
 });

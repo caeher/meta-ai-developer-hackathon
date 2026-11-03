@@ -20,6 +20,7 @@ function emptyProgress(status: RunResponse["status"]): EditorProgress {
     plan: [],
     steps: [],
     changedFiles: [],
+    assetCards: [],
     verification: { status: "pending" },
   });
 }
@@ -58,7 +59,14 @@ export async function enqueueProjectRun(projectId: string, messageRequestId: str
 }
 
 function updateProgress(current: EditorProgress, event: RunStreamEvent): EditorProgress {
-  const next = { ...current, plan: [...current.plan], steps: [...current.steps], changedFiles: [...current.changedFiles], verification: { ...current.verification } };
+  const next = {
+    ...current,
+    plan: [...current.plan],
+    steps: [...current.steps],
+    changedFiles: [...current.changedFiles],
+    assetCards: [...current.assetCards],
+    verification: { ...current.verification },
+  };
   switch (event.type) {
     case "run.queued":
       next.status = "queued";
@@ -89,6 +97,17 @@ function updateProgress(current: EditorProgress, event: RunStreamEvent): EditorP
     case "file.changed":
       if (!next.changedFiles.includes(event.payload.path)) next.changedFiles = [...next.changedFiles, event.payload.path].slice(-100);
       break;
+    case "asset.card": {
+      const index = next.assetCards.findIndex((card) => card.callId === event.payload.callId);
+      if (index < 0) next.assetCards = [...next.assetCards, event.payload].slice(-100);
+      else next.assetCards[index] = event.payload;
+      const stepIndex = next.steps.findIndex((step) => step.id === event.payload.callId);
+      const status = event.payload.status === "failed" ? "failed" as const : "succeeded" as const;
+      const step = { id: event.payload.callId, title: event.payload.title, status };
+      if (stepIndex < 0) next.steps = [...next.steps, step].slice(0, 100);
+      else next.steps[stepIndex] = step;
+      break;
+    }
     case "verification.result":
       next.verification = { status: event.payload.status, summary: event.payload.summary.slice(0, 500) };
       break;

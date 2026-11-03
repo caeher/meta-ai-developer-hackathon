@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { PrivateStorageError, createS3PrivateObjectClient, readStorageEnvironment, type PrivateObjectClient } from "./index.js";
+import { PrivateStorageError, createS3PrivateObjectClient, readStorageEnvironment, type PrivateObjectClient } from "./private-objects";
 
 const objectId = z.string().uuid();
 

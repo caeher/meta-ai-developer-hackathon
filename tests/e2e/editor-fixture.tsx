@@ -265,9 +265,22 @@ function installPrivateApiFixture() {
         ] : [
           fixtureEvent(id, 5, "step.completed", { stepId: "write-1", title: "Escribir un archivo", status: "succeeded" }),
           fixtureEvent(id, 6, "file.changed", { path: "src/main.ts", bytesWritten: 64 }),
-          fixtureEvent(id, 7, "verification.result", { check: "npm run build", status: "passed", exitCode: 0, summary: "Build correcto." }),
-          fixtureEvent(id, 8, "preview.ready", { state: "ready" }),
-          fixtureEvent(id, 9, "run.finished", { summary: "El prototipo quedó verificado." }),
+          ...(query.has("asset-card") ? [fixtureEvent(id, 7, "asset.card", {
+            callId: "asset-card-e2e",
+            toolName: "generate_image",
+            status: "succeeded",
+            title: "Imagen generada",
+            summary: "1 frame; PNG y manifiesto guardados.",
+            assetType: "sprite",
+            assets: [{ assetId: "10000000-0000-4000-8000-000000000236", role: "image", sha256: "a".repeat(64), previewable: true }],
+            previewAssetId: "10000000-0000-4000-8000-000000000236",
+            frameCount: 1,
+            verificationStatus: "needs_review",
+            verificationSummary: "Revisión visual pendiente en la preview.",
+          })] : []),
+          fixtureEvent(id, query.has("asset-card") ? 8 : 7, "verification.result", { check: "npm run build", status: "passed", exitCode: 0, summary: "Build correcto." }),
+          fixtureEvent(id, query.has("asset-card") ? 9 : 8, "preview.ready", { state: "ready" }),
+          fixtureEvent(id, query.has("asset-card") ? 10 : 9, "run.finished", { summary: "El prototipo quedó verificado." }),
         ]),
       ];
       const record = { run, idempotencyKey: body.idempotencyKey, sourceMessageRequestId: body.messageRequestId, owner: identity, events, activeFixture };

@@ -28,6 +28,9 @@ import {
   compactToolResult,
   executeAgentTool,
   prepareAgentToolCalls,
+  createAssetToolCard,
+  createFailedAssetToolCard,
+  encodeAgentToolResult,
   type AgentSandbox,
   type PreparedAgentToolCall,
 } from "./tools";
@@ -483,8 +486,27 @@ async function executeCachedTool(
     if (stringPayload(completed, "toolName") !== call.name || stringPayload(completed, "argsHash") !== call.argsHash) {
       throw new RunProcessingError("agent_duplicate_call_id", false, state.usage);
     }
-    try { return JSON.parse(stringPayload(completed, "result")); }
+    try {
+      const result = JSON.parse(stringPayload(completed, "result")) as unknown;
+      if (!state.events.some((event) => event.type === "agent.asset_result" &&
+          (event.payload as { card?: { callId?: string } }).card?.callId === call.callId)) {
+        try {
+          const card = createAssetToolCard(call.callId, call.name, result);
+          if (card) await append(state, options.store, claim, { type: "agent.asset_result", payload: { card } });
+        } catch {
+          // Older durable results remain replayable; only schema-validated results get a public card.
+        }
+      }
+      return result;
+    }
     catch { throw new RunProcessingError("agent_tool_result_invalid", false, state.usage); }
+  }
+  const failed = state.events.find((event) => event.type === "agent.tool_failed" && stringPayload(event, "callId") === call.callId);
+  if (failed) {
+    if (stringPayload(failed, "toolName") !== call.name || stringPayload(failed, "argsHash") !== call.argsHash) {
+      throw new RunProcessingError("agent_duplicate_call_id", false, state.usage);
+    }
+    throw new RunProcessingError(stringPayload(failed, "errorCode") || "agent_tool_failed", false, state.usage);
   }
   const started = state.events.some((event) => event.type === "agent.tool_started" && stringPayload(event, "callId") === call.callId);
   if (started) throw new RunProcessingError("agent_tool_result_ambiguous", false, state.usage);
@@ -573,49 +595,32 @@ async function executeCachedTool(
       result = await executeAgentTool(options.sandbox, projectId, call, state.signal);
     }
   } catch (error) {
-    if (state.signal.aborted) throw error;
-    if (error instanceof RunProcessingError) throw error;
-    if ((call.name === "inspect_asset" || call.name === "edit_sprite" || call.name === "create_tileset" || call.name === "create_tilemap" || call.name === "pack_spritesheet" || call.name === "define_animation") && error instanceof OwnedResourceNotFoundError) {
-      throw new RunProcessingError("asset_not_found", false, state.usage);
-    }
-    if (call.name === "create_tileset" && error instanceof TilesetToolError) {
-      throw new RunProcessingError(error.code, false, state.usage);
-    }
-    if (call.name === "create_tilemap" && error instanceof TilemapToolError) {
-      throw new RunProcessingError(error.code, false, state.usage);
-    }
-    if (call.name === "pack_spritesheet" && error instanceof SpritesheetToolError) {
-      throw new RunProcessingError(error.code, false, state.usage);
-    }
-    if (call.name === "define_animation" && error instanceof DefineAnimationToolError) {
-      throw new RunProcessingError(error.code, false, state.usage);
-    }
-    if ((call.name === "generate_image" || call.name === "edit_sprite") && error instanceof ImagePipelineError) {
-      throw new RunProcessingError(error.code, false, state.usage);
-    }
-    if ((call.name === "generate_image" || call.name === "edit_sprite") && error instanceof UsageLimitExceededError) {
-      if (error.limit === "images") throw new RunProcessingError("daily_image_limit_exceeded", false, state.usage);
-      if (error.limit === "storage") throw new RunProcessingError("usage_limit_storage", false, state.usage);
-    }
-    if ((call.name === "generate_image" || call.name === "edit_sprite") && error instanceof MetaApiError) {
-      throw providerFailure(error, state.usage, state.signal, state.userSignal);
-    }
-    if (error instanceof Error && /^agent_[a-z0-9_]+$/.test(error.message)) {
-      throw new RunProcessingError(error.message, false, state.usage);
-    }
-    const code = error instanceof Error && "code" in error && typeof (error as Error & { code?: unknown }).code === "string"
-      ? (error as Error & { code: string }).code : "";
-    if (["file_not_found", "path_not_found"].includes(code)) {
-      throw new RunProcessingError(`sandbox_${code}`, false, state.usage);
-    }
-    throw new RunProcessingError("sandbox_tool_failed", false, state.usage);
+    const failure = mapAgentToolFailure(call.name, error, state);
+    const assetCard = createFailedAssetToolCard(call.callId, call.name, failure.code);
+    await append(state, options.store, claim, {
+      type: "agent.tool_failed",
+      payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, errorCode: failure.code, ...(assetCard ? { assetCard } : {}) },
+    });
+    throw failure;
   }
-  const compact = compactToolResult(result);
+  let compact: ReturnType<typeof compactToolResult>;
+  try { compact = encodeAgentToolResult(call.name, result); }
+  catch (error) {
+    const failure = mapAgentToolFailure(call.name, error, state);
+    const assetCard = createFailedAssetToolCard(call.callId, call.name, failure.code);
+    await append(state, options.store, claim, {
+      type: "agent.tool_failed",
+      payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, errorCode: failure.code, ...(assetCard ? { assetCard } : {}) },
+    });
+    throw failure;
+  }
+  const assetCard = createAssetToolCard(call.callId, call.name, compact.value);
   const completedEvents: AgentRunEvent[] = [
     {
       type: "agent.tool_completed",
       payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, result: compact.json },
     },
+    ...(assetCard ? [{ type: "agent.asset_result" as const, payload: { card: assetCard } }] : []),
     {
       type: "agent.action",
       payload: { callId: call.callId, toolName: call.name, summary: call.summary || call.name },
@@ -623,6 +628,30 @@ async function executeCachedTool(
   ];
   await appendBatch(state, options.store, claim, completedEvents);
   return compact.value;
+}
+
+function mapAgentToolFailure(toolName: string, error: unknown, state: RunState): RunProcessingError {
+  if (state.signal.aborted) return new RunProcessingError("tool_cancelled", false, state.usage);
+  if (error instanceof RunProcessingError) return error;
+  if (["inspect_asset", "edit_sprite", "create_tileset", "create_tilemap", "pack_spritesheet", "define_animation"].includes(toolName) &&
+      error instanceof OwnedResourceNotFoundError) return new RunProcessingError("asset_not_found", false, state.usage);
+  if (toolName === "create_tileset" && error instanceof TilesetToolError) return new RunProcessingError(error.code, false, state.usage);
+  if (toolName === "create_tilemap" && error instanceof TilemapToolError) return new RunProcessingError(error.code, false, state.usage);
+  if (toolName === "pack_spritesheet" && error instanceof SpritesheetToolError) return new RunProcessingError(error.code, false, state.usage);
+  if (toolName === "define_animation" && error instanceof DefineAnimationToolError) return new RunProcessingError(error.code, false, state.usage);
+  if ((toolName === "generate_image" || toolName === "edit_sprite") && error instanceof ImagePipelineError) return new RunProcessingError(error.code, false, state.usage);
+  if ((toolName === "generate_image" || toolName === "edit_sprite") && error instanceof UsageLimitExceededError) {
+    if (error.limit === "images") return new RunProcessingError("daily_image_limit_exceeded", false, state.usage);
+    if (error.limit === "storage") return new RunProcessingError("usage_limit_storage", false, state.usage);
+  }
+  if ((toolName === "generate_image" || toolName === "edit_sprite") && error instanceof MetaApiError) {
+    return providerFailure(error, state.usage, state.signal, state.userSignal);
+  }
+  if (error instanceof Error && /^agent_[a-z0-9_]+$/.test(error.message)) return new RunProcessingError(error.message, false, state.usage);
+  const code = error instanceof Error && "code" in error && typeof (error as Error & { code?: unknown }).code === "string"
+    ? (error as Error & { code: string }).code : "";
+  if (["file_not_found", "path_not_found"].includes(code)) return new RunProcessingError(`sandbox_${code}`, false, state.usage);
+  return new RunProcessingError("sandbox_tool_failed", false, state.usage);
 }
 
 async function verifyProject(
@@ -917,6 +946,7 @@ function buildCodePrompt(requestText: string, plan: MetaPlan, gameSpec: GameSpec
     `User request:\n${requestText}`,
     `Approved plan:\n${JSON.stringify(plan)}`,
     `Validated game specification:\n${JSON.stringify(gameSpec)}`,
+    "For asset work, use only the explicit assetId values returned by tools; never guess an ID or select a latest asset. Keep dependent calls sequential: generate/edit before inspection, inspect before packing or tileset creation, and use the returned atlas/tileset ID for animation or tilemap creation. Tool arguments cannot contain URLs, workspace paths outside their schema, shell commands, or external destinations.",
     "When code is ready, run applicable build or test checks. Never claim a check passed without its tool result.",
     repairInstruction ? `Repair request: ${repairInstruction}` : "",
   ].filter(Boolean).join("\n\n");

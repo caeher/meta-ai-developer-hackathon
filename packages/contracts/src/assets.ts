@@ -76,6 +76,41 @@ export const GeneratedAssetMetadataSchema = z.object({
 export type ImageGenerationBrief = z.infer<typeof ImageGenerationBriefSchema>;
 export type GeneratedAssetMetadata = z.infer<typeof GeneratedAssetMetadataSchema>;
 
+export const GeneratedImageToolResultSchema = z.object({
+  assetId: z.string().uuid(),
+  contactSheetAssetId: z.string().uuid(),
+  assetType: z.enum(["sprite", "background", "tileset", "ui"]),
+  path: z.string().regex(/^assets\/generated\/[0-9a-f-]{36}\.png$/),
+  manifestPath: z.literal("public/assets/generated/manifest.json"),
+  bytesWritten: z.number().int().positive().max(SANDBOX_BINARY_FILE_MAX_BYTES),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  mimeType: z.literal("image/png"),
+  width: z.number().int().min(1).max(2_048),
+  height: z.number().int().min(1).max(2_048),
+  phaserKey: z.string().regex(/^generated-[0-9a-f-]{36}$/),
+  frameCount: z.number().int().min(1).max(64),
+  frameWidth: z.number().int().min(1).max(2_048),
+  frameHeight: z.number().int().min(1).max(2_048),
+  alphaVerified: z.boolean(),
+  qa: z.object({
+    contactSheetAssetId: z.string().uuid(),
+    tileSeams: z.object({
+      horizontalMeanAbsoluteError: z.number().min(0).max(255).optional(),
+      verticalMeanAbsoluteError: z.number().min(0).max(255).optional(),
+      reviewRequired: z.boolean(),
+    }).strict().optional(),
+    visualReview: z.literal("pending-in-live-preview"),
+  }).strict(),
+}).strict().superRefine((result, context) => {
+  if (result.path !== `assets/generated/${result.assetId}.png` || result.phaserKey !== `generated-${result.assetId}` ||
+      result.qa.contactSheetAssetId !== result.contactSheetAssetId || result.width % result.frameWidth !== 0 ||
+      result.height % result.frameHeight !== 0 || (result.width / result.frameWidth) * (result.height / result.frameHeight) !== result.frameCount) {
+    context.addIssue({ code: "custom", path: ["assetId"], message: "Generated image result must have consistent ID-derived paths and frame metadata." });
+  }
+});
+
+export type GeneratedImageToolResult = z.infer<typeof GeneratedImageToolResultSchema>;
+
 export const META_IMAGE_MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 export const GENERATED_ASSET_MAX_BYTES = 8 * 1024 * 1024;
 export const GENERATED_ASSET_MAX_DIMENSION = 2_048;

@@ -2,17 +2,25 @@ import { createHash } from "node:crypto";
 import {
   EditSpriteInputJsonSchema,
   EditSpriteInputSchema,
+  EditSpriteResultSchema,
+  AssetToolCardSchema,
   CreateTilesetInputSchema,
   CreateTilesetInputJsonSchema,
+  CreateTilesetResultSchema,
   CreateTilemapInputSchema,
   CreateTilemapInputJsonSchema,
+  CreateTilemapResultSchema,
   PackSpritesheetInputSchema,
   PackSpritesheetInputJsonSchema,
+  PackSpritesheetResultSchema,
   DefineAnimationInputSchema,
   DefineAnimationInputJsonSchema,
+  DefineAnimationResultSchema,
   ImageGenerationBriefSchema,
+  GeneratedImageToolResultSchema,
   InspectAssetInputSchema,
   InspectAssetInputJsonSchema,
+  InspectAssetResultSchema,
   SandboxInstallDependenciesInputSchema,
   SandboxListFilesInputSchema,
   SandboxReadFileInputSchema,
@@ -21,6 +29,7 @@ import {
   SandboxStartDevServerInputSchema,
   SandboxWriteFileInputSchema,
   type MetaCodeEvent,
+  type AssetToolCard,
 } from "@meta-game/contracts";
 import type { MetaToolDefinition } from "@meta-game/meta";
 import type { SandboxControllerClient } from "@meta-game/sandbox";
@@ -167,6 +176,139 @@ export function prepareAgentToolCalls(calls: readonly Extract<MetaCodeEvent, { t
   });
 }
 
+const assetResultSchemas = {
+  generate_image: GeneratedImageToolResultSchema,
+  edit_sprite: EditSpriteResultSchema,
+  inspect_asset: InspectAssetResultSchema,
+  create_tileset: CreateTilesetResultSchema,
+  create_tilemap: CreateTilemapResultSchema,
+  pack_spritesheet: PackSpritesheetResultSchema,
+  define_animation: DefineAnimationResultSchema,
+} as const;
+
+/** Validate asset tool output before it becomes durable or enters Meta's function_call_output replay. */
+export function validateAgentToolResult(toolName: string, value: unknown): unknown {
+  if (!(toolName in assetResultSchemas)) return value;
+  const schema = assetResultSchemas[toolName as keyof typeof assetResultSchemas];
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new Error("agent_invalid_tool_result");
+  return parsed.data;
+}
+
+export function encodeAgentToolResult(toolName: string, value: unknown): { json: string; value: unknown } {
+  if (!(toolName in assetResultSchemas)) return compactToolResult(value);
+  const schema = assetResultSchemas[toolName as keyof typeof assetResultSchemas];
+  const validated = validateAgentToolResult(toolName, value);
+  const sanitized = sanitizeAssetResult(validated);
+  const safeResult = schema.safeParse(sanitized);
+  if (!safeResult.success) throw new Error("agent_invalid_tool_result");
+  const json = JSON.stringify(safeResult.data);
+  if (Buffer.byteLength(json, "utf8") > 65_536) throw new Error("agent_tool_result_too_large");
+  return { json, value: safeResult.data };
+}
+
+export function createAssetToolCard(callId: string, toolName: string, result: unknown): AssetToolCard | undefined {
+  const id = (assetId: string, role: AssetToolCard["assets"][number]["role"], sha256?: string, previewable = false) => ({
+    assetId,
+    role,
+    ...(sha256 ? { sha256 } : {}),
+    previewable,
+  });
+  const base = (input: Omit<AssetToolCard, "callId" | "toolName">): AssetToolCard =>
+    AssetToolCardSchema.parse({ callId, toolName, ...input });
+  switch (toolName) {
+    case "generate_image": {
+      const value = GeneratedImageToolResultSchema.parse(result);
+      return base({
+        status: "succeeded", title: "Imagen generada", summary: `${value.frameCount} frame(s); PNG y manifiesto guardados.`,
+        assetType: value.assetType, assets: [id(value.assetId, "image", value.sha256, true), id(value.contactSheetAssetId, "contact-sheet")],
+        previewAssetId: value.assetId, frameCount: value.frameCount, verificationStatus: "needs_review",
+        verificationSummary: "Dimensiones, frames y checksum validados; queda pendiente la revisión visual en el juego.",
+      });
+    }
+    case "edit_sprite": {
+      const value = EditSpriteResultSchema.parse(result);
+      return base({
+        status: "succeeded", title: "Sprite editado", summary: "Se creó un sprite nuevo; el original se conserva.",
+        assetType: "sprite", assets: [id(value.assetId, "image", value.sha256, true), id(value.sourceAssetId, "source", value.sourceSha256)],
+        previewAssetId: value.assetId, frameCount: 1, verificationStatus: "needs_review",
+        verificationSummary: "Bytes y procedencia validados; queda pendiente la revisión visual en el juego.",
+      });
+    }
+    case "inspect_asset": {
+      const value = InspectAssetResultSchema.parse(result);
+      const previewable = value.kind === "image" && value.assetId !== undefined;
+      return base({
+        status: "succeeded", title: "Inspección de asset", summary: `${value.findings.length} hallazgo(s); tipo ${value.kind}.`,
+        assetType: "inspection",
+        assets: value.assetId ? [id(value.assetId, "source", value.sha256, previewable)] : [],
+        ...(previewable && value.assetId ? { previewAssetId: value.assetId } : {}),
+        ...(value.frameCount === undefined ? {} : { frameCount: value.frameCount }),
+        verificationStatus: value.status === "valid" ? "passed" : value.status === "invalid" ? "failed" : "needs_review",
+        verificationSummary: value.status === "valid" ? "Las verificaciones seleccionadas pasaron." : value.status === "invalid" ? "La inspección encontró validaciones fallidas." : "La inspección requiere revisión.",
+      });
+    }
+    case "create_tileset": {
+      const value = CreateTilesetResultSchema.parse(result);
+      const collidingTiles = value.tiles.filter((tile) => tile.collides).length;
+      return base({
+        status: "succeeded", title: "Tileset creado", summary: `${value.tiles.length} tiles; ${collidingTiles} con colisión.`,
+        assetType: "tileset", assets: [id(value.tilesetAssetId, "tileset", value.sha256, true)],
+        previewAssetId: value.tilesetAssetId, frameCount: value.tiles.length, verificationStatus: "passed",
+        verificationSummary: "Índices, dimensiones, colisiones y hash del tileset validados.",
+      });
+    }
+    case "create_tilemap": {
+      const value = CreateTilemapResultSchema.parse(result);
+      return base({
+        status: "succeeded", title: "Tilemap creado", summary: `${value.layerNames.length} capas; ${value.cellCount} celdas.`,
+        assetType: "tilemap", assets: [id(value.tilemapAssetId, "tilemap", value.sha256)],
+        frameCount: value.cellCount, layerCount: value.layerNames.length, verificationStatus: "passed",
+        verificationSummary: "GIDs, límites, orden de capas y nombres de colisión validados.",
+      });
+    }
+    case "pack_spritesheet": {
+      const value = PackSpritesheetResultSchema.parse(result);
+      return base({
+        status: "succeeded", title: "Spritesheet empaquetado", summary: `${value.frames.length} frames en atlas Phaser.`,
+        assetType: "spritesheet", assets: [id(value.textureAssetId, "texture", undefined, true), id(value.atlasAssetId, "atlas", value.sha256)],
+        previewAssetId: value.textureAssetId, frameCount: value.frames.length, verificationStatus: "passed",
+        verificationSummary: "Rectángulos dentro del atlas, sin solapes y con procedencia validada.",
+      });
+    }
+    case "define_animation": {
+      const value = DefineAnimationResultSchema.parse(result);
+      const frameCount = value.animations.reduce((total, animation) => total + animation.frameNames.length, 0);
+      return base({
+        status: "succeeded", title: "Animación definida", summary: `${value.animations.length} animación(es); ${frameCount} referencias a frames.`,
+        assetType: "animation", assets: [id(value.animationManifestAssetId, "animation", value.sha256), id(value.atlasAssetId, "atlas")],
+        frameCount, verificationStatus: "passed", verificationSummary: "Atlas, nombres de frame y parámetros de reproducción validados.",
+      });
+    }
+    default:
+      return undefined;
+  }
+}
+
+export function createFailedAssetToolCard(callId: string, toolName: string, errorCode: string): AssetToolCard | undefined {
+  const names: Record<string, { title: string; assetType: AssetToolCard["assetType"] }> = {
+    generate_image: { title: "Generar imagen", assetType: "sprite" },
+    edit_sprite: { title: "Editar sprite", assetType: "sprite" },
+    inspect_asset: { title: "Inspeccionar asset", assetType: "inspection" },
+    create_tileset: { title: "Crear tileset", assetType: "tileset" },
+    create_tilemap: { title: "Crear tilemap", assetType: "tilemap" },
+    pack_spritesheet: { title: "Empaquetar spritesheet", assetType: "spritesheet" },
+    define_animation: { title: "Definir animación", assetType: "animation" },
+  };
+  const entry = names[toolName];
+  if (!entry || !/^[a-z][a-z0-9_]{0,99}$/.test(errorCode)) return undefined;
+  return AssetToolCardSchema.parse({
+    callId, toolName, status: "failed", title: entry.title, summary: "La herramienta no pudo completar este asset.",
+    assetType: entry.assetType, assets: [], verificationStatus: "failed",
+    verificationSummary: "Revisa el código de error antes de volver a intentarlo.", errorCode,
+  });
+}
+
 export async function executeAgentTool(
   sandbox: AgentSandbox,
   projectId: string,
@@ -246,6 +388,24 @@ function sanitizeValue(value: unknown, depth = 0): unknown {
   }
   if (value === null || typeof value === "number" || typeof value === "boolean") return value;
   return "[unsupported output omitted]";
+}
+
+function sanitizeAssetResult(value: unknown): unknown {
+  if (typeof value === "string") {
+    // IDs and ID-derived workspace paths are validated by each strict tool result schema.
+    // Keep them intact; the general output redactor treats UUIDs as phone-like strings.
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ||
+        /^[a-f0-9]{64}$/.test(value) ||
+        /^generated-[0-9a-f-]{36}$/.test(value) ||
+        value === "public/assets/generated/manifest.json" ||
+        /^assets\/generated\/(?:[0-9a-f-]{36}\.png|(?:tilesets|tilemaps|atlases|animations)\/[0-9a-f-]{36}\.(?:png|json))$/.test(value)) {
+      return value;
+    }
+    return redactSensitiveText(value);
+  }
+  if (Array.isArray(value)) return value.map(sanitizeAssetResult);
+  if (isPlainRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeAssetResult(item)]));
+  return value;
 }
 
 function canonicalJson(value: unknown): string {

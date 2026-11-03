@@ -85,7 +85,6 @@ export function createCreateTilesetTool(input: {
     if (rows < 1 || rows > 16) throw new TilesetToolError("tileset_grid_out_of_range");
     const runtimeManifest = await loadRuntimeManifest(input.sandbox, context.projectId, context.signal);
     const identity = await input.identity(context.claim);
-    if (identity.userId !== context.claim.ownerUserId) throw new OwnedResourceNotFoundError();
     const packed = await packTiles(input.storage, identity, context.projectId, runtimeManifest, request, columns, rows);
     const imageBytes = await encodeAtlas(packed.raw, request.tileSize * columns, request.tileSize * rows);
     if (imageBytes.byteLength < 1 || imageBytes.byteLength > GENERATED_ASSET_MAX_BYTES) {

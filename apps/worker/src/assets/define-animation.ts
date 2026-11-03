@@ -45,7 +45,6 @@ export function createDefineAnimationTool(input: {
     context.signal.throwIfAborted();
 
     const identity = await input.identity(context.claim);
-    if (identity.userId !== context.claim.ownerUserId) throw new OwnedResourceNotFoundError();
     const atlas = await loadAtlas(input.storage, input.sandbox, identity, context.projectId, parsed.data.atlasAssetId, context.signal);
     for (const animation of parsed.data.animations) {
       const missing = animation.frameNames.find((frameName) => !atlas.frameNames.has(frameName));

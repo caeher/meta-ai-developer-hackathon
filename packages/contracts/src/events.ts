@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MetaPlanSchema } from "./meta";
 import { GameSpecSchema } from "./game-spec";
+import { AssetToolCardSchema } from "./asset-tools";
 
 const callId = z.string().min(1).max(64).regex(/^[A-Za-z0-9._:-]+$/);
 const safeHash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -63,6 +64,20 @@ export const AgentRunEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("agent.tool_completed"),
     payload: z.object({ callId, toolName: z.string().min(1).max(64), argsHash: safeHash, result: z.string().max(65_536) }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent.tool_failed"),
+    payload: z.object({
+      callId,
+      toolName: z.string().min(1).max(64),
+      argsHash: safeHash,
+      errorCode: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+      assetCard: AssetToolCardSchema.optional(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent.asset_result"),
+    payload: z.object({ card: AssetToolCardSchema }).strict(),
   }).strict(),
   z.object({
     type: z.literal("agent.action"),
@@ -132,6 +147,7 @@ export const RunStreamEventSchema = z.discriminatedUnion("type", [
     type: z.literal("file.changed"),
     payload: z.object({ path: z.string().min(1).max(256), bytesWritten: z.number().int().nonnegative().optional() }).strict(),
   }).strict(),
+  runStreamBase.extend({ type: z.literal("asset.card"), payload: AssetToolCardSchema }).strict(),
   runStreamBase.extend({
     type: z.literal("verification.result"),
     payload: z.object({

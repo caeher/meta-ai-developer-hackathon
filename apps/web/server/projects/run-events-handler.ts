@@ -255,6 +255,27 @@ function projectStoredEvent(runId: string, row: RunEventRow): Projected {
         candidate = { type: "file.changed", payload: { path, ...(bytesWritten === undefined ? {} : { bytesWritten }) } };
       }
     }
+  } else if (row.type === "agent.asset_result") {
+    const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
+    if (parsed.success && parsed.data.type === "agent.asset_result") {
+      candidate = { type: "asset.card", payload: parsed.data.payload.card };
+    }
+  } else if (row.type === "agent.tool_failed") {
+    const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
+    if (parsed.success && parsed.data.type === "agent.tool_failed") {
+      if (parsed.data.payload.assetCard) {
+        candidate = { type: "asset.card", payload: parsed.data.payload.assetCard };
+      } else {
+        candidate = {
+          type: "step.completed",
+          payload: {
+            stepId: parsed.data.payload.callId,
+            title: toolTitle(parsed.data.payload.toolName),
+            status: "failed",
+          },
+        };
+      }
+    }
   } else if (row.type === "agent.verification") {
     const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
     if (parsed.success && parsed.data.type === "agent.verification") {
@@ -289,6 +310,12 @@ function toolTitle(toolName: string): string {
     read_file: "Leer un archivo",
     write_file: "Escribir un archivo",
     generate_image: "Generar y validar un asset de juego",
+    edit_sprite: "Editar un sprite",
+    inspect_asset: "Inspeccionar un asset",
+    create_tileset: "Crear un tileset",
+    create_tilemap: "Crear un tilemap",
+    pack_spritesheet: "Empaquetar frames en un atlas",
+    define_animation: "Definir una animación",
     list_files: "Revisar archivos",
     install_dependencies: "Instalar dependencias aprobadas",
     run_command: "Ejecutar una verificación",

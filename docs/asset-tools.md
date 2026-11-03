@@ -46,7 +46,7 @@ La plantilla expone `createGeneratedTilemap` desde `packages/game-templates/phas
 
 ## Animaciones declarativas por nombre (#35)
 
-`define_animation` recibe un `atlasAssetId` y hasta 32 definiciones con `key`, lista ordenada de `frameNames`, `frameRate`, `repeat`, `yoyo`, `delayMs` y `repeatDelayMs`. Las claves y nombres son explícitos; no se expanden rangos ni se evalúa código generado. El worker valida sesión propia y ownership, el manifest `public/assets/generated/atlases/manifest.json`, el hash del atlas privado, su metadata, la textura compañera y que los archivos del workspace coincidan con Silo. Rechaza claves ya definidas, frames ausentes, duplicados y límites inválidos antes de escribir.
+`define_animation` recibe un `atlasAssetId` y hasta 8 definiciones de 64 frames cada una con `key`, lista ordenada de `frameNames`, `frameRate`, `repeat`, `yoyo`, `delayMs` y `repeatDelayMs`. Las claves y nombres son explícitos; no se expanden rangos ni se evalúa código generado. El worker valida sesión propia y ownership, el manifest `public/assets/generated/atlases/manifest.json`, el hash del atlas privado, su metadata, la textura compañera y que los archivos del workspace coincidan con Silo. Rechaza claves ya definidas, frames ausentes, duplicados y límites inválidos antes de escribir.
 
 Cada llamada guarda un JSON versionado inmutable en `assets/generated/animations/<uuid>.json` como objeto privado y en el workspace. `public/assets/generated/animations/manifest.json` registra hashes, atlas y claves para resolver conflictos; los IDs derivan de `(runId, callId)`, los reintentos de la misma llamada devuelven el mismo resultado y los fallos compensan writes parciales.
 
@@ -57,6 +57,16 @@ La plantilla Phaser 3.90 exporta `registerGeneratedAnimations`, `playGeneratedAn
 ## Contratos
 
 Los tipos Zod compartidos viven en `packages/contracts/src/asset-tools.ts`. El módulo exporta JSON Schema Draft-7 para las herramientas previas y Draft 2020-12 para `define_animation`; el adaptador de tools de Meta transmite schemas explícitos y el worker vuelve a validar con Zod cada llamada.
+
+## Integración del orquestador y tarjetas de chat (#36)
+
+El worker expone los siete resultados de assets mediante contratos Zod estrictos y JSON Schema de entrada para Meta. Después de cada tool comprueba el resultado, conserva los IDs UUID, hashes y rutas derivadas que el redactor general confundiría con teléfonos, elimina texto sensible de cualquier otro campo y limita el JSON durable a 65.536 bytes. Solo esos resultados verificados entran a `function_call_output` y a `agent.tool_completed`.
+
+Las tools corren de una en una dentro del lease por proyecto. El prompt exige referencias explícitas a IDs devueltos: generar/editar antes de inspeccionar; inspeccionar antes de empaquetar o crear un tileset; usar el `tilesetAssetId` devuelto para el mapa y el `atlasAssetId` para animaciones. Cada éxito persiste `agent.tool_completed`, `agent.asset_result` y `agent.action` en un lote; un fallo persiste `agent.tool_failed` con código allowlisted y una tarjeta sin datos de entrada. Un reintento recupera el resultado por `callId` y repara la tarjeta si faltaba en eventos antiguos. No se vuelve a llamar a Meta para una solicitud de imagen ambigua.
+
+El proyector SSE traduce solo la tarjeta validada al evento versionado `asset.card`; replay y `Last-Event-ID` usan el mismo camino de eventos durables. `EditorProgress.assetCards` deduplica por `callId` y el chat presenta resultado, tipo, verificación, IDs/hash y preview cuando existe. Las imágenes salen por `GET /api/projects/:projectId/assets/:assetId/preview`: la sesión propia se resuelve antes de leer, el owner y el proyecto se comprueban junto al objeto privado, y fallos de owner/estado/tipo devuelven 404 uniforme con `private, no-store`.
+
+`npm run test:assets:acceptance` usa Compose local con PostgreSQL/Silo reales y una respuesta de imagen simulada; no necesita cuota ni clave de Meta. La integración ejecuta generate_image, edit_sprite, inspect_asset, create_tileset, create_tilemap, pack_spritesheet y define_animation desde el orquestador, comprueba el orden serial y las tarjetas persistidas, y escribe los bytes recuperados de Silo como artefactos efímeros. Playwright los carga en la plantilla Phaser 3.90 y verifica rectángulos de atlas, pivotes, orden/FPS, render y colisiones. Evidencia: `docs/evidence/issue-36-phaser-animations.md` y `docs/evidence/issue-36-phaser-animations.png`.
 
 ## Comprobaciones locales
 

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "playwright/test";
+import sharp from "sharp";
 
 const projectId = "9fe9e0e0-0b85-4eb8-bd69-7f16c7569f28";
 
@@ -193,6 +194,26 @@ test.describe("editor de dos paneles", () => {
     await page.getByRole("button", { name: "Share" }).last().click();
     await page.getByRole("button", { name: "Unpublish" }).click();
     await expect(page.getByText("Revocada", { exact: true })).toBeVisible();
+  });
+
+  test("muestra la tarjeta durable del asset y abre su preview privada", async ({ page }) => {
+    const assetId = "10000000-0000-4000-8000-000000000236";
+    const png = await sharp({ create: { width: 2, height: 2, channels: 4, background: "#7aa2f7" } }).png().toBuffer();
+    await page.route(`**/api/projects/${projectId}/assets/${assetId}/preview`, (route) => route.fulfill({ status: 200, contentType: "image/png", body: png, headers: { "cache-control": "private, no-store" } }));
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/?asset-card=1");
+    await page.getByLabel("Describe tu juego").fill("Crea un héroe pixel art.");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Enviar al agente" }).click();
+
+    const card = page.getByRole("article", { name: "Imagen generada" });
+    await expect(card).toContainText("1 frame; PNG y manifiesto guardados.");
+    await expect(card).toContainText("Revisión visual pendiente en la preview.");
+    await card.getByText("IDs y hashes verificados").click();
+    await expect(card.getByText(assetId, { exact: true })).toBeVisible();
+    await card.getByRole("button", { name: "Abrir preview privada de Imagen generada" }).click();
+    await expect(page.getByRole("dialog")).toContainText("El asset se sirve con la sesión privada del proyecto.");
+    await expect(page.getByRole("dialog").getByRole("img", { name: "Asset Sprite" })).toBeVisible();
   });
 
   test("muestra la respuesta de autenticación propia cuando falla el inicio de sesión", async ({ page }) => {

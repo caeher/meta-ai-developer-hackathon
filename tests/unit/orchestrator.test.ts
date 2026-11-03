@@ -214,7 +214,27 @@ describe("orquestador de runs", () => {
         requestId: "request-image-1",
         usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
       });
-      return { path: "assets/generated/image.png", bytesWritten: 512 };
+      return {
+        assetId: "10000000-0000-4000-8000-000000000111",
+        contactSheetAssetId: "10000000-0000-4000-8000-000000000112",
+        assetType: "sprite",
+        path: "assets/generated/10000000-0000-4000-8000-000000000111.png",
+        manifestPath: "public/assets/generated/manifest.json",
+        bytesWritten: 512,
+        sha256: "a".repeat(64),
+        mimeType: "image/png",
+        width: 16,
+        height: 16,
+        phaserKey: "generated-10000000-0000-4000-8000-000000000111",
+        frameCount: 1,
+        frameWidth: 16,
+        frameHeight: 16,
+        alphaVerified: true,
+        qa: {
+          contactSheetAssetId: "10000000-0000-4000-8000-000000000112",
+          visualReview: "pending-in-live-preview",
+        },
+      };
     });
     const { options, store } = makeOptions({
       trace,
@@ -281,7 +301,17 @@ describe("orquestador de runs", () => {
         requestId: "request-sprite-edit",
         usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
       });
-      return { assetId: "10000000-0000-4000-8000-000000000132", provenance: "meta-image-edit" };
+      return {
+        assetId: "10000000-0000-4000-8000-000000000132",
+        sourceAssetId: "10000000-0000-4000-8000-000000000131",
+        sourceSha256: "b".repeat(64),
+        sha256: "a".repeat(64),
+        path: "assets/generated/10000000-0000-4000-8000-000000000132.png",
+        width: 16,
+        height: 16,
+        reviewStatus: "pending-in-live-preview",
+        provenance: "meta-image-edit",
+      };
     });
     const response = (id: string) => completion([
       { kind: "tool_call", callId: editCall.callId, name: editCall.name, arguments: editCall.arguments },
@@ -312,7 +342,20 @@ describe("orquestador de runs", () => {
         { sourceAssetId: "10000000-0000-4000-8000-000000000152", tileName: "ground", collides: true, terrain: "ground" },
       ],
     });
-    const output = { tilesetAssetId: "10000000-0000-4000-8000-000000000153", sha256: "a".repeat(64) };
+    const output = {
+      tilesetAssetId: "10000000-0000-4000-8000-000000000153",
+      name: "forest_tiles",
+      imagePath: "assets/generated/tilesets/10000000-0000-4000-8000-000000000153.png",
+      metadataPath: "assets/generated/tilesets/10000000-0000-4000-8000-000000000153.json",
+      sha256: "a".repeat(64),
+      tileSize: 16,
+      columns: 2,
+      rows: 1,
+      tiles: [
+        { tileIndex: 0, tileName: "water", collides: false, terrain: "water" },
+        { tileIndex: 1, tileName: "ground", collides: true, terrain: "ground" },
+      ],
+    };
     const creator = vi.fn(async (_args: Record<string, unknown>, context: { callId: string; projectId: string }) => {
       expect(context).toMatchObject({ callId: tilesetCall.callId, projectId: run.projectId });
       return output;
@@ -346,7 +389,19 @@ describe("orquestador de runs", () => {
       layers: [{ name: "ground", visible: true, cells: [{ x: 0, y: 1, tileName: "grass" }] }],
       collisionLayerNames: ["ground"],
     });
-    const output = { tilemapAssetId: "10000000-0000-4000-8000-000000000162", sha256: "a".repeat(64) };
+    const output = {
+      tilemapAssetId: "10000000-0000-4000-8000-000000000162",
+      tilesetAssetId: "10000000-0000-4000-8000-000000000161",
+      path: "assets/generated/tilemaps/10000000-0000-4000-8000-000000000162.json",
+      sha256: "a".repeat(64),
+      width: 2,
+      height: 2,
+      tileSize: 16,
+      layerNames: ["ground"],
+      cellCount: 1,
+      collisionTileNames: [],
+      phaserFormat: "phaser-3-tilemap-json",
+    };
     const creator = vi.fn(async (_args: Record<string, unknown>, context: { callId: string; projectId: string }) => {
       expect(context).toMatchObject({ callId: tilemapCall.callId, projectId: run.projectId });
       return output;
@@ -385,7 +440,16 @@ describe("orquestador de runs", () => {
     const output = {
       atlasAssetId: "10000000-0000-4000-8000-000000000172",
       textureAssetId: "10000000-0000-4000-8000-000000000173",
+      atlasPath: "assets/generated/atlases/10000000-0000-4000-8000-000000000172.json",
+      imagePath: "assets/generated/atlases/10000000-0000-4000-8000-000000000173.png",
       sha256: "a".repeat(64),
+      width: 40,
+      height: 20,
+      format: "phaser-json-hash",
+      frames: [
+        { frameName: "run_0", x: 0, y: 0, width: 16, height: 16 },
+        { frameName: "run_1", x: 20, y: 0, width: 16, height: 16 },
+      ],
     };
     const packer = vi.fn(async (_args: Record<string, unknown>, context: { callId: string; projectId: string }) => {
       expect(context).toMatchObject({ callId: spritesheetCall.callId, projectId: run.projectId });
@@ -419,6 +483,17 @@ describe("orquestador de runs", () => {
     const output = {
       animationManifestAssetId: "10000000-0000-4000-8000-000000000182",
       atlasAssetId: "10000000-0000-4000-8000-000000000181",
+      path: "assets/generated/animations/10000000-0000-4000-8000-000000000182.json",
+      sha256: "a".repeat(64),
+      animations: [{
+        key: "walk",
+        frameNames: ["walk_0", "walk_1"],
+        frameRate: 8,
+        repeat: -1,
+        yoyo: false,
+        delayMs: 0,
+        repeatDelayMs: 0,
+      }],
       registration: "phaser-anims-create",
     };
     const definer = vi.fn(async (_args: Record<string, unknown>, context: { callId: string; projectId: string }) => {

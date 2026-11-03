@@ -98,6 +98,26 @@
 .quickOptionsGroups h3 { margin: 0; }
 .quickOptionsGrid { display: flex; flex-wrap: wrap; gap: 8px; }
 
+.assetCardItem { list-style: none; }
+.assetCard { display: grid; gap: 10px; max-width: 100%; padding: 14px; border: 1px solid var(--app-border); border-radius: 12px; background: var(--app-surface); }
+.assetCardHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.assetCardHeader h3,
+.assetCardHeader p { margin: 0; }
+.assetCard > p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.assetPreviewButton { display: grid; justify-items: start; width: fit-content; height: auto; max-width: 100%; padding: 8px; }
+.assetThumbnail { display: block; max-width: min(100%, 240px); height: 120px; object-fit: contain; border-radius: 8px; background: var(--app-background); }
+.assetPreviewLarge { display: grid; place-items: center; max-height: min(65svh, 520px); margin-top: 16px; overflow: auto; background: var(--app-background); border-radius: 10px; }
+.assetPreviewLarge img { display: block; max-width: 100%; max-height: min(65svh, 520px); object-fit: contain; }
+.assetDimensions { display: flex; flex-wrap: wrap; gap: 12px; margin: 0; color: var(--app-text-muted); font-size: 12px; }
+.assetVerification { display: grid; justify-items: start; gap: 6px; }
+.assetVerification p { margin: 0; color: var(--app-text-muted); line-height: 1.5; }
+.assetError { margin: 0; color: var(--app-red); overflow-wrap: anywhere; }
+.assetDetails { display: grid; gap: 8px; border-top: 1px solid var(--app-border); padding-top: 10px; color: var(--app-text-muted); font-size: 12px; }
+.assetDetails summary { width: fit-content; cursor: pointer; }
+.assetDetails ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.assetDetails li { display: grid; gap: 3px; overflow-wrap: anywhere; }
+.assetDetails code { color: var(--app-cyan); font-size: 11px; }
+
 .publishDialog { max-height: min(86svh, 760px); overflow-y: auto; }
 .publishSection { display: grid; gap: 8px; margin-top: 18px; }
 .publishSection label { color: var(--app-text); font-size: 13px; }

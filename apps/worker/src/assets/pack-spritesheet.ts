@@ -104,7 +104,6 @@ export function createPackSpritesheetTool(input: {
     const request = parsed.data;
     const runtimeManifest = await loadRuntimeManifest(input.sandbox, context.projectId, context.signal);
     const identity = await input.identity(context.claim);
-    if (identity.userId !== context.claim.ownerUserId) throw new OwnedResourceNotFoundError();
     const sourceCache = new Map<string, StoredFrameSource>();
     const frames: PackedFrame[] = [];
     for (const requestedFrame of request.frames) {

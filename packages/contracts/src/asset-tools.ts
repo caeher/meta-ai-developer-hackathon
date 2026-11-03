@@ -547,9 +547,12 @@ export type PackSpritesheetResult = z.infer<typeof PackSpritesheetResultSchema>;
 export type PackSpritesheetMetadata = z.infer<typeof PackSpritesheetMetadataSchema>;
 export type PackSpritesheetManifest = z.infer<typeof PackSpritesheetManifestSchema>;
 
+const MAX_DEFINED_ANIMATIONS = 8;
+const MAX_ANIMATION_FRAMES = 64;
+
 const DefineAnimationDefinitionSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
-  frameNames: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/)).min(1).max(256),
+  frameNames: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/)).min(1).max(MAX_ANIMATION_FRAMES),
   frameRate: z.number().min(1).max(60).optional().default(8),
   repeat: z.number().int().min(-1).max(1_000).optional().default(-1),
   yoyo: z.boolean().optional().default(false),
@@ -563,7 +566,7 @@ const DefineAnimationDefinitionSchema = z.object({
 
 export const DefineAnimationInputSchema = z.object({
   atlasAssetId: z.string().uuid(),
-  animations: z.array(DefineAnimationDefinitionSchema).min(1).max(32),
+  animations: z.array(DefineAnimationDefinitionSchema).min(1).max(MAX_DEFINED_ANIMATIONS),
 }).strict().superRefine((input, context) => {
   if (new Set(input.animations.map(({ key }) => key)).size !== input.animations.length) {
     context.addIssue({ code: "custom", path: ["animations"], message: "Animation keys must be unique." });
@@ -575,14 +578,14 @@ const defineAnimationProperties = {
   animations: {
     type: "array",
     minItems: 1,
-    maxItems: 32,
+    maxItems: MAX_DEFINED_ANIMATIONS,
     items: {
       type: "object",
       additionalProperties: false,
       properties: {
         key: { type: "string", pattern: "^[a-z][a-z0-9_-]{0,63}$" },
         frameNames: {
-          type: "array", minItems: 1, maxItems: 256, uniqueItems: true,
+          type: "array", minItems: 1, maxItems: MAX_ANIMATION_FRAMES, uniqueItems: true,
           items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$" },
         },
         frameRate: { type: "number", minimum: 1, maximum: 60, default: 8 },
@@ -608,7 +611,7 @@ export const DefineAnimationInputJsonSchema = {
 
 const DefinedAnimationSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
-  frameNames: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/)).min(1).max(256),
+  frameNames: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/)).min(1).max(MAX_ANIMATION_FRAMES),
   frameRate: z.number().min(1).max(60),
   repeat: z.number().int().min(-1).max(1_000),
   yoyo: z.boolean(),
@@ -625,7 +628,7 @@ export const GeneratedAnimationManifestSchema = z.object({
   animationManifestAssetId: z.string().uuid(),
   atlasAssetId: z.string().uuid(),
   atlasSha256: z.string().regex(/^[a-f0-9]{64}$/),
-  animations: z.array(DefinedAnimationSchema).min(1).max(32),
+  animations: z.array(DefinedAnimationSchema).min(1).max(MAX_DEFINED_ANIMATIONS),
 }).strict().superRefine((manifest, context) => {
   if (new Set(manifest.animations.map(({ key }) => key)).size !== manifest.animations.length) {
     context.addIssue({ code: "custom", path: ["animations"], message: "Animation keys must be unique." });
@@ -637,7 +640,7 @@ export const DefineAnimationResultSchema = z.object({
   atlasAssetId: z.string().uuid(),
   path: z.string().regex(/^assets\/generated\/animations\/[0-9a-f-]{36}\.json$/),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
-  animations: z.array(DefinedAnimationSchema).min(1).max(32),
+  animations: z.array(DefinedAnimationSchema).min(1).max(MAX_DEFINED_ANIMATIONS),
   registration: z.literal("phaser-anims-create"),
 }).strict().superRefine((result, context) => {
   if (result.path !== `assets/generated/animations/${result.animationManifestAssetId}.json` ||
@@ -657,12 +660,12 @@ export const DefineAnimationResultJsonSchema = {
     path: { type: "string", pattern: "^assets/generated/animations/[0-9a-f-]{36}\\.json$" },
     sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
     animations: {
-      type: "array", minItems: 1, maxItems: 32,
+      type: "array", minItems: 1, maxItems: MAX_DEFINED_ANIMATIONS,
       items: {
         type: "object", additionalProperties: false,
         properties: {
           key: { type: "string", pattern: "^[a-z][a-z0-9_-]{0,63}$" },
-          frameNames: { type: "array", minItems: 1, maxItems: 256, uniqueItems: true, items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$" } },
+          frameNames: { type: "array", minItems: 1, maxItems: MAX_ANIMATION_FRAMES, uniqueItems: true, items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$" } },
           frameRate: { type: "number", minimum: 1, maximum: 60 },
           repeat: { type: "integer", minimum: -1, maximum: 1_000 },
           yoyo: { type: "boolean" },
@@ -796,3 +799,33 @@ export type AssetInspectionKind = Exclude<z.infer<typeof AssetInspectionKindSche
 export type AssetInspectionCheck = z.infer<typeof AssetInspectionCheckSchema>;
 export type AssetInspectionFinding = z.infer<typeof AssetInspectionFindingSchema>;
 export type InspectAssetResult = z.infer<typeof InspectAssetResultSchema>;
+
+export const AssetToolCardSchema = z.object({
+  callId: z.string().min(1).max(64).regex(/^[A-Za-z0-9._:-]+$/),
+  toolName: z.enum(["generate_image", "edit_sprite", "inspect_asset", "create_tileset", "create_tilemap", "pack_spritesheet", "define_animation"]),
+  status: z.enum(["succeeded", "failed"]),
+  title: z.string().min(1).max(120),
+  summary: z.string().min(1).max(240),
+  assetType: z.enum(["sprite", "background", "ui", "tileset", "tilemap", "spritesheet", "animation", "inspection"]),
+  assets: z.array(z.object({
+    assetId: z.string().uuid(),
+    role: z.enum(["image", "contact-sheet", "texture", "atlas", "tileset", "tilemap", "animation", "source"]),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    previewable: z.boolean(),
+  }).strict()).max(4),
+  previewAssetId: z.string().uuid().optional(),
+  frameCount: z.number().int().min(0).max(4_096).optional(),
+  layerCount: z.number().int().min(0).max(16).optional(),
+  verificationStatus: z.enum(["passed", "needs_review", "failed", "not_applicable"]),
+  verificationSummary: z.string().min(1).max(240),
+  errorCode: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/).optional(),
+}).strict().superRefine((card, context) => {
+  if (card.status === "failed" && (!card.errorCode || card.verificationStatus !== "failed" || card.assets.length > 0)) {
+    context.addIssue({ code: "custom", path: ["errorCode"], message: "Failed asset cards expose only a safe error code." });
+  }
+  if (card.previewAssetId && !card.assets.some((asset) => asset.assetId === card.previewAssetId && asset.previewable)) {
+    context.addIssue({ code: "custom", path: ["previewAssetId"], message: "Preview must reference a previewable asset on the card." });
+  }
+});
+
+export type AssetToolCard = z.infer<typeof AssetToolCardSchema>;
