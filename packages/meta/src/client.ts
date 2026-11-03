@@ -40,6 +40,7 @@ export interface MetaToolDefinition<TSchema extends z.ZodType = z.ZodType> {
   name: string;
   description: string;
   inputSchema: TSchema;
+  inputJsonSchema?: Record<string, unknown>;
 }
 
 export interface MetaCodeRequest {
@@ -100,7 +101,7 @@ function prepareTools(tools: MetaToolDefinition[] | undefined): PreparedToolSet 
     }
     let parameters: unknown;
     try {
-      parameters = z.toJSONSchema(tool.inputSchema, { target: "draft-7" });
+      parameters = tool.inputJsonSchema ?? z.toJSONSchema(tool.inputSchema, { target: "draft-7" });
     } catch {
       throw new MetaApiError({ code: "invalid_request", message: `Tool ${tool.name} uses a schema that cannot be sent to Meta.` });
     }

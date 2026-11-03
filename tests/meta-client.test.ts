@@ -3,6 +3,7 @@ import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 import { MetaClient, loadMetaConfig } from "@meta-game/meta";
 import type { MetaConversationItem } from "@meta-game/contracts";
+import { agentToolDefinitions } from "../apps/worker/src/agent/tools";
 
 const spark = "muse-spark-1.3-contributor";
 const imageModel = "muse-image-1.0";
@@ -142,6 +143,22 @@ describe("MetaClient plan and image contracts", () => {
 });
 
 describe("MetaClient streaming and tool replay", () => {
+  it("sends the inspect_asset Draft-7 source exclusivity schema to the provider", async () => {
+    const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));
+    const inspectTool = agentToolDefinitions.find(({ name }) => name === "inspect_asset");
+    expect(inspectTool?.inputJsonSchema).toBeDefined();
+    const client = new MetaClient(config(), fetchMock);
+    for await (const event of client.streamCode({ prompt: "Inspect the current atlas.", tools: inspectTool ? [inspectTool] : [] })) {
+      expect(event.type).toBe("completed");
+    }
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { tools: Array<{ parameters: Record<string, unknown> }> };
+    expect(body.tools[0]?.parameters.oneOf).toEqual([
+      { required: ["assetId"], not: { required: ["workspacePath"] } },
+      { required: ["workspacePath"], not: { required: ["assetId"] } },
+    ]);
+  });
+
   it("assembles fragmented parallel tool calls and emits them only when the response completes", async () => {
     const body = await fixture("code-stream.sse");
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(body, 3));

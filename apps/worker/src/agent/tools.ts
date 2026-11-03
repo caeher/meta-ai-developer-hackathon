@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   ImageGenerationBriefSchema,
+  InspectAssetInputSchema,
+  InspectAssetInputJsonSchema,
   SandboxInstallDependenciesInputSchema,
   SandboxListFilesInputSchema,
   SandboxReadFileInputSchema,
@@ -70,14 +72,22 @@ const definitions: ToolDefinition[] = [
     inputSchema: ImageGenerationBriefSchema,
     summary: (args) => `Generar asset ${String(args.assetType)} y validarlo para Phaser`,
   },
+  {
+    name: "inspect_asset",
+    description: "Read-only inspection of a private image or Phaser asset descriptor. Checks bytes, checksums, atlas frames and pivots, tileset/map bounds, and animation frame names. It never writes or fetches URLs.",
+    inputSchema: InspectAssetInputSchema,
+    inputJsonSchema: InspectAssetInputJsonSchema as unknown as Record<string, unknown>,
+    summary: (args) => `Inspeccionar asset ${String(args.assetId ?? args.workspacePath)}`,
+  },
 ];
 
 const byName = new Map(definitions.map((definition) => [definition.name, definition]));
 
-export const agentToolDefinitions: MetaToolDefinition[] = definitions.map(({ name, description, inputSchema }) => ({
+export const agentToolDefinitions: MetaToolDefinition[] = definitions.map(({ name, description, inputSchema, inputJsonSchema }) => ({
   name,
   description,
   inputSchema,
+  ...(inputJsonSchema ? { inputJsonSchema } : {}),
 }));
 
 export type PreparedAgentToolCall = Readonly<{

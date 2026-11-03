@@ -10,6 +10,7 @@ import { createSkillRouter } from "@meta-game/skills";
 import { createAgentRunHandler } from "./agent/orchestrator";
 import { createPostgresAgentRunStore } from "./agent/store";
 import { createGeneratedImageTool } from "./assets/image-generator";
+import { createInspectAssetTool } from "./assets/inspect-asset";
 import { pendingOrchestratorHandler } from "./handler";
 import { removeProjectRunJobs, startRunWorkerService } from "./queue";
 import { createVersionService } from "./versions/service";
@@ -162,6 +163,7 @@ async function createEnabledAgentHandler() {
     sandbox,
     identity: store.identity,
   });
+  const assetInspector = createInspectAssetTool({ sandbox, storage, identity: store.identity });
   return createAgentRunHandler({
     store,
     meta,
@@ -174,6 +176,7 @@ async function createEnabledAgentHandler() {
     maxDurationMs: environment.RUN_MAX_DURATION_MS,
     dailyImageLimit: environment.USER_DAILY_IMAGE_LIMIT,
     imageGenerator,
+    assetInspector,
   });
 }
 

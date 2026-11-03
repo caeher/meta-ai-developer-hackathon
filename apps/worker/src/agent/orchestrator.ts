@@ -12,7 +12,7 @@ import {
   type GameSpec,
 } from "@meta-game/contracts";
 import { MetaApiError, type MetaClient } from "@meta-game/meta";
-import { UsageLimitExceededError, type RunUsage, type RunWorkerClaim, type VerifiedIdentityContext } from "@meta-game/db";
+import { OwnedResourceNotFoundError, UsageLimitExceededError, type RunUsage, type RunWorkerClaim, type VerifiedIdentityContext } from "@meta-game/db";
 import type { SkillSelection } from "@meta-game/skills";
 import { RunProcessingError, type RunHandler, type RunHandlerContext, type WorkerRun } from "../handler";
 import type { AgentRunStore } from "./store";
@@ -33,6 +33,7 @@ import {
 } from "./tools";
 import { estimateTokens, redactSensitiveText, sensitiveInputReason } from "./safety";
 import type { GeneratedImageToolContext } from "../assets/image-generator";
+import type { InspectAssetToolContext } from "../assets/inspect-asset";
 import { imageResponseTokenUsage } from "../assets/image-generator";
 import { ImagePipelineError } from "../assets/image-pipeline";
 import { captureGameCheckpoint, createGameSpec, decodeGameCheckpoint, gameSpecFile, gameSpecInstructions, restoreGameCheckpoint, type GameCheckpoint, GAME_SPEC_PATH } from "../pipelines/generate-game";
@@ -56,6 +57,7 @@ export interface AgentOrchestratorOptions {
   skillTokenBudget?: number;
   dailyImageLimit?: number;
   imageGenerator?: AgentImageGenerator;
+  assetInspector?: (args: Record<string, unknown>, context: InspectAssetToolContext) => Promise<unknown>;
   versions?: {
     captureVerifiedRun(input: {
       identity: VerifiedIdentityContext;
@@ -537,12 +539,18 @@ async function executeCachedTool(
         },
       });
       if (!startedImageRequest || !completedImageRequest) throw new RunProcessingError("meta_incomplete_response", false, state.usage);
+    } else if (call.name === "inspect_asset") {
+      if (!options.assetInspector) throw new RunProcessingError("asset_inspection_unavailable", false, state.usage);
+      result = await options.assetInspector(call.args, { claim, projectId, signal: state.signal });
     } else {
       result = await executeAgentTool(options.sandbox, projectId, call, state.signal);
     }
   } catch (error) {
     if (state.signal.aborted) throw error;
     if (error instanceof RunProcessingError) throw error;
+    if (call.name === "inspect_asset" && error instanceof OwnedResourceNotFoundError) {
+      throw new RunProcessingError("asset_not_found", false, state.usage);
+    }
     if (call.name === "generate_image" && error instanceof ImagePipelineError) {
       throw new RunProcessingError(error.code, false, state.usage);
     }
