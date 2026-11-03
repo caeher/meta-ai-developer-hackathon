@@ -162,6 +162,7 @@ services:
       PUBLISH_BASE_DOMAIN: ${PUBLISH_BASE_DOMAIN:-games.localhost}
       WORKER_INTERNAL_URL: ${WORKER_INTERNAL_URL:-http://worker:8082}
       WORKER_INTERNAL_TOKEN: ${WORKER_INTERNAL_TOKEN:-placeholder-generate-a-separate-random-token}
+      RUNS_ENABLED: ${RUNS_ENABLED:-false}
       NEXT_TELEMETRY_DISABLED: "1"
     ports:
       - name: web-loopback
@@ -240,6 +241,12 @@ services:
       RUN_MAX_TOKENS: ${RUN_MAX_TOKENS:-16000}
       USER_DAILY_TOKEN_LIMIT: ${USER_DAILY_TOKEN_LIMIT:-100000}
       USER_DAILY_IMAGE_LIMIT: ${USER_DAILY_IMAGE_LIMIT:-10}
+      META_API_KEY: ${META_API_KEY:-}
+      META_BASE_URL: ${META_BASE_URL:-https://api.meta.ai/v1}
+      META_MODEL_PLAN: ${META_MODEL_PLAN:-muse-spark-1.3-contributor}
+      META_MODEL_CODE: ${META_MODEL_CODE:-muse-spark-1.3-contributor}
+      META_MODEL_IMAGE: ${META_MODEL_IMAGE:-muse-image-1.0}
+      META_TIMEOUT_MS: ${META_TIMEOUT_MS:-60000}
       S3_ENDPOINT: http://s3:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET_PRIVATE: ${S3_BUCKET_PRIVATE:-meta-game-private}
