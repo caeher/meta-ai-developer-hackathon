@@ -25,3 +25,12 @@ El backup detiene los escritores de la aplicacion antes de capturar Postgres y S
 La validacion recupera filas reales del esquema actual (`users`, `projects`, `versions`, `assets`) y abre/decodifica la version privada por el adaptador de snapshots. No ejecuta el editor contra una base temporal ni inicia preview jugable; `SANDBOX_DRIVER=disabled` y `PREVIEW_GATEWAY_ENABLED=false` permanecen como defaults. La preview jugable se prueba por separado dentro del alcance de sus issues.
 
 No se almaceno ninguna clave ni valor de entorno en este informe. El ensayo usa una clave AES efimera generada en runtime y recursos desechables de Compose.
+
+## Checks de entrega
+
+- `npm test`: 303 pasaron y 55 skips opcionales/preexistentes.
+- `npm run test:integration`: 54 pasaron y 1 skip opcional con PostgreSQL, Redis y Silo de Compose.
+- `npm run lint` y `npm run typecheck`: correctos.
+- `npm run build`, `npm run build:worker`, `npm run build:controller`, `npm run build:gateway`, `npm run build:publishing-origin` y `npm run build:game-template`: correctos.
+- La suite, lint, typecheck y builds de cierre se ejecutaron en un worktree aislado sin archivo `.env.local`; no se configuro OTLP ni se uso una clave real de Meta.
+- El build Phaser completo emitio solo el aviso existente de chunk mayor a 500 KiB; el build termino correctamente.
