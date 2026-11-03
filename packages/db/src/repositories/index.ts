@@ -982,6 +982,43 @@ export function createRepositories(db: GameDatabase, policyInput: Partial<z.inpu
         return asset;
       },
 
+      // ADR-0002: candidatos sin identidad de sesion; el worker reconcilia
+      // filas pending/delete_requested/failed viejas contra S3 con CAS.
+      async listAssetReconciliationCandidates(cutoff: Date, limit = 50) {
+        if (!(cutoff instanceof Date) || !Number.isFinite(cutoff.getTime()) || !Number.isInteger(limit) || limit < 1 || limit > 250) {
+          throw new RangeError('Limites de reconciliacion invalidos');
+        }
+        return db.select().from(assets).where(and(
+          inArray(assets.status, ['pending', 'delete_requested', 'failed']),
+          lt(assets.updatedAt, cutoff),
+        )).orderBy(asc(assets.updatedAt), asc(assets.id)).limit(limit);
+      },
+
+      async reconcileAssetCandidate(input: {
+        id: string; ownerUserId: string; projectId: string; sha256: string; sizeBytes: number;
+        updatedAt: Date; cutoff: Date; action: 'ready' | 'failed' | 'deleted' | 'cleaned';
+      }) {
+        const candidate = z.object({
+          id: uuidSchema, ownerUserId: uuidSchema, projectId: uuidSchema,
+          sha256: z.string().regex(/^[a-f0-9]{64}$/), sizeBytes: z.number().int().positive(),
+          updatedAt: z.date(), cutoff: z.date(), action: z.enum(['ready', 'failed', 'deleted', 'cleaned']),
+        }).strict().parse(input);
+        if (!Number.isFinite(candidate.updatedAt.getTime()) || !Number.isFinite(candidate.cutoff.getTime())) throw new TypeError('Fecha de reconciliacion invalida');
+        const expectedStatus = candidate.action === 'deleted' ? 'delete_requested' : candidate.action === 'cleaned' ? 'failed' : 'pending';
+        const where = and(
+          eq(assets.id, candidate.id), eq(assets.ownerUserId, candidate.ownerUserId),
+          eq(assets.projectId, candidate.projectId), eq(assets.status, expectedStatus),
+          eq(assets.sha256, candidate.sha256), eq(assets.sizeBytes, candidate.sizeBytes),
+          eq(assets.updatedAt, candidate.updatedAt), lt(assets.updatedAt, candidate.cutoff),
+        );
+        if (candidate.action === 'deleted') {
+          const deleted = await db.delete(assets).where(where).returning({ id: assets.id });
+          return deleted.length > 0;
+        }
+        const [updated] = await db.update(assets).set({ status: candidate.action === 'cleaned' ? 'failed' : candidate.action, updatedAt: new Date() }).where(where).returning({ id: assets.id });
+        return Boolean(updated);
+      },
+
       async list(
         identity: VerifiedIdentityContext,
         projectId: string,

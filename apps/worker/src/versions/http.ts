@@ -7,6 +7,7 @@ import { z } from "zod";
 const restorePath = /^\/internal\/projects\/([0-9a-f-]{36})\/versions\/([0-9a-f-]{36})\/restore$/i;
 const publishPath = /^\/internal\/projects\/([0-9a-f-]{36})\/publications$/i;
 const revokePath = /^\/internal\/projects\/([0-9a-f-]{36})\/publications\/([0-9a-f-]{36})$/i;
+const preparePreviewPath = /^\/internal\/projects\/([0-9a-f-]{36})\/preview\/prepare$/i;
 const restoreInput = z.object({ userId: z.string().trim().min(1).max(255) }).strict();
 const publishInput = restoreInput.extend({
   versionId: z.string().uuid(),
@@ -18,6 +19,7 @@ export function createWorkerVersionServer(options: {
   restore?(identity: ReturnType<typeof identityFromAuthenticatedSession>, projectId: string, versionId: string): Promise<unknown>;
   publish?(identity: ReturnType<typeof identityFromAuthenticatedSession>, projectId: string, versionId: string, idempotencyKey: string): Promise<unknown>;
   revoke?(identity: ReturnType<typeof identityFromAuthenticatedSession>, projectId: string, publicationId: string): Promise<unknown>;
+  preparePreview?(identity: ReturnType<typeof identityFromAuthenticatedSession>, projectId: string): Promise<unknown>;
 }): Server {
   if (Buffer.byteLength(options.token) < 32 || /placeholder|replace-me|change-me/i.test(options.token)) {
     throw new Error("WORKER_INTERNAL_TOKEN must be a generated secret");
@@ -46,14 +48,18 @@ async function handle(
   const restore = request.method === "POST" ? restorePath.exec(pathname) : null;
   const publish = request.method === "POST" ? publishPath.exec(pathname) : null;
   const revoke = request.method === "DELETE" ? revokePath.exec(pathname) : null;
-  if (!restore && !publish && !revoke) { send(response, 404, { error: "not_found" }); return; }
+  const preparePreview = request.method === "POST" ? preparePreviewPath.exec(pathname) : null;
+  if (!restore && !publish && !revoke && !preparePreview) { send(response, 404, { error: "not_found" }); return; }
   try {
     const body = request.method === "DELETE" ? await readJson(request, 4_096) : await readJson(request, 4_096);
     const input = (publish ? publishInput : restoreInput).safeParse(body);
     if (!input.success) { send(response, 400, { error: "invalid_request" }); return; }
     const identity = identityFromAuthenticatedSession({ userId: input.data.userId });
     let result: unknown;
-    if (restore) {
+    if (preparePreview) {
+      if (!options.preparePreview) { send(response, 503, { error: "preview_prepare_unavailable" }); return; }
+      result = await options.preparePreview(identity, preparePreview[1]!);
+    } else if (restore) {
       if (!options.restore) { send(response, 503, { error: "restore_unavailable" }); return; }
       result = await options.restore(identity, restore[1]!, restore[2]!);
     } else if (publish) {
@@ -65,7 +71,10 @@ async function handle(
       result = await options.revoke(identity, revoke[1]!, revoke[2]!);
     }
     if (!result) { send(response, 404, { error: "not_found" }); return; }
-    if (restore) {
+    if (preparePreview) {
+      logger.info("preview.prepare_completed", { operation: "prepare_preview", outcome: "success" });
+      send(response, 200, { prepared: result });
+    } else if (restore) {
       logger.info("version.restore_completed", { operation: "restore", outcome: "success" });
       send(response, 200, { restored: result });
     } else if (publish) {
@@ -82,7 +91,7 @@ async function handle(
       return;
     }
     if (error instanceof Error && error.name === "IdempotencyConflictError") { send(response, 409, { error: "idempotency_conflict" }); return; }
-    send(response, 503, { error: restore ? "restore_failed" : "publishing_failed" });
+    send(response, 503, { error: restore ? "restore_failed" : preparePreview ? "preview_prepare_failed" : "publishing_failed" });
   }
 }
 

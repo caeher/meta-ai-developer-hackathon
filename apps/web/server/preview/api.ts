@@ -8,6 +8,26 @@ import { createPreviewGrantHandlers } from "./handlers";
 
 let previewStore: ReturnType<typeof createRedisPreviewStore> | undefined;
 
+async function preparePreviewViaWorker(userId: string, projectId: string): Promise<void> {
+  const rawUrl = process.env.WORKER_INTERNAL_URL;
+  const token = process.env.WORKER_INTERNAL_TOKEN;
+  if (!rawUrl || !token || token.length < 32 || /placeholder|replace-me|change-me/i.test(token)) return;
+  let workerUrl: URL;
+  try { workerUrl = new URL(rawUrl); } catch { return; }
+  if (!(workerUrl.protocol === "https:" || (workerUrl.protocol === "http:" && ["worker", "localhost", "127.0.0.1"].includes(workerUrl.hostname))) ||
+    workerUrl.username || workerUrl.password || workerUrl.search || workerUrl.hash || workerUrl.pathname !== "/") return;
+  const endpoint = new URL(`/internal/projects/${encodeURIComponent(projectId)}/preview/prepare`, workerUrl);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    redirect: "error",
+    cache: "no-store",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ userId }),
+    signal: AbortSignal.timeout(9 * 60_000),
+  });
+  if (!response.ok) throw new Error("preview_prepare_failed");
+}
+
 function getStore() {
   if (!previewStore) previewStore = createRedisPreviewStore(process.env.REDIS_URL ?? "");
   return previewStore;
@@ -45,6 +65,7 @@ export async function withPreviewGrantHandler(
       authenticator: { requireUser: async () => identity },
       projects: repositories.projects,
       target: (projectId) => getPreviewTarget(database!.db, projectId),
+      preparePreview: (verifiedIdentity, projectId) => preparePreviewViaWorker(verifiedIdentity.userId, projectId),
       latestRunId: async (verifiedIdentity, projectId) => (await repositories.runs.latest(verifiedIdentity, projectId))?.id,
       store: getStore(),
       keyRing,

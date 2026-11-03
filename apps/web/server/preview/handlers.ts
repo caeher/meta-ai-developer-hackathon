@@ -42,6 +42,7 @@ export function createPreviewGrantHandlers(dependencies: {
   authenticator: Authenticator;
   projects: ProjectLookup;
   target(projectId: string): Promise<PreviewTarget | undefined>;
+  preparePreview?(identity: VerifiedIdentityContext, projectId: string): Promise<void>;
   latestRunId?(identity: VerifiedIdentityContext, projectId: string): Promise<string | undefined>;
   store: PreviewStore;
   keyRing: PreviewKeyRing;
@@ -61,7 +62,15 @@ export function createPreviewGrantHandlers(dependencies: {
         }
         const project = await dependencies.projects.get(identity, projectId);
         if (!project) return Response.json({ error: "not_found" }, { status: 404, headers: secureHeaders });
-        const target = await dependencies.target(projectId);
+        let target = await dependencies.target(projectId);
+        if (!target && dependencies.preparePreview) {
+          // Entrar al editor debe habilitar el sandbox: se crea bajo demanda
+          // (y se siembra la plantilla si el workspace esta vacio) antes de
+          // volver a comprobar el target. Si la preparacion falla, el 409
+          // siguiente mantiene el aviso honesto.
+          await dependencies.preparePreview(identity, projectId).catch(() => undefined);
+          target = await dependencies.target(projectId);
+        }
         if (!target || target.projectId !== projectId || target.ownerUserId !== identity.userId) {
           return Response.json({ error: "preview_unavailable" }, { status: 409, headers: secureHeaders });
         }

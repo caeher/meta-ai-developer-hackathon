@@ -16,10 +16,12 @@ import { createCreateTilemapTool } from "./assets/create-tilemap";
 import { createPackSpritesheetTool } from "./assets/pack-spritesheet";
 import { createDefineAnimationTool } from "./assets/define-animation";
 import { createInspectAssetTool } from "./assets/inspect-asset";
+import { createAssetReconciler } from "./assets/reconcile-assets";
 import { pendingOrchestratorHandler } from "./handler";
 import { removeProjectRunJobs, startRunWorkerService } from "./queue";
 import { createVersionService } from "./versions/service";
 import { createWorkerVersionServer } from "./versions/http";
+import { createPreviewPreparationService } from "./preview/prepare";
 import { createPublicationPipeline } from "./pipelines/publish-game";
 import { createResourceLifecycleService } from "./lifecycle/service";
 import { createRedisPreviewStore } from "@meta-game/preview";
@@ -104,6 +106,26 @@ const observabilityServer = createTelemetryServer({
 observabilityServer.on("error", () => telemetryLogger.error("observability.server_failed", { errorCode: "observability_server_failed" }));
 projectJobCleaner.remove = (jobs) => removeProjectRunJobs(service.queue, jobs);
 
+let assetReconciler: NodeJS.Timeout | undefined;
+if (environment.RUNS_ENABLED) {
+  const assetObjects = createS3PrivateObjectClient(readStorageEnvironment());
+  closeCallbacks.push(() => assetObjects.close?.());
+  const assetReconciliation = createAssetReconciler({ assets: repositories.assets, objects: assetObjects });
+  const reconcileAssets = async () => {
+    try {
+      const result = await assetReconciliation.reconcilePendingAssets();
+      if (result.recovered || result.failed || result.deleted || result.cleaned) {
+        telemetryLogger.info("asset.reconciliation", { count: result.scanned, outcome: result.failed ? "failed" : "success" });
+      }
+    } catch {
+      telemetryLogger.error("asset.reconciliation_failed", { errorCode: "asset_reconciliation_failed" });
+    }
+  };
+  void reconcileAssets();
+  assetReconciler = setInterval(() => { void reconcileAssets(); }, 60_000);
+  assetReconciler.unref();
+}
+
 let snapshotReconciler: NodeJS.Timeout | undefined;
 if (versionService && environment.RUNS_ENABLED) {
   const reconcile = async () => {
@@ -169,8 +191,19 @@ if (environment.RUNS_ENABLED || environment.PUBLISHING_ENABLED) {
   if ((!versionService && environment.RUNS_ENABLED) || !Number.isInteger(port) || port < 1024 || port > 65535) {
     throw new Error("RUNS_ENABLED or PUBLISHING_ENABLED requires the internal service");
   }
+  const previewPreparation = environment.RUNS_ENABLED
+    ? createPreviewPreparationService({
+        projects: repositories.projects,
+        sandbox: getSandboxClient(),
+        isProjectBusy: async (identity, projectId) => {
+          const latest = await repositories.runs.latest(identity, projectId).catch(() => undefined);
+          return Boolean(latest && ["queued", "planning", "running", "verifying"].includes(latest.status));
+        },
+      })
+    : undefined;
   versionServer = createWorkerVersionServer({
     token: token ?? "",
+    ...(previewPreparation ? { preparePreview: (identity, projectId) => previewPreparation.prepare(identity, projectId) } : {}),
     ...(environment.RUNS_ENABLED && versionService ? { restore: (identity, projectId, versionId) => versionService!.restore(identity, projectId, versionId) } : {}),
     ...(publicationPipeline ? {
       publish: (identity, projectId, versionId, idempotencyKey) => publicationPipeline!.start(identity, projectId, versionId, idempotencyKey),
@@ -237,7 +270,7 @@ function getCheckpointStorage() {
 
 function getSandboxClient(): SandboxControllerClient {
   if (sandboxClient) return sandboxClient;
-  if (process.env.SANDBOX_DRIVER !== "rootless") throw new Error("RUNS_ENABLED or PUBLISHING_ENABLED requires SANDBOX_DRIVER=rootless on the dedicated Linux host");
+  if (process.env.SANDBOX_DRIVER !== "rootless") throw new Error("RUNS_ENABLED or PUBLISHING_ENABLED requires SANDBOX_DRIVER=rootless in the local Compose runtime");
   const controllerUrl = process.env.SANDBOX_CONTROLLER_URL;
   const controllerToken = process.env.SANDBOX_CONTROLLER_TOKEN;
   if (!controllerUrl || !controllerToken) throw new Error("RUNS_ENABLED or PUBLISHING_ENABLED requires the private sandbox controller");
@@ -281,6 +314,7 @@ let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  if (assetReconciler) clearInterval(assetReconciler);
   if (snapshotReconciler) clearInterval(snapshotReconciler);
   if (lifecycleReconciler) clearInterval(lifecycleReconciler);
   if (publicationReconciler) clearInterval(publicationReconciler);
