@@ -13,6 +13,7 @@ import {
 } from "@meta-game/db";
 import { createPrivateStorageFromEnvironment } from "@meta-game/storage";
 import { createPackSpritesheetTool, type PackSpritesheetToolContext } from "../../apps/worker/src/assets/pack-spritesheet";
+import { createDefineAnimationTool, type DefineAnimationToolContext } from "../../apps/worker/src/assets/define-animation";
 
 const integrationEnabled = process.env.PERSISTENCE_TEST_ENABLED === "1";
 type SourceDescriptor = { assetId: string; body: Buffer; width: number; height: number; columns: number; rows: number; colors: readonly (readonly [number, number, number, number])[] };
@@ -170,6 +171,52 @@ describe.skipIf(!integrationEnabled)("pack_spritesheet con PostgreSQL, Silo y ow
       expect(actual).toEqual(expected);
     }
 
+    const animationTool = createDefineAnimationTool({ storage, sandbox, identity: async () => identityA });
+    const animationContext: DefineAnimationToolContext = {
+      claim: claimA,
+      callId: "define-animation-acceptance",
+      projectId: projectA,
+      signal: new AbortController().signal,
+    };
+    const animationInput = {
+      atlasAssetId: result.atlasAssetId,
+      animations: [
+        { key: "acceptance-run", frameNames: ["run_0", "run_1", "run_2"], frameRate: 6, repeat: -1 },
+        { key: "acceptance-yoyo", frameNames: ["run_0", "run_1"], frameRate: 8, repeat: 1, yoyo: true, delayMs: 50, repeatDelayMs: 25 },
+      ],
+    };
+    const animationResult = await animationTool(animationInput, animationContext);
+    const storedAnimation = await storage.read(identityA, animationResult.animationManifestAssetId);
+    created.push({ identity: identityA, id: animationResult.animationManifestAssetId });
+    expect(animationResult).toMatchObject({
+      atlasAssetId: result.atlasAssetId,
+      registration: "phaser-anims-create",
+      animations: [
+        { key: "acceptance-run", frameNames: ["run_0", "run_1", "run_2"], frameRate: 6, repeat: -1, yoyo: false },
+        { key: "acceptance-yoyo", frameNames: ["run_0", "run_1"], frameRate: 8, repeat: 1, yoyo: true, delayMs: 50, repeatDelayMs: 25 },
+      ],
+    });
+    expect(Buffer.from(storedAnimation.body)).toEqual(Buffer.from(sandbox.files.get("public/" + animationResult.path) as string));
+    expect(await animationTool(animationInput, animationContext)).toEqual(animationResult);
+    await expect(animationTool({
+      atlasAssetId: result.atlasAssetId,
+      animations: [{ key: "acceptance-run", frameNames: ["run_0"] }],
+    }, { ...animationContext, callId: "define-animation-key-conflict" })).rejects.toMatchObject({ code: "animation_key_conflict" });
+
+    const foreignSandbox = makeSandbox(projectB, sourceDescriptors);
+    for (const [path, content] of sandbox.files) {
+      if (path.includes("/atlases/")) foreignSandbox.files.set(path, content);
+    }
+    const foreignClaim: RunWorkerClaim = { runId: randomUUID(), ownerUserId: ownerB, projectId: projectB, fencingToken: 1 };
+    const foreignAnimationTool = createDefineAnimationTool({ storage, sandbox: foreignSandbox, identity: async () => identityB });
+    await expect(foreignAnimationTool({ atlasAssetId: result.atlasAssetId, animations: [{ key: "foreign-run", frameNames: ["run_0"] }] }, {
+      claim: foreignClaim,
+      callId: "define-animation-cross-owner",
+      projectId: projectB,
+      signal: new AbortController().signal,
+    })).rejects.toBeInstanceOf(OwnedResourceNotFoundError);
+    expect(foreignSandbox.files.has("public/assets/generated/animations/manifest.json")).toBe(false);
+
     const repeat = await tool(request, context);
     expect(repeat).toEqual(result);
     const artifactPath = process.env.ISSUE_34_SPRITESHEET_PREVIEW_ARTIFACT;
@@ -178,6 +225,8 @@ describe.skipIf(!integrationEnabled)("pack_spritesheet con PostgreSQL, Silo y ow
         result,
         imageBase64: Buffer.from(storedTexture.body).toString("base64"),
         atlasBase64: Buffer.from(storedAtlas.body).toString("base64"),
+        animationResult,
+        animationManifestBase64: Buffer.from(storedAnimation.body).toString("base64"),
       }), { encoding: "utf8", flag: "wx" });
     }
   });

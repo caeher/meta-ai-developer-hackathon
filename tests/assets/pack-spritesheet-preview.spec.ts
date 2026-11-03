@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { expect, test } from "playwright/test";
 import { parseGeneratedSpritesheetAtlas } from "../../packages/game-templates/phaser/src/game/generated-assets";
+import type { DefineAnimationResult } from "@meta-game/contracts";
+import type { GeneratedAnimationManifest } from "../../packages/game-templates/phaser/src/game/generated-animations";
 
 type SpritesheetArtifact = {
   result: {
@@ -17,6 +20,8 @@ type SpritesheetArtifact = {
   };
   imageBase64: string;
   atlasBase64: string;
+  animationResult: DefineAnimationResult;
+  animationManifestBase64: string;
 };
 type TilemapArtifact = {
   tilemapBase64: string;
@@ -33,10 +38,20 @@ test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, anima
   const tilemap = JSON.parse(await readFile(tilemapArtifactPath!, "utf8")) as TilemapArtifact;
   const image = Buffer.from(spritesheet.imageBase64, "base64");
   const atlasBytes = Buffer.from(spritesheet.atlasBase64, "base64");
+  const animationBytes = Buffer.from(spritesheet.animationManifestBase64, "base64");
+  const animationManifest = JSON.parse(animationBytes.toString("utf8")) as GeneratedAnimationManifest;
   const atlas = JSON.parse(atlasBytes.toString("utf8")) as unknown;
   const parsedAtlas = parseGeneratedSpritesheetAtlas(atlas);
   const decoded = await sharp(image).raw().toBuffer({ resolveWithObject: true });
   expect(parsedAtlas).toBeDefined();
+  expect(animationManifest.atlasAssetId).toBe(spritesheet.result.atlasAssetId);
+  expect(animationManifest.animationManifestAssetId).toBe(spritesheet.animationResult.animationManifestAssetId);
+  expect(spritesheet.animationResult.atlasAssetId).toBe(spritesheet.result.atlasAssetId);
+  expect(createHash("sha256").update(animationBytes).digest("hex")).toBe(spritesheet.animationResult.sha256);
+  expect(animationManifest.animations).toMatchObject([
+    { key: "acceptance-run", frameNames: ["run_0", "run_1", "run_2"], frameRate: 6, repeat: -1, yoyo: false },
+    { key: "acceptance-yoyo", frameNames: ["run_0", "run_1"], frameRate: 8, repeat: 1, yoyo: true, delayMs: 50, repeatDelayMs: 25 },
+  ]);
   expect(spritesheet.result.sha256).toBeTruthy();
   expect(decoded.info).toMatchObject({ width: spritesheet.result.width, height: spritesheet.result.height, channels: 4 });
   expect(parsedAtlas).toMatchObject({
@@ -66,7 +81,7 @@ test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, anima
   await page.route("**/fixtures/generated-animation.json", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
-    body: JSON.stringify({ key: "acceptance-run", fps: 6, frames: ["run_0", "run_1", "run_2"] }),
+    body: animationBytes,
   }));
   await page.route("**/fixtures/generated-tilemap.json", (route) => route.fulfill({
     status: 200, contentType: "application/json", body: Buffer.from(tilemap.tilemapBase64, "base64"),
@@ -79,13 +94,19 @@ test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, anima
   }));
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.clock.install({ time: new Date("2026-11-03T00:00:00.000Z") });
   await page.goto(new URL("/?mode=packed-spritesheet", baseURL ?? "http://127.0.0.1:4175").toString());
+  await page.clock.runFor(1_500);
   await page.waitForFunction(() => window.__ASSET_PREVIEW_TEST__?.().loaded === true, undefined, { timeout: 10_000 });
   await page.waitForFunction(() => new Set(window.__ASSET_PREVIEW_TEST__?.().observedFrames.map(({ name }) => name)).size >= 3, undefined, { timeout: 5_000 });
   await page.waitForFunction(() => (window.__ASSET_PREVIEW_TEST__?.().observedFrames.filter(({ name }) => name === "run_1").length ?? 0) >= 4, undefined, { timeout: 8_000 });
   await page.waitForFunction(() => {
     const state = window.__ASSET_PREVIEW_TEST__?.();
     return Boolean(state?.tilemap && state.playerBottom >= 63.5 && state.playerBottom <= 64.5 && state.tilemap.freePlayerBottom > 70);
+  }, undefined, { timeout: 8_000 });
+  await page.waitForFunction(() => {
+    const frames = window.__ASSET_PREVIEW_TEST__?.().yoyoObservedFrames ?? [];
+    return frames.includes("run_1") && frames.filter((name) => name === "run_0").length >= 2;
   }, undefined, { timeout: 8_000 });
   const state = await page.evaluate(() => window.__ASSET_PREVIEW_TEST__?.());
   expect(pageErrors).toEqual([]);
@@ -96,6 +117,7 @@ test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, anima
     atlasFrames: ["run_0", "run_1", "run_2", "run_3"],
     animationFrames: ["run_0", "run_1", "run_2"],
     animationFps: 6,
+    animationRuntime: { keys: ["acceptance-run", "acceptance-yoyo"], frameOrder: ["run_0", "run_1", "run_2"], repeat: -1, yoyo: false, delay: 0, repeatDelay: 0 },
     collisionEnabled: true,
     floorTop: 64,
     tilemap: {
@@ -123,6 +145,8 @@ test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, anima
   const orderedTriple = observed.slice(0, -2).some((sample, index) =>
     sample.name === "run_0" && observed[index + 1]?.name === "run_1" && observed[index + 2]?.name === "run_2");
   expect(orderedTriple).toBe(true);
+  expect(state?.yoyoObservedFrames?.slice(0, 3)).toEqual(["run_0", "run_1", "run_0"]);
+  expect(state?.yoyoRuntime).toMatchObject({ frameOrder: ["run_0", "run_1"], frameRate: 8, repeat: 1, yoyo: true, delay: 50, repeatDelay: 25 });
   const runOneTimes = observed.filter(({ name }) => name === "run_1").map(({ at }) => at);
   const intervals = runOneTimes.slice(1).map((time, index) => time - runOneTimes[index]!);
   const medianCycleMs = median(intervals);
@@ -131,7 +155,7 @@ test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, anima
 
   const evidenceDirectory = path.resolve(process.cwd(), "docs/evidence");
   await mkdir(evidenceDirectory, { recursive: true });
-  const screenshotPath = path.join(evidenceDirectory, "issue-34-phaser-spritesheet.png");
+  const screenshotPath = path.join(evidenceDirectory, "issue-35-phaser-animations.png");
   const screenshot = await page.locator("canvas").screenshot({ path: screenshotPath });
   const renderedColors: number[][] = [];
   for (const x of [8, 24, 40, 56]) {
@@ -144,21 +168,30 @@ test("pack_spritesheet Silo output loads in Phaser 3.90 with exact frames, anima
     [230, 190, 35],
   ]);
 
+  const animationKeysBeforeRestart = state?.animationRuntime?.keys;
+  await page.evaluate(() => window.__ASSET_PREVIEW_RESTART__?.());
+  await page.clock.runFor(500);
+  await page.waitForFunction(() => window.__ASSET_PREVIEW_TEST__?.().sceneCreateCount === 2, undefined, { timeout: 8_000 });
+  const restarted = await page.evaluate(() => window.__ASSET_PREVIEW_TEST__?.());
+  expect(restarted?.loaded).toBe(true);
+  expect(restarted?.animationRuntime?.keys).toEqual(animationKeysBeforeRestart);
+  expect(pageErrors).toEqual([]);
+
   const report = [
-    "# Evidencia de aceptación #34",
+    "# Evidencia de aceptación #35",
     "",
     "Fecha UTC: " + new Date().toISOString(),
     "",
-    "pack_spritesheet procesó cuatro frames procedentes de tres PNG privados leídos de Silo bajo ownership de PostgreSQL y guardó textura y atlas privados. La preview Chromium cargó exactamente los bytes recuperados de Silo en Phaser 3.90 mediante this.load.atlas.",
+    "pack_spritesheet procesó cuatro frames privados y define_animation validó el atlas registrado de PostgreSQL/Silo y guardó su manifiesto versionado también en PostgreSQL/Silo. Phaser 3.90 cargó los bytes exactos en la preview.",
     "Atlas: cuatro rectángulos con dimensiones originales; Phaser resolvió run_0, run_1, run_2 y run_3, todos dentro de la textura, sin solapes y con pivote (0.5, 1).",
-    "Animación: run_0 → run_1 → run_2 a 6 fps; el ciclo de run_1 midió " + medianCycleMs.toFixed(1) + " ms de mediana.",
+    "Animación: acceptance-run recorrió run_0 → run_1 → run_2 a 6 fps (ciclo mediano " + medianCycleMs.toFixed(1) + " ms); acceptance-yoyo validó run_0 → run_1 → run_0, repeat=1, yoyo, 8 fps y delays de 50/25 ms. La escena se reinició conservando solo las dos claves.",
     "Tilemap y tileset de #33 recuperados de Silo: las cuatro muestras renderizadas fueron RGB " + renderedColors.map((color) => "(" + color.join(",") + ")").join(", ") + ". El actor cayó y quedó en y=" + (state?.playerBottom ?? 0).toFixed(1) + " sobre ground; la capa props no activó colisión.",
     "La integración creó los PNG sintéticos localmente y los subió a PostgreSQL/Silo; no llamó a Meta ni utilizó un mock de almacenamiento.",
     "",
-    "Captura: docs/evidence/issue-34-phaser-spritesheet.png.",
+    "Captura: docs/evidence/issue-35-phaser-animations.png.",
     "",
   ].join("\n");
-  await writeFile(path.join(evidenceDirectory, "issue-34-phaser-spritesheet.md"), report, "utf8");
+  await writeFile(path.join(evidenceDirectory, "issue-35-phaser-animations.md"), report, "utf8");
 });
 
 function median(values: number[]): number {

@@ -411,6 +411,40 @@ describe("orquestador de runs", () => {
     expect(result.usage?.images).toBe(0);
   });
 
+  it("ejecuta define_animation como tool durable sin consumir cuota de Meta", async () => {
+    const animationCall = codeCall("call-define-animation", "define_animation", {
+      atlasAssetId: "10000000-0000-4000-8000-000000000181",
+      animations: [{ key: "walk", frameNames: ["walk_0", "walk_1"], frameRate: 8, repeat: -1 }],
+    });
+    const output = {
+      animationManifestAssetId: "10000000-0000-4000-8000-000000000182",
+      atlasAssetId: "10000000-0000-4000-8000-000000000181",
+      registration: "phaser-anims-create",
+    };
+    const definer = vi.fn(async (_args: Record<string, unknown>, context: { callId: string; projectId: string }) => {
+      expect(context).toMatchObject({ callId: animationCall.callId, projectId: run.projectId });
+      return output;
+    });
+    const response = (id: string) => completion([
+      { kind: "tool_call", callId: animationCall.callId, name: animationCall.name, arguments: animationCall.arguments },
+      { kind: "message", role: "assistant", text: "La animación quedó registrada." },
+    ], id, 10);
+    const { options, store } = makeOptions({
+      streams: [[animationCall, response("response-animation-first")], [animationCall, response("response-animation-repeat")], [completion([], "response-animation-final", 10)]],
+    });
+    options.animationDefiner = definer;
+
+    const result = await createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    });
+
+    expect(definer).toHaveBeenCalledOnce();
+    expect(store.events.filter((event) => event.type === "agent.tool_completed" && event.payload.callId === animationCall.callId)).toHaveLength(1);
+    expect(result.usage?.images).toBe(0);
+  });
+
   it("no reintenta una edición con reserva durable sin respuesta de Meta", async () => {
     const editCall = codeCall("call-edit-ambiguous", "edit_sprite", {
       sourceAssetId: "10000000-0000-4000-8000-000000000141",

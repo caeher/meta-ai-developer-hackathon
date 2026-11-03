@@ -44,9 +44,19 @@ El worker escribe un documento Tiled finito en `assets/generated/tilemaps/<uuid>
 
 La plantilla expone `createGeneratedTilemap` desde `packages/game-templates/phaser/src/game/tilemaps.ts`. Requiere el tilemap JSON, la imagen y el metadata privado del tileset precargados; valida formato, dimensiones, capas, GID, firstgid y textura, agrega las capas en orden y aplica colisiones solo donde el mapa las declara. Falla con un error estable si falta el tilemap, la imagen, el tileset o una capa.
 
+## Animaciones declarativas por nombre (#35)
+
+`define_animation` recibe un `atlasAssetId` y hasta 32 definiciones con `key`, lista ordenada de `frameNames`, `frameRate`, `repeat`, `yoyo`, `delayMs` y `repeatDelayMs`. Las claves y nombres son explícitos; no se expanden rangos ni se evalúa código generado. El worker valida sesión propia y ownership, el manifest `public/assets/generated/atlases/manifest.json`, el hash del atlas privado, su metadata, la textura compañera y que los archivos del workspace coincidan con Silo. Rechaza claves ya definidas, frames ausentes, duplicados y límites inválidos antes de escribir.
+
+Cada llamada guarda un JSON versionado inmutable en `assets/generated/animations/<uuid>.json` como objeto privado y en el workspace. `public/assets/generated/animations/manifest.json` registra hashes, atlas y claves para resolver conflictos; los IDs derivan de `(runId, callId)`, los reintentos de la misma llamada devuelven el mismo resultado y los fallos compensan writes parciales.
+
+La plantilla Phaser 3.90 exporta `registerGeneratedAnimations`, `playGeneratedAnimation` y `getGeneratedAnimationTiming` desde `packages/game-templates/phaser/src/game/generated-animations.ts`. El helper compara IDs y SHA del atlas, verifica cada frame cargado, crea `AnimationFrame` con el texture key y nombre exactos, y falla con un diagnóstico ante conflictos. Registrar dos veces el mismo manifiesto sobre el manager global de Phaser es idempotente y no añade listeners; la secuencia, duración nominal, repeat/yoyo y delays se derivan de la definición.
+
+`npm run test:assets:acceptance` ejecuta `pack_spritesheet` y `define_animation` contra PostgreSQL/Silo temporal en Compose, sin Meta facturable, y entrega los bytes persistidos a Playwright Chromium. La prueba verifica cada frame/rectángulo, pivotes, secuencia y reloj de Phaser, repeat/yoyo/delays, y reinicio de escena; conserva las comprobaciones de render y colisión del tilemap. Evidencia: `docs/evidence/issue-35-phaser-animations.md` y `docs/evidence/issue-35-phaser-animations.png`.
+
 ## Contratos
 
-Los tipos Zod compartidos viven en `packages/contracts/src/asset-tools.ts`. El mismo módulo exporta JSON Schema Draft-7 de entrada y salida; el adaptador de tools de Meta transmite el schema explícito con `oneOf` para excluir solicitudes que mezclen ID y ruta. Zod se vuelve a ejecutar cuando el worker prepara cada llamada.
+Los tipos Zod compartidos viven en `packages/contracts/src/asset-tools.ts`. El módulo exporta JSON Schema Draft-7 para las herramientas previas y Draft 2020-12 para `define_animation`; el adaptador de tools de Meta transmite schemas explícitos y el worker vuelve a validar con Zod cada llamada.
 
 ## Comprobaciones locales
 

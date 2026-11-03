@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { addGeneratedTileset, applyGeneratedTilesetCollisions, parseGeneratedTilesetMetadata } from "../../../packages/game-templates/phaser/src/game/tilesets";
 import { createGeneratedTilemap } from "../../../packages/game-templates/phaser/src/game/tilemaps";
 import { parseGeneratedSpritesheetAtlas } from "../../../packages/game-templates/phaser/src/game/generated-assets";
+import { getGeneratedAnimationTiming, playGeneratedAnimation, registerGeneratedAnimations, type GeneratedAnimationManifest } from "../../../packages/game-templates/phaser/src/game/generated-animations";
 
 type Sample = Readonly<{ name: string; at: number }>;
 type PreviewState = Readonly<{
@@ -41,11 +42,16 @@ type PreviewState = Readonly<{
   error?: string;
   atlasValid?: boolean;
   atlasTextureSize?: { width: number; height: number };
+  animationRuntime?: { keys: string[]; frameOrder: string[]; frameDurationMs: number; totalDurationMs: number | null; repeat: number; yoyo: boolean; delay: number; repeatDelay: number };
+  yoyoRuntime?: { frameOrder: string[]; frameRate: number; repeat: number; yoyo: boolean; delay: number; repeatDelay: number };
+  yoyoObservedFrames?: string[];
+  sceneCreateCount?: number;
 }>;
 
 declare global {
   interface Window {
     __ASSET_PREVIEW_TEST__?: () => PreviewState;
+    __ASSET_PREVIEW_RESTART__?: () => void;
   }
 }
 
@@ -62,6 +68,10 @@ class AssetPreviewScene extends Phaser.Scene {
   private freeActorBody?: Phaser.Physics.Arcade.Body;
   private observedFrames: Sample[] = [];
   private lastFrame = "";
+  private yoyoActor?: Phaser.GameObjects.Sprite;
+  private yoyoObservedFrames: string[] = [];
+  private lastYoyoFrame = "";
+  private sceneCreateCount = 0;
   private state: PreviewState = {
     loaded: false,
     atlasFrames: [],
@@ -118,6 +128,7 @@ class AssetPreviewScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.sceneCreateCount += 1;
     const mode = new URLSearchParams(window.location.search).get("mode");
     if (mode === "generated-tilemap") {
       this.createGeneratedTilemapPreview();
@@ -194,6 +205,12 @@ class AssetPreviewScene extends Phaser.Scene {
       this.observedFrames.push({ name, at: performance.now() });
       if (this.observedFrames.length > 128) this.observedFrames.shift();
     }
+    const yoyoName = this.yoyoActor?.frame.name;
+    if (yoyoName && yoyoName !== this.lastYoyoFrame) {
+      this.lastYoyoFrame = yoyoName;
+      this.yoyoObservedFrames.push(yoyoName);
+      if (this.yoyoObservedFrames.length > 64) this.yoyoObservedFrames.shift();
+    }
     const playerBottom = actor.body?.bottom ?? 0;
     const tilemap = this.state.tilemap
       ? { ...this.state.tilemap, playerBottom, freePlayerBottom: this.freeActorBody?.bottom ?? 0 }
@@ -207,7 +224,13 @@ class AssetPreviewScene extends Phaser.Scene {
   }
 
   private readState(): PreviewState {
-    return { ...this.state, observedFrames: [...this.observedFrames], playerBottom: this.actor?.body?.bottom ?? this.testActorBody?.bottom ?? 0 };
+    return {
+      ...this.state,
+      observedFrames: [...this.observedFrames],
+      yoyoObservedFrames: [...this.yoyoObservedFrames],
+      sceneCreateCount: this.sceneCreateCount,
+      playerBottom: this.actor?.body?.bottom ?? this.testActorBody?.bottom ?? 0,
+    };
   }
 
   private createGeneratedTilesetPreview(): void {
@@ -322,25 +345,32 @@ class AssetPreviewScene extends Phaser.Scene {
   private createPackedSpritesheetPreview(): void {
     const atlas = parseGeneratedSpritesheetAtlas(this.cache.json.get("packed-spritesheet-data"));
     if (!atlas) throw new Error("generated_spritesheet_atlas_invalid");
-    const animation = this.cache.json.get("packed-animation") as { key: string; fps: number; frames: string[] };
-    if (!animation || !/^[a-z][a-z0-9_-]{1,47}$/.test(animation.key) ||
-        !Number.isInteger(animation.fps) || animation.fps < 1 || animation.fps > 60 ||
-        !Array.isArray(animation.frames) || animation.frames.length < 1 ||
-        animation.frames.some((name) => !atlas.frameNames.includes(name))) {
+    const manifest = this.cache.json.get("packed-animation") as GeneratedAnimationManifest;
+    const animation = manifest?.animations?.find(({ key }) => key === "acceptance-run");
+    const yoyoAnimation = manifest?.animations?.find(({ key }) => key === "acceptance-yoyo");
+    if (!animation || !yoyoAnimation || animation.frameNames.some((name) => !atlas.frameNames.includes(name)) ||
+        yoyoAnimation.frameNames.some((name) => !atlas.frameNames.includes(name))) {
       throw new Error("generated_spritesheet_animation_invalid");
     }
+    this.yoyoObservedFrames = [];
+    this.lastYoyoFrame = "";
+    const registeredKeys = registerGeneratedAnimations(this, {
+      textureKey: "packed-spritesheet",
+      assetId: manifest.atlasAssetId,
+      sha256: manifest.atlasSha256,
+    }, manifest);
     const texture = this.textures.get("packed-spritesheet");
     const atlasFrames = texture.getFrameNames();
     const pivots = Object.fromEntries(atlasFrames.map((name) => {
       const frame = texture.get(name);
       return [name, { custom: frame.customPivot, x: frame.pivotX, y: frame.pivotY }];
     }));
-    this.anims.create({
-      key: animation.key,
-      frames: animation.frames.map((name) => ({ key: "packed-spritesheet", frame: name })),
-      frameRate: animation.fps,
-      repeat: -1,
-    });
+    const registered = this.anims.get(animation.key);
+    const yoyoRegistered = this.anims.get(yoyoAnimation.key);
+    const timing = getGeneratedAnimationTiming(animation);
+    this.yoyoActor = this.add.sprite(112, 22, "packed-spritesheet", yoyoAnimation.frameNames[0]);
+    this.yoyoActor.setScale(0.5);
+    playGeneratedAnimation(this.yoyoActor, yoyoAnimation.key);
 
     const metadata = parseGeneratedTilesetMetadata(this.cache.json.get("generated-map-tileset-metadata"));
     if (!metadata) throw new Error("generated_tilemap_tileset_metadata_invalid");
@@ -352,10 +382,10 @@ class AssetPreviewScene extends Phaser.Scene {
     const emptyTile = ground.layer.getTileAt(7, 4);
     const unselectedSolidTile = props.layer.getTileAt(7, 4);
     this.physics.world.setBounds(0, 0, generated.map.widthInPixels, generated.map.heightInPixels);
-    this.actor = this.physics.add.sprite(24, 38, "packed-spritesheet", animation.frames[0]);
+    this.actor = this.physics.add.sprite(24, 38, "packed-spritesheet", animation.frameNames[0]);
     this.actor.body?.setSize(10, 12).setOffset(3, 2);
     this.physics.add.collider(this.actor, ground.layer);
-    this.actor.play(animation.key);
+    playGeneratedAnimation(this.actor, animation.key);
     const freeActor = this.add.rectangle(120, 34, 10, 12, 0xf7768e);
     this.physics.add.existing(freeActor);
     this.freeActorBody = freeActor.body as Phaser.Physics.Arcade.Body;
@@ -365,14 +395,34 @@ class AssetPreviewScene extends Phaser.Scene {
       loaded: true,
       atlasFrames,
       pivots,
-      animationFrames: [...animation.frames],
-      animationFps: animation.fps,
+      animationFrames: [...animation.frameNames],
+      animationFps: animation.frameRate,
       observedFrames: this.observedFrames,
       playerBottom: this.actor.body?.bottom ?? 0,
       floorTop: floorTile?.pixelY ?? 0,
       collisionEnabled: floorTile?.collides === true,
       atlasValid: true,
       atlasTextureSize: { width: atlas.width, height: atlas.height },
+      animationRuntime: {
+        keys: [...registeredKeys],
+        frameOrder: registered.frames.map(({ textureFrame }) => String(textureFrame)),
+        frameDurationMs: timing.frameDurationMs,
+        totalDurationMs: timing.totalDurationMs,
+        repeat: registered.repeat,
+        yoyo: registered.yoyo,
+        delay: registered.delay,
+        repeatDelay: registered.repeatDelay,
+      },
+      yoyoRuntime: {
+        frameOrder: yoyoRegistered.frames.map(({ textureFrame }) => String(textureFrame)),
+        frameRate: yoyoRegistered.frameRate,
+        repeat: yoyoRegistered.repeat,
+        yoyo: yoyoRegistered.yoyo,
+        delay: yoyoRegistered.delay,
+        repeatDelay: yoyoRegistered.repeatDelay,
+      },
+      yoyoObservedFrames: [...this.yoyoObservedFrames],
+      sceneCreateCount: this.sceneCreateCount,
       tilemap: {
         width: generated.map.width,
         height: generated.map.height,
@@ -390,6 +440,7 @@ class AssetPreviewScene extends Phaser.Scene {
       },
     };
     window.__ASSET_PREVIEW_TEST__ = () => this.readState();
+    window.__ASSET_PREVIEW_RESTART__ = () => this.scene.restart();
   }
 }
 
@@ -407,4 +458,7 @@ const game = new Phaser.Game({
   fps: { target: 60, forceSetTimeOut: true },
 });
 
-game.events.once(Phaser.Core.Events.DESTROY, () => { delete window.__ASSET_PREVIEW_TEST__; });
+game.events.once(Phaser.Core.Events.DESTROY, () => {
+  delete window.__ASSET_PREVIEW_TEST__;
+  delete window.__ASSET_PREVIEW_RESTART__;
+});

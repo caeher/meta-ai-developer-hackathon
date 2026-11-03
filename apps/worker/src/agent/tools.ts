@@ -8,6 +8,8 @@ import {
   CreateTilemapInputJsonSchema,
   PackSpritesheetInputSchema,
   PackSpritesheetInputJsonSchema,
+  DefineAnimationInputSchema,
+  DefineAnimationInputJsonSchema,
   ImageGenerationBriefSchema,
   InspectAssetInputSchema,
   InspectAssetInputJsonSchema,
@@ -107,6 +109,13 @@ const definitions: ToolDefinition[] = [
     inputSchema: PackSpritesheetInputSchema,
     inputJsonSchema: PackSpritesheetInputJsonSchema as unknown as Record<string, unknown>,
     summary: (args) => "Empaquetar " + (Array.isArray(args.frames) ? args.frames.length : 0) + " frames en " + String(args.name),
+  },
+  {
+    name: "define_animation",
+    description: "Define versioned Phaser 3.90 animations using explicit frame names from a private same-project atlas. Validates the atlas hash and frames, then stores an immutable manifest; it never generates animation code or artwork.",
+    inputSchema: DefineAnimationInputSchema,
+    inputJsonSchema: DefineAnimationInputJsonSchema as unknown as Record<string, unknown>,
+    summary: (args) => `Definir ${Array.isArray(args.animations) ? args.animations.length : 0} animaciones desde atlas ${String(args.atlasAssetId)}`,
   },
   {
     name: "inspect_asset",

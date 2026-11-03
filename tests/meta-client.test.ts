@@ -239,6 +239,29 @@ describe("MetaClient streaming and tool replay", () => {
     expect(properties.maxTextureSize).toMatchObject({ minimum: 64, maximum: 4_096, default: 2_048 });
   });
 
+  it("expone define_animation con frames nombrados, únicos y opciones de reproducción limitadas", async () => {
+    const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_animation_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));
+    const animationTool = agentToolDefinitions.find(({ name }) => name === "define_animation");
+    expect(animationTool?.inputJsonSchema).toMatchObject({ $schema: "https://json-schema.org/draft/2020-12/schema", additionalProperties: false });
+    const client = new MetaClient(config(), fetchMock);
+    for await (const event of client.streamCode({ prompt: "Define the run animation.", tools: animationTool ? [animationTool] : [] })) {
+      expect(event.type).toBe("completed");
+    }
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      tools: Array<{ name: string; parameters: Record<string, unknown> }>;
+    };
+    expect(body.tools[0]?.name).toBe("define_animation");
+    const properties = body.tools[0]?.parameters.properties as Record<string, Record<string, unknown>>;
+    const animation = properties.animations?.items as Record<string, unknown>;
+    const animationProperties = animation.properties as Record<string, Record<string, unknown>>;
+    expect(animation.additionalProperties).toBe(false);
+    expect((animationProperties.frameNames as Record<string, unknown>).uniqueItems).toBe(true);
+    expect(animationProperties.frameRate).toMatchObject({ minimum: 1, maximum: 60, default: 8 });
+    expect(animationProperties.repeat).toMatchObject({ minimum: -1, maximum: 1_000, default: -1 });
+    expect(animationProperties.delayMs).toMatchObject({ minimum: 0, maximum: 60_000, default: 0 });
+  });
+
   it("sends the inspect_asset Draft-7 source exclusivity schema to the provider", async () => {
     const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));

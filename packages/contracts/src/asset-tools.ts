@@ -547,6 +547,166 @@ export type PackSpritesheetResult = z.infer<typeof PackSpritesheetResultSchema>;
 export type PackSpritesheetMetadata = z.infer<typeof PackSpritesheetMetadataSchema>;
 export type PackSpritesheetManifest = z.infer<typeof PackSpritesheetManifestSchema>;
 
+const DefineAnimationDefinitionSchema = z.object({
+  key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+  frameNames: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/)).min(1).max(256),
+  frameRate: z.number().min(1).max(60).optional().default(8),
+  repeat: z.number().int().min(-1).max(1_000).optional().default(-1),
+  yoyo: z.boolean().optional().default(false),
+  delayMs: z.number().int().min(0).max(60_000).optional().default(0),
+  repeatDelayMs: z.number().int().min(0).max(60_000).optional().default(0),
+}).strict().superRefine((animation, context) => {
+  if (new Set(animation.frameNames).size !== animation.frameNames.length) {
+    context.addIssue({ code: "custom", path: ["frameNames"], message: "Animation frame names must be unique." });
+  }
+});
+
+export const DefineAnimationInputSchema = z.object({
+  atlasAssetId: z.string().uuid(),
+  animations: z.array(DefineAnimationDefinitionSchema).min(1).max(32),
+}).strict().superRefine((input, context) => {
+  if (new Set(input.animations.map(({ key }) => key)).size !== input.animations.length) {
+    context.addIssue({ code: "custom", path: ["animations"], message: "Animation keys must be unique." });
+  }
+});
+
+const defineAnimationProperties = {
+  atlasAssetId: { type: "string", format: "uuid" },
+  animations: {
+    type: "array",
+    minItems: 1,
+    maxItems: 32,
+    items: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        key: { type: "string", pattern: "^[a-z][a-z0-9_-]{0,63}$" },
+        frameNames: {
+          type: "array", minItems: 1, maxItems: 256, uniqueItems: true,
+          items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$" },
+        },
+        frameRate: { type: "number", minimum: 1, maximum: 60, default: 8 },
+        repeat: { type: "integer", minimum: -1, maximum: 1_000, default: -1 },
+        yoyo: { type: "boolean", default: false },
+        delayMs: { type: "integer", minimum: 0, maximum: 60_000, default: 0 },
+        repeatDelayMs: { type: "integer", minimum: 0, maximum: 60_000, default: 0 },
+      },
+      required: ["key", "frameNames"],
+    },
+  },
+} as const;
+
+/** JSON Schema 2020-12 sent to Meta for define_animation. */
+export const DefineAnimationInputJsonSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  title: "DefineAnimationInput",
+  type: "object",
+  additionalProperties: false,
+  properties: defineAnimationProperties,
+  required: ["atlasAssetId", "animations"],
+} as const;
+
+const DefinedAnimationSchema = z.object({
+  key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+  frameNames: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/)).min(1).max(256),
+  frameRate: z.number().min(1).max(60),
+  repeat: z.number().int().min(-1).max(1_000),
+  yoyo: z.boolean(),
+  delayMs: z.number().int().min(0).max(60_000),
+  repeatDelayMs: z.number().int().min(0).max(60_000),
+}).strict().superRefine((animation, context) => {
+  if (new Set(animation.frameNames).size !== animation.frameNames.length) {
+    context.addIssue({ code: "custom", path: ["frameNames"], message: "Animation frame names must be unique." });
+  }
+});
+
+export const GeneratedAnimationManifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  animationManifestAssetId: z.string().uuid(),
+  atlasAssetId: z.string().uuid(),
+  atlasSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  animations: z.array(DefinedAnimationSchema).min(1).max(32),
+}).strict().superRefine((manifest, context) => {
+  if (new Set(manifest.animations.map(({ key }) => key)).size !== manifest.animations.length) {
+    context.addIssue({ code: "custom", path: ["animations"], message: "Animation keys must be unique." });
+  }
+});
+
+export const DefineAnimationResultSchema = z.object({
+  animationManifestAssetId: z.string().uuid(),
+  atlasAssetId: z.string().uuid(),
+  path: z.string().regex(/^assets\/generated\/animations\/[0-9a-f-]{36}\.json$/),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  animations: z.array(DefinedAnimationSchema).min(1).max(32),
+  registration: z.literal("phaser-anims-create"),
+}).strict().superRefine((result, context) => {
+  if (result.path !== `assets/generated/animations/${result.animationManifestAssetId}.json` ||
+      new Set(result.animations.map(({ key }) => key)).size !== result.animations.length) {
+    context.addIssue({ code: "custom", path: ["path"], message: "Animation manifest path and keys must be stable and unique." });
+  }
+});
+
+export const DefineAnimationResultJsonSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  title: "DefineAnimationResult",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    animationManifestAssetId: { type: "string", format: "uuid" },
+    atlasAssetId: { type: "string", format: "uuid" },
+    path: { type: "string", pattern: "^assets/generated/animations/[0-9a-f-]{36}\\.json$" },
+    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    animations: {
+      type: "array", minItems: 1, maxItems: 32,
+      items: {
+        type: "object", additionalProperties: false,
+        properties: {
+          key: { type: "string", pattern: "^[a-z][a-z0-9_-]{0,63}$" },
+          frameNames: { type: "array", minItems: 1, maxItems: 256, uniqueItems: true, items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$" } },
+          frameRate: { type: "number", minimum: 1, maximum: 60 },
+          repeat: { type: "integer", minimum: -1, maximum: 1_000 },
+          yoyo: { type: "boolean" },
+          delayMs: { type: "integer", minimum: 0, maximum: 60_000 },
+          repeatDelayMs: { type: "integer", minimum: 0, maximum: 60_000 },
+        },
+        required: ["key", "frameNames", "frameRate", "repeat", "yoyo", "delayMs", "repeatDelayMs"],
+      },
+    },
+    registration: { const: "phaser-anims-create" },
+  },
+  required: ["animationManifestAssetId", "atlasAssetId", "path", "sha256", "animations", "registration"],
+} as const;
+
+export const DefineAnimationManifestIndexSchema = z.object({
+  schemaVersion: z.literal(1),
+  animations: z.array(z.object({
+    animationManifestAssetId: z.string().uuid(),
+    atlasAssetId: z.string().uuid(),
+    atlasSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    path: z.string().regex(/^assets\/generated\/animations\/[0-9a-f-]{36}\.json$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    requestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    keys: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/)).min(1).max(32),
+  }).strict()).max(128),
+}).strict().superRefine((manifest, context) => {
+  const ids = new Set<string>();
+  const keys = new Set<string>();
+  for (const [index, entry] of manifest.animations.entries()) {
+    if (ids.has(entry.animationManifestAssetId) || entry.path !== `assets/generated/animations/${entry.animationManifestAssetId}.json` ||
+        new Set(entry.keys).size !== entry.keys.length || entry.keys.some((key) => keys.has(key))) {
+      context.addIssue({ code: "custom", path: ["animations", index], message: "Animation manifests need unique IDs and keys with ID-derived paths." });
+    }
+    ids.add(entry.animationManifestAssetId);
+    entry.keys.forEach((key) => keys.add(key));
+  }
+});
+
+export type DefineAnimationInput = z.infer<typeof DefineAnimationInputSchema>;
+export type DefinedAnimation = z.infer<typeof DefinedAnimationSchema>;
+export type GeneratedAnimationManifest = z.infer<typeof GeneratedAnimationManifestSchema>;
+export type DefineAnimationResult = z.infer<typeof DefineAnimationResultSchema>;
+export type DefineAnimationManifestIndex = z.infer<typeof DefineAnimationManifestIndexSchema>;
+
 export const ASSET_INSPECTION_MAX_REPORT_BYTES = 24_000;
 export const ASSET_INSPECTION_MAX_FINDINGS = 64;
 export const ASSET_INSPECTION_MAX_JSON_BYTES = 1_048_576;

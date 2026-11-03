@@ -41,6 +41,8 @@ import type { CreateTilemapToolContext } from "../assets/create-tilemap";
 import { TilemapToolError } from "../assets/create-tilemap";
 import type { PackSpritesheetToolContext } from "../assets/pack-spritesheet";
 import { SpritesheetToolError } from "../assets/pack-spritesheet";
+import type { DefineAnimationToolContext } from "../assets/define-animation";
+import { DefineAnimationToolError } from "../assets/define-animation";
 import { imageResponseTokenUsage } from "../assets/image-generator";
 import { ImagePipelineError } from "../assets/image-pipeline";
 import { captureGameCheckpoint, createGameSpec, decodeGameCheckpoint, gameSpecFile, gameSpecInstructions, restoreGameCheckpoint, type GameCheckpoint, GAME_SPEC_PATH } from "../pipelines/generate-game";
@@ -70,6 +72,7 @@ export interface AgentOrchestratorOptions {
   tilesetCreator?: (args: Record<string, unknown>, context: CreateTilesetToolContext) => Promise<unknown>;
   tilemapCreator?: (args: Record<string, unknown>, context: CreateTilemapToolContext) => Promise<unknown>;
   spritesheetPacker?: (args: Record<string, unknown>, context: PackSpritesheetToolContext) => Promise<unknown>;
+  animationDefiner?: (args: Record<string, unknown>, context: DefineAnimationToolContext) => Promise<unknown>;
   versions?: {
     captureVerifiedRun(input: {
       identity: VerifiedIdentityContext;
@@ -560,6 +563,9 @@ async function executeCachedTool(
     } else if (call.name === "pack_spritesheet") {
       if (!options.spritesheetPacker) throw new RunProcessingError("spritesheet_packing_unavailable", false, state.usage);
       result = await options.spritesheetPacker(call.args, { claim, callId: call.callId, projectId, signal: state.signal });
+    } else if (call.name === "define_animation") {
+      if (!options.animationDefiner) throw new RunProcessingError("animation_definition_unavailable", false, state.usage);
+      result = await options.animationDefiner(call.args, { claim, callId: call.callId, projectId, signal: state.signal });
     } else if (call.name === "inspect_asset") {
       if (!options.assetInspector) throw new RunProcessingError("asset_inspection_unavailable", false, state.usage);
       result = await options.assetInspector(call.args, { claim, projectId, signal: state.signal });
@@ -569,7 +575,7 @@ async function executeCachedTool(
   } catch (error) {
     if (state.signal.aborted) throw error;
     if (error instanceof RunProcessingError) throw error;
-    if ((call.name === "inspect_asset" || call.name === "edit_sprite" || call.name === "create_tileset" || call.name === "create_tilemap" || call.name === "pack_spritesheet") && error instanceof OwnedResourceNotFoundError) {
+    if ((call.name === "inspect_asset" || call.name === "edit_sprite" || call.name === "create_tileset" || call.name === "create_tilemap" || call.name === "pack_spritesheet" || call.name === "define_animation") && error instanceof OwnedResourceNotFoundError) {
       throw new RunProcessingError("asset_not_found", false, state.usage);
     }
     if (call.name === "create_tileset" && error instanceof TilesetToolError) {
@@ -579,6 +585,9 @@ async function executeCachedTool(
       throw new RunProcessingError(error.code, false, state.usage);
     }
     if (call.name === "pack_spritesheet" && error instanceof SpritesheetToolError) {
+      throw new RunProcessingError(error.code, false, state.usage);
+    }
+    if (call.name === "define_animation" && error instanceof DefineAnimationToolError) {
       throw new RunProcessingError(error.code, false, state.usage);
     }
     if ((call.name === "generate_image" || call.name === "edit_sprite") && error instanceof ImagePipelineError) {
