@@ -23,6 +23,16 @@ El worker copia el PNG normalizado a `public/assets/generated/<uuid>.png` median
 
 `visualReview: "pending-in-live-preview"` se persiste junto al asset y la hoja de contacto. La automatización registra estructura, alpha, frames y heurística de seams; la aprobación artística humana debe realizarse viendo la preview en contexto. No se etiqueta un asset como aprobado a partir del prompt, la hoja de contacto o la prueba de carga de Phaser.
 
+## Atlas de spritesheets (#34)
+
+pack_spritesheet extrae únicamente frames de PNG privados listados en el manifest del mismo proyecto. Antes de recortar consulta inspect_asset para decodificar la imagen y comprobar dimensiones, checksum y grilla contra la metadata registrada. Las rutas y URLs no vienen del modelo. El índice se resuelve en orden row-major y debe existir; cada fuente permanece inmutable.
+
+El shelf packer conserva el orden de entrada y los píxeles RGBA; no rota, recorta ni escala. paddingPixels es el espacio transparente entre bloques y extrudePixels copia el borde y las esquinas RGBA de cada frame hacia fuera. Cada frame Phaser usa un pivote explícito (0.5, 1). El ancho objetivo determinista parte del área total y del frame más ancho; si ese layout no cabe, reintenta con el máximo solicitado. Rechaza dimensiones superiores a maxTextureSize, 4.096 px por lado, 40 MP o 8 MiB antes de publicar metadata.
+
+La operación deriva dos IDs estables de runId/callId, sube PNG y JSON Hash privados y solo entonces escribe ambos archivos y un manifest del proyecto. Los metadatos versionados conservan rectángulos, SHA-256 de textura y atlas, IDs/índices/checksum de cada fuente, pivotes, engine y parámetros de empaquetado. Si falla una escritura, restaura el manifest y borra únicamente objetos y archivos creados por esa llamada. Un reintento con los mismos argumentos y callId devuelve el mismo resultado.
+
+La suite offline compara cada recorte RGBA con su PNG fuente, cubre 256 frames, entradas inválidas, ownership, límites, replay y compensación. La aceptación de Compose toma fuentes y resultados de PostgreSQL/Silo y Playwright carga el atlas con Phaser 3.90, comprueba coordenadas/pivotes y el ciclo de animación, y además vuelve a probar render y colisión del tilemap guardado por #33.
+
 ## Configuración y verificación
 
 No hay nuevas claves. `META_MODEL_IMAGE`, `S3_*` y `USER_DAILY_IMAGE_LIMIT` ya están definidos en `.env.example`. El worker habilitado necesita S3 privado y el runtime; `RUNS_ENABLED=false` y `SANDBOX_DRIVER=disabled` siguen cerrados por defecto. La llamada `npm run meta:smoke -- --image` puede facturar una imagen y es opt-in; la suite local usa fixtures y no lee `.env.local`.

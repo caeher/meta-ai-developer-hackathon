@@ -208,6 +208,37 @@ describe("MetaClient streaming and tool replay", () => {
     expect(cell?.additionalProperties).toBe(false);
   });
 
+  it("expone pack_spritesheet con contrato 2020-12 y límites de extracción configurables", async () => {
+    const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_spritesheet_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));
+    const packTool = agentToolDefinitions.find(({ name }) => name === "pack_spritesheet");
+    expect(packTool?.inputJsonSchema).toBeDefined();
+    expect((packTool?.inputJsonSchema as Record<string, unknown>).$schema).toBe("https://json-schema.org/draft/2020-12/schema");
+    const client = new MetaClient(config(), fetchMock);
+    for await (const event of client.streamCode({ prompt: "Pack the approved animation frames.", tools: packTool ? [packTool] : [] })) {
+      expect(event.type).toBe("completed");
+    }
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      tools: Array<{ name: string; parameters: Record<string, unknown> }>;
+    };
+    const schema = body.tools[0]?.parameters;
+    expect(body.tools[0]?.name).toBe("pack_spritesheet");
+    expect(schema).toMatchObject({
+      additionalProperties: false,
+      required: ["name", "frames"],
+    });
+    const properties = schema?.properties as Record<string, Record<string, unknown>>;
+    const frame = properties.frames?.items as Record<string, unknown>;
+    expect(frame.required).toEqual(["sourceAssetId", "frameName"]);
+    expect(frame.additionalProperties).toBe(false);
+    expect((frame.properties as Record<string, Record<string, unknown>>).sourceFrameIndex).toMatchObject({
+      minimum: 0, maximum: 63, default: 0,
+    });
+    expect(properties.paddingPixels).toMatchObject({ minimum: 0, maximum: 16, default: 2 });
+    expect(properties.extrudePixels).toMatchObject({ minimum: 0, maximum: 4, default: 0 });
+    expect(properties.maxTextureSize).toMatchObject({ minimum: 64, maximum: 4_096, default: 2_048 });
+  });
+
   it("sends the inspect_asset Draft-7 source exclusivity schema to the provider", async () => {
     const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));

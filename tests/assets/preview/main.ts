@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { addGeneratedTileset, applyGeneratedTilesetCollisions, parseGeneratedTilesetMetadata } from "../../../packages/game-templates/phaser/src/game/tilesets";
 import { createGeneratedTilemap } from "../../../packages/game-templates/phaser/src/game/tilemaps";
+import { parseGeneratedSpritesheetAtlas } from "../../../packages/game-templates/phaser/src/game/generated-assets";
 
 type Sample = Readonly<{ name: string; at: number }>;
 type PreviewState = Readonly<{
@@ -38,6 +39,8 @@ type PreviewState = Readonly<{
     freePlayerBottom: number;
   };
   error?: string;
+  atlasValid?: boolean;
+  atlasTextureSize?: { width: number; height: number };
 }>;
 
 declare global {
@@ -84,6 +87,18 @@ class AssetPreviewScene extends Phaser.Scene {
       });
       return;
     }
+    if (mode === "packed-spritesheet") {
+      this.load.atlas("packed-spritesheet", "/fixtures/generated-spritesheet.png", "/fixtures/generated-spritesheet.json");
+      this.load.json("packed-spritesheet-data", "/fixtures/generated-spritesheet.json");
+      this.load.json("packed-animation", "/fixtures/generated-animation.json");
+      this.load.tilemapTiledJSON("generated-map", "/fixtures/generated-tilemap.json");
+      this.load.image("generated-map-image", "/fixtures/generated-map-tileset.png");
+      this.load.json("generated-map-tileset-metadata", "/fixtures/generated-map-tileset.json");
+      this.load.once("loaderror", (file: Phaser.Loader.File) => {
+        this.state = { ...this.state, error: "load_error:" + file.key };
+      });
+      return;
+    }
     if (mode === "generated-tileset") {
       this.load.image("generated-tileset", "/fixtures/generated-tileset.png");
       this.load.json("generated-tileset-metadata", "/fixtures/generated-tileset.json");
@@ -106,6 +121,10 @@ class AssetPreviewScene extends Phaser.Scene {
     const mode = new URLSearchParams(window.location.search).get("mode");
     if (mode === "generated-tilemap") {
       this.createGeneratedTilemapPreview();
+      return;
+    }
+    if (mode === "packed-spritesheet") {
+      this.createPackedSpritesheetPreview();
       return;
     }
     if (mode === "generated-tileset") {
@@ -175,7 +194,16 @@ class AssetPreviewScene extends Phaser.Scene {
       this.observedFrames.push({ name, at: performance.now() });
       if (this.observedFrames.length > 128) this.observedFrames.shift();
     }
-    this.state = { ...this.state, observedFrames: this.observedFrames, playerBottom: actor.body?.bottom ?? 0 };
+    const playerBottom = actor.body?.bottom ?? 0;
+    const tilemap = this.state.tilemap
+      ? { ...this.state.tilemap, playerBottom, freePlayerBottom: this.freeActorBody?.bottom ?? 0 }
+      : undefined;
+    this.state = {
+      ...this.state,
+      observedFrames: this.observedFrames,
+      playerBottom,
+      ...(tilemap ? { tilemap } : {}),
+    };
   }
 
   private readState(): PreviewState {
@@ -285,6 +313,79 @@ class AssetPreviewScene extends Phaser.Scene {
         emptyTileIndex: emptyTile?.index ?? -1,
         unselectedSolidTileCollides: unselectedSolidTile?.collides === true,
         playerBottom: this.testActorBody.bottom,
+        freePlayerBottom: this.freeActorBody.bottom,
+      },
+    };
+    window.__ASSET_PREVIEW_TEST__ = () => this.readState();
+  }
+
+  private createPackedSpritesheetPreview(): void {
+    const atlas = parseGeneratedSpritesheetAtlas(this.cache.json.get("packed-spritesheet-data"));
+    if (!atlas) throw new Error("generated_spritesheet_atlas_invalid");
+    const animation = this.cache.json.get("packed-animation") as { key: string; fps: number; frames: string[] };
+    if (!animation || !/^[a-z][a-z0-9_-]{1,47}$/.test(animation.key) ||
+        !Number.isInteger(animation.fps) || animation.fps < 1 || animation.fps > 60 ||
+        !Array.isArray(animation.frames) || animation.frames.length < 1 ||
+        animation.frames.some((name) => !atlas.frameNames.includes(name))) {
+      throw new Error("generated_spritesheet_animation_invalid");
+    }
+    const texture = this.textures.get("packed-spritesheet");
+    const atlasFrames = texture.getFrameNames();
+    const pivots = Object.fromEntries(atlasFrames.map((name) => {
+      const frame = texture.get(name);
+      return [name, { custom: frame.customPivot, x: frame.pivotX, y: frame.pivotY }];
+    }));
+    this.anims.create({
+      key: animation.key,
+      frames: animation.frames.map((name) => ({ key: "packed-spritesheet", frame: name })),
+      frameRate: animation.fps,
+      repeat: -1,
+    });
+
+    const metadata = parseGeneratedTilesetMetadata(this.cache.json.get("generated-map-tileset-metadata"));
+    if (!metadata) throw new Error("generated_tilemap_tileset_metadata_invalid");
+    const generated = createGeneratedTilemap(this, "generated-map", metadata, "generated-map-image");
+    const ground = generated.layers.find(({ name }) => name === "ground");
+    const props = generated.layers.find(({ name }) => name === "props");
+    if (!ground || !props) throw new Error("generated_tilemap_required_layer_missing");
+    const floorTile = ground.layer.getTileAt(1, 4);
+    const emptyTile = ground.layer.getTileAt(7, 4);
+    const unselectedSolidTile = props.layer.getTileAt(7, 4);
+    this.physics.world.setBounds(0, 0, generated.map.widthInPixels, generated.map.heightInPixels);
+    this.actor = this.physics.add.sprite(24, 38, "packed-spritesheet", animation.frames[0]);
+    this.actor.body?.setSize(10, 12).setOffset(3, 2);
+    this.physics.add.collider(this.actor, ground.layer);
+    this.actor.play(animation.key);
+    const freeActor = this.add.rectangle(120, 34, 10, 12, 0xf7768e);
+    this.physics.add.existing(freeActor);
+    this.freeActorBody = freeActor.body as Phaser.Physics.Arcade.Body;
+    this.freeActorBody.setSize(10, 12).setOffset(0, 0);
+    this.physics.add.collider(freeActor, props.layer);
+    this.state = {
+      loaded: true,
+      atlasFrames,
+      pivots,
+      animationFrames: [...animation.frames],
+      animationFps: animation.fps,
+      observedFrames: this.observedFrames,
+      playerBottom: this.actor.body?.bottom ?? 0,
+      floorTop: floorTile?.pixelY ?? 0,
+      collisionEnabled: floorTile?.collides === true,
+      atlasValid: true,
+      atlasTextureSize: { width: atlas.width, height: atlas.height },
+      tilemap: {
+        width: generated.map.width,
+        height: generated.map.height,
+        tileSize: generated.map.tileWidth,
+        firstgid: generated.tileset.firstgid,
+        layerNames: generated.layers.map(({ name }) => name),
+        layerVisibility: generated.layers.map(({ visible }) => visible),
+        layerCollision: generated.layers.map(({ collides }) => collides),
+        backgroundIndices: [],
+        floorTileIndex: floorTile?.index ?? -999,
+        emptyTileIndex: emptyTile?.index ?? -1,
+        unselectedSolidTileCollides: unselectedSolidTile?.collides === true,
+        playerBottom: this.actor.body?.bottom ?? 0,
         freePlayerBottom: this.freeActorBody.bottom,
       },
     };

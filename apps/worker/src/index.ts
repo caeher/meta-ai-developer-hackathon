@@ -13,6 +13,7 @@ import { createGeneratedImageTool } from "./assets/image-generator";
 import { createEditSpriteTool } from "./assets/edit-sprite";
 import { createCreateTilesetTool } from "./assets/create-tileset";
 import { createCreateTilemapTool } from "./assets/create-tilemap";
+import { createPackSpritesheetTool } from "./assets/pack-spritesheet";
 import { createInspectAssetTool } from "./assets/inspect-asset";
 import { pendingOrchestratorHandler } from "./handler";
 import { removeProjectRunJobs, startRunWorkerService } from "./queue";
@@ -174,6 +175,7 @@ async function createEnabledAgentHandler() {
   });
   const tilesetCreator = createCreateTilesetTool({ storage, sandbox, identity: store.identity });
   const tilemapCreator = createCreateTilemapTool({ storage, sandbox, identity: store.identity });
+  const spritesheetPacker = createPackSpritesheetTool({ storage, sandbox, identity: store.identity });
   const assetInspector = createInspectAssetTool({ sandbox, storage, identity: store.identity });
   return createAgentRunHandler({
     store,
@@ -190,6 +192,7 @@ async function createEnabledAgentHandler() {
     spriteEditor,
     tilesetCreator,
     tilemapCreator,
+    spritesheetPacker,
     assetInspector,
   });
 }

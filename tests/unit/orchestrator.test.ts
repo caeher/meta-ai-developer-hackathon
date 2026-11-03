@@ -371,6 +371,46 @@ describe("orquestador de runs", () => {
     expect(result.usage?.images).toBe(0);
   });
 
+  it("ejecuta pack_spritesheet como tool durable sin consumir cuota de Meta", async () => {
+    const spritesheetCall = codeCall("call-pack-spritesheet", "pack_spritesheet", {
+      name: "hero_sheet",
+      frames: [
+        { sourceAssetId: "10000000-0000-4000-8000-000000000171", sourceFrameIndex: 0, frameName: "run_0" },
+        { sourceAssetId: "10000000-0000-4000-8000-000000000171", sourceFrameIndex: 1, frameName: "run_1" },
+      ],
+      paddingPixels: 2,
+      extrudePixels: 1,
+      maxTextureSize: 512,
+    });
+    const output = {
+      atlasAssetId: "10000000-0000-4000-8000-000000000172",
+      textureAssetId: "10000000-0000-4000-8000-000000000173",
+      sha256: "a".repeat(64),
+    };
+    const packer = vi.fn(async (_args: Record<string, unknown>, context: { callId: string; projectId: string }) => {
+      expect(context).toMatchObject({ callId: spritesheetCall.callId, projectId: run.projectId });
+      return output;
+    });
+    const response = (id: string) => completion([
+      { kind: "tool_call", callId: spritesheetCall.callId, name: spritesheetCall.name, arguments: spritesheetCall.arguments },
+      { kind: "message", role: "assistant", text: "El atlas quedó listo." },
+    ], id, 10);
+    const { options, store } = makeOptions({
+      streams: [[spritesheetCall, response("response-spritesheet-first")], [spritesheetCall, response("response-spritesheet-repeat")], [completion([], "response-spritesheet-final", 10)]],
+    });
+    options.spritesheetPacker = packer;
+
+    const result = await createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    });
+
+    expect(packer).toHaveBeenCalledOnce();
+    expect(store.events.filter((event) => event.type === "agent.tool_completed" && event.payload.callId === spritesheetCall.callId)).toHaveLength(1);
+    expect(result.usage?.images).toBe(0);
+  });
+
   it("no reintenta una edición con reserva durable sin respuesta de Meta", async () => {
     const editCall = codeCall("call-edit-ambiguous", "edit_sprite", {
       sourceAssetId: "10000000-0000-4000-8000-000000000141",

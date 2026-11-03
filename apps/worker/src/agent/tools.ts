@@ -6,6 +6,8 @@ import {
   CreateTilesetInputJsonSchema,
   CreateTilemapInputSchema,
   CreateTilemapInputJsonSchema,
+  PackSpritesheetInputSchema,
+  PackSpritesheetInputJsonSchema,
   ImageGenerationBriefSchema,
   InspectAssetInputSchema,
   InspectAssetInputJsonSchema,
@@ -98,6 +100,13 @@ const definitions: ToolDefinition[] = [
     inputSchema: CreateTilemapInputSchema,
     inputJsonSchema: CreateTilemapInputJsonSchema as unknown as Record<string, unknown>,
     summary: (args) => `Crear mapa ${String(args.name)} (${String(args.width)}×${String(args.height)})`,
+  },
+  {
+    name: "pack_spritesheet",
+    description: "Extract approved frames from private same-project generated PNG assets, pack them in input order without rotation, trim, or scaling, and write a deterministic Phaser 3.90 JSON Hash atlas with source provenance.",
+    inputSchema: PackSpritesheetInputSchema,
+    inputJsonSchema: PackSpritesheetInputJsonSchema as unknown as Record<string, unknown>,
+    summary: (args) => "Empaquetar " + (Array.isArray(args.frames) ? args.frames.length : 0) + " frames en " + String(args.name),
   },
   {
     name: "inspect_asset",

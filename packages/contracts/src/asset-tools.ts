@@ -348,6 +348,205 @@ export type CreateTilemapInput = z.infer<typeof CreateTilemapInputSchema>;
 export type CreateTilemapResult = z.infer<typeof CreateTilemapResultSchema>;
 export type CreateTilemapManifest = z.infer<typeof CreateTilemapManifestSchema>;
 
+const PackSpritesheetFrameInputSchema = z.object({
+  sourceAssetId: z.string().uuid(),
+  sourceFrameIndex: z.number().int().min(0).max(63).optional().default(0),
+  frameName: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
+}).strict();
+
+const PackSpritesheetInputBaseSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_-]{1,47}$/),
+  frames: z.array(PackSpritesheetFrameInputSchema).min(1).max(256),
+  paddingPixels: z.number().int().min(0).max(16).optional().default(2),
+  extrudePixels: z.number().int().min(0).max(4).optional().default(0),
+  maxTextureSize: z.number().int().min(64).max(4_096).optional().default(2_048),
+}).strict();
+
+export const PackSpritesheetInputSchema = PackSpritesheetInputBaseSchema.superRefine((input, context) => {
+  const names = new Set<string>();
+  for (const [index, frame] of input.frames.entries()) {
+    if (names.has(frame.frameName)) {
+      context.addIssue({ code: "custom", path: ["frames", index, "frameName"], message: "Frame names must be unique." });
+    }
+    names.add(frame.frameName);
+  }
+});
+
+/** JSON Schema 2020-12 sent to Meta for pack_spritesheet. */
+export const PackSpritesheetInputJsonSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  title: "PackSpritesheetInput",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    name: { type: "string", pattern: "^[a-z][a-z0-9_-]{1,47}$" },
+    frames: {
+      type: "array",
+      minItems: 1,
+      maxItems: 256,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          sourceAssetId: { type: "string", format: "uuid" },
+          sourceFrameIndex: { type: "integer", minimum: 0, maximum: 63, default: 0 },
+          frameName: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$" },
+        },
+        required: ["sourceAssetId", "frameName"],
+      },
+    },
+    paddingPixels: { type: "integer", minimum: 0, maximum: 16, default: 2 },
+    extrudePixels: { type: "integer", minimum: 0, maximum: 4, default: 0 },
+    maxTextureSize: { type: "integer", minimum: 64, maximum: 4_096, default: 2_048 },
+  },
+  required: ["name", "frames"],
+} as const;
+
+const PackSpritesheetResultFrameSchema = z.object({
+  frameName: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  width: z.number().int().min(1).max(2_048),
+  height: z.number().int().min(1).max(2_048),
+}).strict();
+
+export const PackSpritesheetResultSchema = z.object({
+  atlasAssetId: z.string().uuid(),
+  textureAssetId: z.string().uuid(),
+  atlasPath: z.string().regex(/^assets\/generated\/atlases\/[0-9a-f-]{36}\.json$/),
+  imagePath: z.string().regex(/^assets\/generated\/atlases\/[0-9a-f-]{36}\.png$/),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  width: z.number().int().min(1).max(4_096),
+  height: z.number().int().min(1).max(4_096),
+  format: z.literal("phaser-json-hash"),
+  frames: z.array(PackSpritesheetResultFrameSchema).min(1).max(256),
+}).strict().superRefine((result, context) => {
+  if (result.atlasPath !== `assets/generated/atlases/${result.atlasAssetId}.json` ||
+      result.imagePath !== `assets/generated/atlases/${result.textureAssetId}.png` ||
+      result.atlasAssetId === result.textureAssetId) {
+    context.addIssue({ code: "custom", path: ["atlasPath"], message: "Spritesheet paths must be derived from their distinct asset IDs." });
+  }
+  const names = new Set<string>();
+  for (const [index, frame] of result.frames.entries()) {
+    if (names.has(frame.frameName)) {
+      context.addIssue({ code: "custom", path: ["frames", index, "frameName"], message: "Frame names must be unique." });
+    }
+    names.add(frame.frameName);
+    if (frame.x + frame.width > result.width || frame.y + frame.height > result.height) {
+      context.addIssue({ code: "custom", path: ["frames", index], message: "Frame rectangle must be inside the texture." });
+    }
+  }
+});
+
+export const PackSpritesheetResultJsonSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  title: "PackSpritesheetResult",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    atlasAssetId: { type: "string", format: "uuid" },
+    textureAssetId: { type: "string", format: "uuid" },
+    atlasPath: { type: "string", pattern: "^assets/generated/atlases/[0-9a-f-]{36}\\.json$" },
+    imagePath: { type: "string", pattern: "^assets/generated/atlases/[0-9a-f-]{36}\\.png$" },
+    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    width: { type: "integer", minimum: 1, maximum: 4_096 },
+    height: { type: "integer", minimum: 1, maximum: 4_096 },
+    format: { const: "phaser-json-hash" },
+    frames: {
+      type: "array",
+      minItems: 1,
+      maxItems: 256,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          frameName: { type: "string" },
+          x: { type: "integer", minimum: 0 },
+          y: { type: "integer", minimum: 0 },
+          width: { type: "integer", minimum: 1 },
+          height: { type: "integer", minimum: 1 },
+        },
+        required: ["frameName", "x", "y", "width", "height"],
+      },
+    },
+  },
+  required: ["atlasAssetId", "textureAssetId", "atlasPath", "imagePath", "sha256", "width", "height", "format", "frames"],
+} as const;
+
+export const PackSpritesheetMetadataSchema = z.object({
+  schemaVersion: z.literal(1),
+  engine: z.literal("phaser-3.90.0"),
+  format: z.literal("phaser-json-hash"),
+  atlasAssetId: z.string().uuid(),
+  textureAssetId: z.string().uuid(),
+  name: z.string().regex(/^[a-z][a-z0-9_-]{1,47}$/),
+  atlasPath: z.string().regex(/^assets\/generated\/atlases\/[0-9a-f-]{36}\.json$/),
+  imagePath: z.string().regex(/^assets\/generated\/atlases\/[0-9a-f-]{36}\.png$/),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  atlasSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  width: z.number().int().min(1).max(4_096),
+  height: z.number().int().min(1).max(4_096),
+  paddingPixels: z.number().int().min(0).max(16),
+  extrudePixels: z.number().int().min(0).max(4),
+  frames: z.array(z.object({
+    frameName: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
+    x: z.number().int().min(0),
+    y: z.number().int().min(0),
+    width: z.number().int().min(1).max(2_048),
+    height: z.number().int().min(1).max(2_048),
+    pivot: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
+    sourceAssetId: z.string().uuid(),
+    sourceFrameIndex: z.number().int().min(0).max(63),
+    sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict()).min(1).max(256),
+}).strict().superRefine((metadata, context) => {
+  if (metadata.atlasPath !== `assets/generated/atlases/${metadata.atlasAssetId}.json` ||
+      metadata.imagePath !== `assets/generated/atlases/${metadata.textureAssetId}.png` ||
+      metadata.atlasAssetId === metadata.textureAssetId ||
+      metadata.frames.some((frame) => frame.x + frame.width > metadata.width || frame.y + frame.height > metadata.height)) {
+    context.addIssue({ code: "custom", path: ["frames"], message: "Spritesheet metadata paths or frame bounds are inconsistent." });
+  }
+  if (new Set(metadata.frames.map(({ frameName }) => frameName)).size !== metadata.frames.length) {
+    context.addIssue({ code: "custom", path: ["frames"], message: "Spritesheet metadata frame names must be unique." });
+  }
+});
+
+export const PackSpritesheetManifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  spritesheets: z.array(z.object({
+    atlasAssetId: z.string().uuid(),
+    textureAssetId: z.string().uuid(),
+    name: z.string().regex(/^[a-z][a-z0-9_-]{1,47}$/),
+    atlasPath: z.string().regex(/^assets\/generated\/atlases\/[0-9a-f-]{36}\.json$/),
+    imagePath: z.string().regex(/^assets\/generated\/atlases\/[0-9a-f-]{36}\.png$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    requestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    width: z.number().int().min(1).max(4_096),
+    height: z.number().int().min(1).max(4_096),
+    frameCount: z.number().int().min(1).max(256),
+  }).strict()).max(128),
+}).strict().superRefine((manifest, context) => {
+  const atlasIds = new Set<string>();
+  const textureIds = new Set<string>();
+  const names = new Set<string>();
+  for (const [index, entry] of manifest.spritesheets.entries()) {
+    if (entry.atlasAssetId === entry.textureAssetId ||
+        entry.atlasPath !== "assets/generated/atlases/" + entry.atlasAssetId + ".json" ||
+        entry.imagePath !== "assets/generated/atlases/" + entry.textureAssetId + ".png" ||
+        atlasIds.has(entry.atlasAssetId) || textureIds.has(entry.textureAssetId) || names.has(entry.name)) {
+      context.addIssue({ code: "custom", path: ["spritesheets", index], message: "Spritesheet manifest entries need unique IDs and names with ID-derived paths." });
+    }
+    atlasIds.add(entry.atlasAssetId);
+    textureIds.add(entry.textureAssetId);
+    names.add(entry.name);
+  }
+});
+
+export type PackSpritesheetInput = z.infer<typeof PackSpritesheetInputSchema>;
+export type PackSpritesheetResult = z.infer<typeof PackSpritesheetResultSchema>;
+export type PackSpritesheetMetadata = z.infer<typeof PackSpritesheetMetadataSchema>;
+export type PackSpritesheetManifest = z.infer<typeof PackSpritesheetManifestSchema>;
+
 export const ASSET_INSPECTION_MAX_REPORT_BYTES = 24_000;
 export const ASSET_INSPECTION_MAX_FINDINGS = 64;
 export const ASSET_INSPECTION_MAX_JSON_BYTES = 1_048_576;
