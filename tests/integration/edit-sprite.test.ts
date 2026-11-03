@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { inArray } from "drizzle-orm";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -86,6 +87,16 @@ describe.skipIf(!integrationEnabled)("edit_sprite con PostgreSQL, Silo y ownersh
     const sourceAfter = await storage.read(identityA, sourceA.id);
     const output = await storage.read(identityA, result.assetId);
     created.push({ identity: identityA, id: result.assetId });
+    const previewArtifactPath = process.env.ISSUE_31_ASSET_PREVIEW_ARTIFACT;
+    if (previewArtifactPath) {
+      await writeFile(previewArtifactPath, JSON.stringify({
+        assetId: result.assetId,
+        sha256: result.sha256,
+        sourceSha256: sourceA.sha256,
+        bodyBase64: Buffer.from(output.body).toString("base64"),
+        metadata: output.asset.metadata,
+      }), { encoding: "utf8", flag: "wx" });
+    }
     const contactSheetAssetId = (output.asset.metadata?.qa as { contactSheetAssetId?: unknown } | undefined)?.contactSheetAssetId;
     if (typeof contactSheetAssetId === "string") created.push({ identity: identityA, id: contactSheetAssetId });
 

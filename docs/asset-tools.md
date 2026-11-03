@@ -24,6 +24,8 @@ El worker recorta el frame exacto y lo envía a `MetaClient.editImage` como `inp
 
 `callId` reutiliza el resultado durable si la tool ya terminó. Si el POST de imagen queda ambiguo, el run conserva la reserva y falla cerrado; el orquestador no vuelve a llamar al proveedor ni informa éxito. El PNG debe pasar inspección y verse en la preview antes de que el usuario acepte el cambio.
 
+La aceptacion `npm run test:assets:acceptance` prepara PostgreSQL y Silo temporales en el Compose local, ejecuta `edit_sprite` con Meta mock y almacena source y derivacion con el storage privado real. Luego Playwright carga en la plantilla Phaser los bytes recuperados de Silo y valida atlas, pivotes, orden/FPS, tiles, colisiones y captura; el script elimina sus recursos temporales al terminar.
+
 ## Contratos
 
 Los tipos Zod compartidos viven en `packages/contracts/src/asset-tools.ts`. El mismo módulo exporta JSON Schema Draft-7 de entrada y salida; el adaptador de tools de Meta transmite el schema explícito con `oneOf` para excluir solicitudes que mezclen ID y ruta. Zod se vuelve a ejecutar cuando el worker prepara cada llamada.

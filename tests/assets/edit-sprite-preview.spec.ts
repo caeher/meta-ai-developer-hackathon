@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { expect, test } from "playwright/test";
@@ -95,7 +95,7 @@ test("edit_sprite result loads in Phaser and passes atlas, animation and tile pr
     },
     async delete(_providedIdentity: VerifiedIdentityContext, assetId: string) { assets.delete(assetId); },
   };
-  const editedPixels = { r: 25, g: 170, b: 160 };
+  let editedPixels = { r: 25, g: 170, b: 160 };
   const metaImage = await makeFrame(editedPixels);
   const expectedReference = await cropFrame(sourceBytes, 1);
   const editImage = async (_prompt: string, reference: { mimeType: "image/png"; bytes: Uint8Array }, _options: { signal: AbortSignal }): Promise<MetaImageResult> => {
@@ -118,6 +118,37 @@ test("edit_sprite result loads in Phaser and passes atlas, animation and tile pr
     palette: ["#19aaa0"],
     preserve: { canvas: true, style: true, palette: true, characterIdentity: true },
   }, toolContext);
+  const composeArtifactPath = process.env.ISSUE_31_ASSET_PREVIEW_ARTIFACT;
+  const composeArtifact = composeArtifactPath
+    ? JSON.parse(await readFile(composeArtifactPath, "utf8")) as {
+      assetId: string;
+      sha256: string;
+      sourceSha256: string;
+      bodyBase64: string;
+      metadata: Record<string, unknown>;
+    }
+    : undefined;
+  if (composeArtifact) {
+    expect(composeArtifact.sourceSha256).toBe(sourceSha256);
+    const body = Buffer.from(composeArtifact.bodyBase64, "base64");
+    expect(sha256(body)).toBe(composeArtifact.sha256);
+    assets.delete(edited.assetId);
+    Object.assign(edited, {
+      assetId: composeArtifact.assetId,
+      sha256: composeArtifact.sha256,
+      path: "assets/generated/" + composeArtifact.assetId + ".png",
+    });
+    assets.set(composeArtifact.assetId, {
+      id: composeArtifact.assetId,
+      projectId,
+      contentType: "image/png",
+      sizeBytes: body.byteLength,
+      sha256: composeArtifact.sha256,
+      metadata: composeArtifact.metadata,
+      body,
+    });
+    editedPixels = { r: 23, g: 143, b: 138 };
+  }
   const editedAsset = assets.get(edited.assetId)!;
   expect(editedAsset.body).not.toEqual(sourceBytes);
   expect(assets.get(sourceAssetId)!.body).toEqual(storedSourceBefore);
@@ -211,6 +242,9 @@ test("edit_sprite result loads in Phaser and passes atlas, animation and tile pr
   expect(sampled[0]).toBeLessThan(100);
   expect([...editedSpritePixel]).toEqual([editedPixels.r, editedPixels.g, editedPixels.b]);
   const report = [
+    composeArtifact
+      ? "Tool y asset ejecutados/persistidos en Postgres/Silo de Docker Compose; Playwright cargo los bytes leidos del asset privado."
+      : "Tool y asset generados con fixture local. Para demostrar la persistencia Compose, use npm run test:assets:acceptance.",
     "# Evidencia de aceptación #31",
     "",
     `Fecha UTC: ${new Date().toISOString()}`,

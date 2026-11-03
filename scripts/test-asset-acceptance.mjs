@@ -1,0 +1,41 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repositoryRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const temporaryDirectory = mkdtempSync(join(tmpdir(), "meta-game-issue31-"));
+const artifactPath = join(temporaryDirectory, "sprite-edit.json");
+const environment = {
+  ...process.env,
+  ISSUE_31_ASSET_PREVIEW_ARTIFACT: artifactPath,
+};
+
+function run(args) {
+  const result = spawnSync(process.execPath, args, {
+    cwd: repositoryRoot,
+    env: environment,
+    stdio: "inherit",
+    windowsHide: true,
+    shell: false,
+  });
+  if (result.error) throw new Error("No se pudo iniciar la aceptacion local de assets.");
+  return result.status ?? 1;
+}
+
+try {
+  const integrationStatus = run([join(repositoryRoot, "scripts/test-integration.mjs")]);
+  if (integrationStatus !== 0) {
+    process.exitCode = integrationStatus;
+  } else {
+    process.exitCode = run([
+      join(repositoryRoot, "node_modules/playwright/cli.js"),
+      "test",
+      "--config",
+      "tests/assets/playwright.config.ts",
+    ]);
+  }
+} finally {
+  rmSync(temporaryDirectory, { recursive: true, force: true });
+}

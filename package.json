@@ -38,7 +38,7 @@
     "test:e2e": "node scripts/check-node-version.mjs && playwright test --config tests/e2e/playwright.config.ts",
     "test:performance": "node scripts/check-node-version.mjs && playwright test --config tests/e2e/performance.config.ts",
     "test:e2e:game-templates": "node scripts/check-node-version.mjs && playwright test --config tests/game-templates/playwright.config.ts",
-    "test:assets:acceptance": "node scripts/check-node-version.mjs && playwright test --config tests/assets/playwright.config.ts",
+    "test:assets:acceptance": "node scripts/check-node-version.mjs && node scripts/test-asset-acceptance.mjs",
     "test:e2e:server": "node scripts/check-node-version.mjs && vite --config tests/e2e/vite.config.ts",
     "test:security:offline": "node scripts/check-node-version.mjs && node --import tsx scripts/security-runner.ts --offline",
     "test:security": "node scripts/check-node-version.mjs && node --import tsx scripts/security-runner.ts",
