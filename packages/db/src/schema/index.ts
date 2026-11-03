@@ -74,6 +74,7 @@ export const users = pgTable(
     email: varchar("email", { length: 320 }).unique(),
     passwordHash: text("password_hash"),
     emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+    contributorConsentAt: timestamp("contributor_consent_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
