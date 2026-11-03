@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Badge, Button, Checkbox, Dialog, Heading, Tabs, Text, TextField } from "@radix-ui/themes";
+import { Badge, Button, Dialog, Heading, Tabs, Text, TextField } from "@radix-ui/themes";
 import type { EditorProgress, EditorRunStatus, EditorStepStatus } from "@meta-game/contracts";
 import { useRunEvents } from "../../hooks/use-run-events";
 import { TextArea } from "../ui/text-area";
@@ -192,7 +192,6 @@ export function EditorShell({
   const [renameOpen, setRenameOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState(initialProjectName);
   const [renaming, setRenaming] = useState(false);
-  const [contributorConsent, setContributorConsent] = useState(false);
   const [publications, setPublications] = useState<EditorPublication[]>([]);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [publishVersionId, setPublishVersionId] = useState(versions.find((version) => version.status === "ready")?.id ?? "");
@@ -272,10 +271,6 @@ export function EditorShell({
   }
 
   async function send(requestId: string, messageContent: string) {
-    if (!contributorConsent) {
-      setStatus("Confirma que tienes 18 años o más y acepta el uso de datos de Meta antes de iniciar.");
-      return;
-    }
     if (runEvents.hydrating || runEvents.active) return;
     setSending(true);
     setStatus("");
@@ -330,12 +325,12 @@ export function EditorShell({
   function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = content.trim();
-    if (!trimmed || sending || runEvents.working || runEvents.hydrating || runEvents.active || !contributorConsent) return;
+    if (!trimmed || sending || runEvents.working || runEvents.hydrating || runEvents.active) return;
     void send(globalThis.crypto.randomUUID(), trimmed);
   }
 
   async function retryPendingRun() {
-    if (!pendingRun || !contributorConsent || runEvents.working || runEvents.active) return;
+    if (!pendingRun || runEvents.working || runEvents.active) return;
     try {
       await runEvents.enqueue(pendingRun.messageRequestId, pendingRun.idempotencyKey);
       rememberPendingRun(null);
@@ -348,7 +343,7 @@ export function EditorShell({
   async function retryLastRun() {
     const lastUserMessage = [...messages].reverse().find((message) => message.role === "user");
     const messageRequestId = runEvents.latestMessageRequestId ?? lastUserMessage?.requestId;
-    if (!messageRequestId || !contributorConsent || runEvents.active || runEvents.working) return;
+    if (!messageRequestId || runEvents.active || runEvents.working) return;
     const nextPendingRun = { messageRequestId, idempotencyKey: globalThis.crypto.randomUUID() };
     rememberPendingRun(nextPendingRun);
     try {
@@ -597,12 +592,12 @@ export function EditorShell({
                   </Button>
                 ) : null}
                 {pendingRun ? (
-                  <Button variant="soft" size="1" onClick={() => void retryPendingRun()} disabled={!contributorConsent || runEvents.working || runEvents.active}>
+                  <Button variant="soft" size="1" onClick={() => void retryPendingRun()} disabled={runEvents.working || runEvents.active}>
                     Reintentar ejecución
                   </Button>
                 ) : null}
                 {!pendingRun && runEvents.run && (runEvents.run.status === "failed" || runEvents.run.status === "cancelled") ? (
-                  <Button variant="soft" size="1" onClick={() => void retryLastRun()} disabled={!contributorConsent || runEvents.working || runEvents.active}>
+                  <Button variant="soft" size="1" onClick={() => void retryLastRun()} disabled={runEvents.working || runEvents.active}>
                     Reintentar generación
                   </Button>
                 ) : null}
@@ -620,7 +615,7 @@ export function EditorShell({
                     <div className={styles.messageMeta}>
                       <Text as="span" size="1">{message.role === "user" ? "Tú" : message.role === "assistant" ? "Agente" : "Herramienta"}</Text>
                       {message.delivery === "sending" ? <Text as="span" size="1" color="gray">Guardando…</Text> : null}
-                      {message.delivery === "failed" ? <Button variant="ghost" size="1" onClick={() => void send(message.requestId, message.content)} disabled={runEvents.active || runEvents.working || !contributorConsent}>Reintentar guardado</Button> : null}
+                      {message.delivery === "failed" ? <Button variant="ghost" size="1" onClick={() => void send(message.requestId, message.content)} disabled={runEvents.active || runEvents.working}>Reintentar guardado</Button> : null}
                     </div>
                     <p>{message.content}</p>
                   </li>
@@ -655,19 +650,11 @@ export function EditorShell({
                 />
                 <div className={styles.composerFooter}>
                   <Text id="editor-prompt-hint" as="span" size="1" color="gray">Máximo 100.000 caracteres. El mensaje queda privado y se envía a Meta al ejecutar.</Text>
-                  <Button type="submit" disabled={sending || runEvents.working || runEvents.active || runEvents.hydrating || !contributorConsent || !content.trim()}>
+                  <Button type="submit" disabled={sending || runEvents.working || runEvents.active || runEvents.hydrating || !content.trim()}>
                     {sending || runEvents.working ? "Encolando…" : runEvents.hydrating ? "Recuperando…" : "Enviar al agente"}
                   </Button>
                 </div>
-                <label className={styles.consent} htmlFor="editor-contributor-consent">
-                  <Checkbox
-                    id="editor-contributor-consent"
-                    checked={contributorConsent}
-                    onCheckedChange={(checked) => setContributorConsent(checked === true)}
-                    disabled={runEvents.active || runEvents.working || runEvents.hydrating}
-                  />
-                  <span>Confirmo que tengo 18 años o más y acepto los términos de Meta Contributor: el proveedor puede usar las entradas para entrenamiento. No incluir datos personales, secretos ni información confidencial.</span>
-                </label>
+                <Text size="1" color="gray">No incluir datos personales, secretos ni información confidencial. Al ejecutar aceptaste los términos Contributor y la mayoría de edad en el registro.</Text>
               </form>
               <p className={styles.chatStatus} role="status" aria-live="polite">{status || runEvents.error || publicationNotice}</p>
             </Tabs.Content>

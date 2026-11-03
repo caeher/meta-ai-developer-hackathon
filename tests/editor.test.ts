@@ -98,7 +98,7 @@ describe("editor interactivo", () => {
     expect((screen.getByRole("combobox", { name: "Versión de la vista previa" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("guarda el prompt y encola una ejecución idempotente después del consentimiento", async () => {
+  it("guarda el prompt y encola una ejecución idempotente sin casilla de consentimiento", async () => {
     const message = {
       id: "2f82ba61-ea6b-44bc-b5ec-e4126bbb2d00",
       projectId,
@@ -144,8 +144,8 @@ describe("editor interactivo", () => {
     fireEvent.change(screen.getByLabelText("Describe tu juego"), { target: { value: "Género: plataformas 2D." } });
     await screen.findByRole("button", { name: "Enviar al agente" });
     const submit = screen.getByRole("button", { name: "Enviar al agente" }) as HTMLButtonElement;
-    expect(submit.disabled).toBe(true);
-    fireEvent.click(screen.getByRole("checkbox", { name: /Confirmo que tengo 18 años/ }));
+    expect(screen.queryByRole("checkbox", { name: /Confirmo que tengo 18/ })).toBeNull();
+    expect(screen.getByText(/No incluir datos personales/)).not.toBeNull();
     await waitFor(() => expect(submit.disabled).toBe(false));
     fireEvent.click(submit);
 
@@ -156,7 +156,7 @@ describe("editor interactivo", () => {
     }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/runs`, expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ idempotencyKey: "00000000-0000-4000-8000-000000000001", messageRequestId: message.requestId, contributorConsent: true }),
+      body: JSON.stringify({ idempotencyKey: "00000000-0000-4000-8000-000000000001", messageRequestId: message.requestId }),
     })));
     expect(await screen.findByText("El prototipo quedó verificado.")).not.toBeNull();
     expect(screen.getByRole("status").textContent).toContain("Mensaje guardado y ejecución en cola.");

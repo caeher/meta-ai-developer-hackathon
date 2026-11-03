@@ -162,7 +162,6 @@ test.describe("editor de dos paneles", () => {
     await page.getByRole("button", { name: "Cerrar" }).click();
     const prompt = page.getByLabel("Describe tu juego");
     await prompt.fill("Género: RPG top-down. Incluye mapa, misión y controles de teclado.");
-    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Enviar al agente" }).click();
     await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
     await page.getByRole("tab", { name: /Plan/ }).click();
@@ -203,7 +202,6 @@ test.describe("editor de dos paneles", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/?asset-card=1");
     await page.getByLabel("Describe tu juego").fill("Crea un héroe pixel art.");
-    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Enviar al agente" }).click();
 
     const card = page.getByRole("article", { name: "Imagen generada" });
@@ -242,7 +240,6 @@ test.describe("editor de dos paneles", () => {
 
     const prompt = page.getByLabel("Describe tu juego");
     await prompt.fill("Género: RPG top-down. Con un mapa y misiones.");
-    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Enviar al agente" }).click();
     await expect(page.getByText("Género: RPG top-down. Con un mapa y misiones.", { exact: true })).toBeVisible();
     await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
@@ -266,7 +263,6 @@ test.describe("editor de dos paneles", () => {
   test("reconecta desde Last-Event-ID tras una caída del stream sin repetir progreso", async ({ page }) => {
     await page.goto("/?stream-drop=1");
     await page.getByLabel("Describe tu juego").fill("Crear un juego tras reconectar.");
-    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Enviar al agente" }).click();
     await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
     await expect.poll(() => page.evaluate((id) => {
@@ -279,7 +275,6 @@ test.describe("editor de dos paneles", () => {
   test("permite detener un run activo y entrega su estado terminal", async ({ page }) => {
     await page.goto("/?run-active=1");
     await page.getByLabel("Describe tu juego").fill("Crear un puzzle corto.");
-    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Enviar al agente" }).click();
     await page.getByRole("button", { name: "Detener" }).click();
     await expect(page.getByText("Cancelado", { exact: true })).toBeVisible();
@@ -289,7 +284,6 @@ test.describe("editor de dos paneles", () => {
   test("presenta la cuota excedida y conserva el mensaje sin duplicar una ejecución", async ({ page }) => {
     await page.goto("/?enqueue-error=usage_limit_tokens");
     await page.getByLabel("Describe tu juego").fill("Crear un nivel pequeño.");
-    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Enviar al agente" }).click();
     await expect(page.getByRole("status")).toContainText("Se alcanzó la cuota diaria de tokens");
     await expect(page.getByText("Crear un nivel pequeño.", { exact: true })).toBeVisible();
@@ -300,7 +294,6 @@ test.describe("editor de dos paneles", () => {
     test(`permite reintentar si falla ${failure}`, async ({ page }) => {
       await page.goto(`/?run-fail=${failure}`);
       await page.getByLabel("Describe tu juego").fill("Crear un juego tras un fallo recuperable.");
-      await page.getByRole("checkbox").check();
       await page.getByRole("button", { name: "Enviar al agente" }).click();
       await expect(page.getByText("Falló", { exact: true })).toBeVisible();
       await expect(page.getByText("No se pudo iniciar la ejecución. Puedes reintentarlo sin duplicar el run.", { exact: true })).toBeVisible();
@@ -311,7 +304,6 @@ test.describe("editor de dos paneles", () => {
   test("una identidad distinta recibe 404 al suscribirse al run ajeno", async ({ page }) => {
     await page.goto("/");
     await page.getByLabel("Describe tu juego").fill("Crear un juego de prueba.");
-    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Enviar al agente" }).click();
     await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
     const runId = await page.evaluate((id) => {

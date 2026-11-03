@@ -234,11 +234,14 @@ function installPrivateApiFixture() {
     }
 
     if (url.pathname === `/api/projects/${projectId}/runs` && method === "POST") {
-      const body = JSON.parse(String(init?.body ?? "{}")) as { idempotencyKey: string; messageRequestId: string; contributorConsent: boolean };
+      const body = JSON.parse(String(init?.body ?? "{}")) as { idempotencyKey: string; messageRequestId: string; contributorConsent?: boolean };
       const existing = readRun();
       if (existing?.idempotencyKey === body.idempotencyKey) return Response.json({ run: existing.run, duplicate: true });
-      if (body.contributorConsent !== true || !readMessages().some((message) => message.requestId === body.messageRequestId)) {
-        return Response.json({ error: "contributor_consent_required" }, { status: 400 });
+      if (!readMessages().some((message) => message.requestId === body.messageRequestId)) {
+        return Response.json({ error: "message_required" }, { status: 400 });
+      }
+      if (query.has("no-consent")) {
+        return Response.json({ error: "contributor_consent_required" }, { status: 403 });
       }
       const enqueueError = query.get("enqueue-error");
       if (enqueueError) return Response.json({ error: enqueueError }, { status: enqueueError.startsWith("usage_limit_") ? 429 : 503 });
