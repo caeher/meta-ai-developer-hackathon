@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { Button, Callout, Flex, Heading, Text, TextField } from "@radix-ui/themes";
+import { Button, Callout, Checkbox, Flex, Heading, Text, TextField } from "@radix-ui/themes";
 import { useToast } from "../ui/toast";
 
 type AuthFormMode = "login" | "register" | "forgot-password" | "reset-password" | "verify-email";
@@ -22,6 +22,7 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [contributorConsent, setContributorConsent] = useState(false);
   const needsEmail = mode === "login" || mode === "register" || mode === "forgot-password";
   const needsPassword = mode === "login" || mode === "register" || mode === "reset-password";
   const needsConfirm = mode === "register" || mode === "reset-password";
@@ -37,13 +38,21 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
       toast({ tone: "error", title: text });
     };
     const form = new FormData(event.currentTarget);
-    const body: Record<string, string> = {};
+    const body: Record<string, unknown> = {};
     if (needsEmail) body.email = String(form.get("email") ?? "");
     if (needsPassword) body.password = String(form.get("password") ?? "");
     if (needsConfirm && String(form.get("confirmPassword") ?? "") !== body.password) {
       setBusy(false);
       fail("Las contraseñas no coinciden.");
       return;
+    }
+    if (mode === "register") {
+      if (!contributorConsent) {
+        setBusy(false);
+        fail("Debes confirmar que tienes 18 años o más y aceptar los términos de Meta Contributor.");
+        return;
+      }
+      body.contributorConsent = true;
     }
     if (mode === "reset-password" || mode === "verify-email") {
       body.token = new URLSearchParams(window.location.search).get("token") ?? "";
@@ -115,9 +124,17 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
             <Text as="span" size="1" color="gray">Repite la contraseña para evitar errores.</Text>
           </label>
         ) : null}
+        {mode === "register" ? (
+          <label className="auth-field">
+            <Flex gap="2" align="start">
+              <Checkbox name="contributorConsent" checked={contributorConsent} onCheckedChange={(checked) => setContributorConsent(checked === true)} />
+              <Text as="span" size="1">Confirmo que tengo 18 años o más y acepto los términos de Meta Contributor: el proveedor puede usar las entradas para entrenamiento. No incluir datos personales, secretos ni información confidencial.</Text>
+            </Flex>
+          </label>
+        ) : null}
         {error ? <Callout.Root color="red" role="alert"><Callout.Text>{error}</Callout.Text></Callout.Root> : null}
         {message ? <Callout.Root color="green" role="status"><Callout.Text>{message}</Callout.Text></Callout.Root> : null}
-        <Button type="submit" disabled={busy} className="auth-submit">{busy ? "Procesando…" : submitLabel}</Button>
+        <Button type="submit" disabled={busy || (mode === "register" && !contributorConsent)} className="auth-submit">{busy ? "Procesando…" : submitLabel}</Button>
       </form>
       <Flex justify="between" wrap="wrap" gap="3" className="auth-links">
         {mode === "login" ? <Link href="/forgot-password">Olvidé mi contraseña</Link> : null}
