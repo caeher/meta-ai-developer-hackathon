@@ -21,6 +21,8 @@ COPY scripts/check-node-version.mjs scripts/check-node-version.mjs
 RUN npm ci --no-audit --no-fund
 
 COPY apps/web/app apps/web/app
+COPY apps/web/components apps/web/components
+COPY apps/web/server apps/web/server
 COPY apps/web/styles apps/web/styles
 COPY apps/web/next.config.ts apps/web/next.config.ts
 COPY apps/web/tsconfig.json apps/web/tsconfig.json

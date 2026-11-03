@@ -126,10 +126,16 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}
       REDIS_URL: redis://redis:6379
-      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:3000}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-      AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:-http://localhost:3000}
+      AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       AUTH_SECRET: ${AUTH_SECRET:-replace-with-random-32-byte-secret}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-Forja Local <no-reply@localhost>}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
       SESSION_ABSOLUTE_TTL_SECONDS: ${SESSION_ABSOLUTE_TTL_SECONDS:-2592000}
       PREVIEW_GATEWAY_ENABLED: ${PREVIEW_GATEWAY_ENABLED:-false}
@@ -153,6 +159,7 @@ services:
     volumes:
       - ../apps/web/app:/workspace/apps/web/app
       - ../apps/web/components:/workspace/apps/web/components
+      - ../apps/web/server:/workspace/apps/web/server
       - ../apps/web/styles:/workspace/apps/web/styles
       - ../apps/web/next.config.ts:/workspace/apps/web/next.config.ts:ro
       - ../apps/web/package.json:/workspace/apps/web/package.json:ro
@@ -174,6 +181,8 @@ services:
       redis:
         condition: service_healthy
       s3:
+        condition: service_healthy
+      mailpit:
         condition: service_healthy
     healthcheck:
       test:

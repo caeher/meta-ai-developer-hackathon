@@ -1,0 +1,33 @@
+name: Browser quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: E2E Chromium, Firefox, WebKit and performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Editor and accessibility E2E
+        run: npm run test:e2e
+      - name: Phaser game E2E
+        run: npm run test:e2e:game-templates
+      - name: Performance budgets
+        run: npm run test:performance

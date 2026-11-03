@@ -67,6 +67,7 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
 
   return (
     <section className="auth-card" aria-labelledby="auth-title">
+      <Text as="p" className="auth-form-kicker">FORJA · JUEGOS 2D</Text>
       <Heading as="h1" id="auth-title" size="6">{titles[mode]}</Heading>
       <Text as="p" color="gray">Accede a tu espacio privado para crear juegos 2D.</Text>
       <form className="auth-form" onSubmit={submit}>

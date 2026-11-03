@@ -5,7 +5,10 @@ export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   esbuild: { jsx: "automatic" },
   resolve: {
-    alias: [{ find: "next/link", replacement: fileURLToPath(new URL("./LinkFixture.tsx", import.meta.url)) }],
+    alias: [
+      { find: "next/link", replacement: fileURLToPath(new URL("./LinkFixture.tsx", import.meta.url)) },
+      { find: "next/navigation", replacement: fileURLToPath(new URL("./NavigationFixture.ts", import.meta.url)) },
+    ],
   },
   server: {
     host: "127.0.0.1",

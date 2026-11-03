@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "playwright/test";
 import type { GameGenre, GameSnapshot } from "../../packages/game-templates/phaser/src/game/types";
 
@@ -33,15 +34,28 @@ test("los cuatro presets cargan el loop, publican controles y responden a teclad
 
     const initial = await readState(page);
     await page.keyboard.down("ArrowRight");
-    await page.waitForTimeout(250);
-    await page.keyboard.up("ArrowRight");
-    await expect.poll(async () => (await readState(page)).x).not.toBe(initial.x);
+    try {
+      await expect.poll(async () => (await readState(page)).x, { timeout: 2_000 }).not.toBe(initial.x);
+    } finally {
+      await page.keyboard.up("ArrowRight");
+    }
 
     const beforeTouch = await readState(page);
-    await page.locator('#touch-controls button[data-control="right"]').click();
-    await expect.poll(async () => (await readState(page)).x).not.toBe(beforeTouch.x);
+    const touchRight = page.locator('#touch-controls button[data-control="right"]');
+    const touchBox = await touchRight.boundingBox();
+    expect(touchBox).not.toBeNull();
+    await page.mouse.move(touchBox!.x + touchBox!.width / 2, touchBox!.y + touchBox!.height / 2);
+    await page.mouse.down();
+    try {
+      await expect.poll(async () => (await readState(page)).x, { timeout: 2_000 }).not.toBe(beforeTouch.x);
+    } finally {
+      await page.mouse.up();
+    }
     await expect(page.getByRole("button", { name: "Reiniciar juego" })).toBeVisible();
   }
+  const audit = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+  const serious = audit.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious");
+  expect(serious.map((violation) => ({ rule: violation.id, help: violation.help, targets: violation.nodes.map((node) => node.target) }))).toEqual([]);
   expect(consoleErrors).toEqual([]);
   expect(blockedRequests).toBe(0);
 });

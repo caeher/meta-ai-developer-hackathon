@@ -92,6 +92,7 @@
 .verificationResult p { margin: 0; line-height: 1.6; }
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 .quickOptionsDialog { max-height: min(84svh, 720px); overflow-y: auto; }
+.quickOptionsDialog :global(button[aria-label^="Insertar:"]) { color: var(--app-text); }
 .quickOptionsGroups { display: grid; gap: 18px; margin-top: 22px; }
 .quickOptionsGroups section { display: grid; gap: 10px; }
 .quickOptionsGroups h3 { margin: 0; }

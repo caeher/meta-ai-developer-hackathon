@@ -140,6 +140,70 @@ test.describe("editor de dos paneles", () => {
     });
   }
 
+  test("recorre acceso, proyecto, plan, herramientas, preview, iteración, versión y publicación", async ({ page }) => {
+    await installPrivatePreviewFixture(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/sign-in?e2e-flow=1&preview=1&versions=1&publishing=1");
+    await expect(page.getByRole("heading", { name: "Iniciar sesión" })).toBeVisible();
+    await page.getByLabel("Correo electrónico").fill("jugador@example.test");
+    await page.getByLabel("Contraseña").fill("contraseña-de-prueba");
+    await page.getByRole("button", { name: "Entrar" }).click();
+
+    await expect(page).toHaveURL(/\/projects$/);
+    await expect(page.getByRole("heading", { name: "Tus proyectos" })).toBeVisible();
+    await page.getByLabel("Nombre del proyecto").fill("Aventura E2E");
+    await page.getByRole("button", { name: "Crear proyecto" }).click();
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
+    await expect(page.getByRole("region", { name: "Editor de Aventura E2E" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Opciones rápidas" }).click();
+    await page.getByRole("button", { name: "Insertar: RPG top-down" }).click();
+    await page.getByRole("button", { name: "Cerrar" }).click();
+    const prompt = page.getByLabel("Describe tu juego");
+    await prompt.fill("Género: RPG top-down. Incluye mapa, misión y controles de teclado.");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Enviar al agente" }).click();
+    await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
+    await page.getByRole("tab", { name: /Plan/ }).click();
+    await expect(page.getByText("Moverse hasta la meta.")).toBeVisible();
+    await page.getByRole("tab", { name: /Pasos/ }).click();
+    await expect(page.getByText("Crear la escena")).toBeVisible();
+    await page.getByRole("tab", { name: /Archivos/ }).click();
+    await expect(page.getByText("src/main.ts")).toBeVisible();
+    await expect(page.getByLabel("Estado de la preview: Lista")).toBeVisible();
+    await expect(page.frameLocator("iframe").locator("canvas")).toHaveAttribute("data-game-ready", "true");
+
+    await page.getByRole("tab", { name: "Chat", exact: true }).click();
+    await page.getByLabel("Describe tu juego").fill("Añade un segundo nivel y una salida visible.");
+    await page.getByRole("button", { name: "Enviar al agente" }).click();
+    await expect(page.getByRole("list", { name: "Transcripción privada en orden de envío" }).getByText("Añade un segundo nivel y una salida visible.", { exact: true })).toBeVisible();
+    await expect(page.getByText("El prototipo quedó verificado.")).toBeVisible();
+
+    await page.getByRole("combobox", { name: "Versión de la vista previa" }).click();
+    await page.getByRole("option", { name: "v3 · verificada" }).click();
+    await expect(page.getByRole("dialog")).toContainText("Snapshot verificado");
+    await page.getByRole("button", { name: "Restaurar como nueva versión" }).click();
+    await expect(page.getByText("Restaurada como v4.", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Publish" }).click();
+    await page.getByRole("heading", { name: "Publicar una build estática" }).waitFor();
+    await page.getByLabel(/Entiendo que el juego y sus recursos compilados/).check();
+    await page.getByRole("button", { name: "Publicar v3" }).click();
+    await expect(page.getByRole("link", { name: "Abrir juego publicado" })).toBeVisible();
+    await page.getByRole("button", { name: "Share" }).last().click();
+    await page.getByRole("button", { name: "Unpublish" }).click();
+    await expect(page.getByText("Revocada", { exact: true })).toBeVisible();
+  });
+
+  test("muestra la respuesta de autenticación propia cuando falla el inicio de sesión", async ({ page }) => {
+    await page.goto("/sign-in?login-error=1");
+    await page.getByLabel("Correo electrónico").fill("jugador@example.test");
+    await page.getByLabel("Contraseña").fill("contraseña-de-prueba");
+    await page.getByRole("button", { name: "Entrar" }).click();
+    await expect(page.getByRole("alert")).toHaveText("Correo o contraseña incorrectos.");
+    await expect(page).toHaveURL(/sign-in/);
+  });
+
   test("envía el prompt, reconstruye progreso durable y conserva el transcript al recargar", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
@@ -192,6 +256,28 @@ test.describe("editor de dos paneles", () => {
     await expect(page.getByText("Cancelado", { exact: true })).toBeVisible();
     await expect(page.getByText("La ejecución se detuvo.")).toBeVisible();
   });
+
+  test("presenta la cuota excedida y conserva el mensaje sin duplicar una ejecución", async ({ page }) => {
+    await page.goto("/?enqueue-error=usage_limit_tokens");
+    await page.getByLabel("Describe tu juego").fill("Crear un nivel pequeño.");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Enviar al agente" }).click();
+    await expect(page.getByRole("status")).toContainText("Se alcanzó la cuota diaria de tokens");
+    await expect(page.getByText("Crear un nivel pequeño.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reintentar ejecución" })).toBeEnabled();
+  });
+
+  for (const failure of ["meta_rate_limited", "meta_timeout", "sandbox_unavailable"]) {
+    test(`permite reintentar si falla ${failure}`, async ({ page }) => {
+      await page.goto(`/?run-fail=${failure}`);
+      await page.getByLabel("Describe tu juego").fill("Crear un juego tras un fallo recuperable.");
+      await page.getByRole("checkbox").check();
+      await page.getByRole("button", { name: "Enviar al agente" }).click();
+      await expect(page.getByText("Falló", { exact: true })).toBeVisible();
+      await expect(page.getByText("No se pudo iniciar la ejecución. Puedes reintentarlo sin duplicar el run.", { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Reintentar generación" })).toBeEnabled();
+    });
+  }
 
   test("una identidad distinta recibe 404 al suscribirse al run ajeno", async ({ page }) => {
     await page.goto("/");
@@ -342,6 +428,7 @@ test.describe("editor de dos paneles", () => {
 
   test("usa un formulario de primer nivel si se bloquea la cookie de terceros", async ({ page }) => {
     const fixture = await installPrivatePreviewFixture(page, { blockedThirdPartyCookie: true });
+    await page.context().addInitScript(() => sessionStorage.setItem("forja-e2e-authenticated", "authenticated"));
     await page.goto("/?preview=1");
     await expect(page.getByText(/El navegador bloqueó la cookie de terceros/).first()).toBeVisible();
     const popupPromise = page.waitForEvent("popup");

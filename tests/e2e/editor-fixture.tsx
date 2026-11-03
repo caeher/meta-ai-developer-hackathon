@@ -1,8 +1,11 @@
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { Theme } from "@radix-ui/themes";
 import { EditorShell, type PersistedMessage } from "../../apps/web/components/editor/EditorShell";
 import { PreviewHandoff } from "../../apps/web/components/editor/PreviewHandoff";
+import { AuthPage } from "../../apps/web/components/auth/AuthPage";
+import { AuthControls } from "../../apps/web/components/auth/AuthControls";
+import { ProjectsDashboard } from "../../apps/web/components/projects/ProjectsDashboard";
 import pageStyles from "../../apps/web/app/projects/[projectId]/page.module.css";
 import "@radix-ui/themes/styles.css";
 import "../../apps/web/styles/tokens.css";
@@ -15,6 +18,16 @@ const runKey = `editor-e2e-run-${projectId}`;
 const streamCursorsKey = `editor-e2e-stream-cursors-${projectId}`;
 const projectNameKey = `editor-e2e-name-${projectId}`;
 const publicationsKey = `editor-e2e-publications-${projectId}`;
+const authSessionKey = "forja-e2e-authenticated";
+const routeFlagsKey = "forja-e2e-route-flags";
+const fixtureUsage = {
+  projects: { used: 0, limit: 10 },
+  concurrency: { used: 0, limit: 1 },
+  tokens: { used: 0, reserved: 0, limit: 100_000 },
+  images: { used: 0, reserved: 0, limit: 20 },
+  storage: { usedBytes: 0, reservedBytes: 0, limitBytes: 50 * 1024 * 1024 },
+  run: { maxTokens: 20_000, maxDurationMs: 600_000 },
+};
 let privateApiInstalled = false;
 
 interface RunFixture {
@@ -77,9 +90,19 @@ function fixtureEvent(runId: string, sequence: number, type: string, payload: Re
 }
 
 function sse(events: Array<Record<string, unknown>>, after: number) {
-  const body = events.filter((event) => Number(event.id) > after).map((event) =>
+  const frames = events.filter((event) => Number(event.id) > after).map((event) =>
     `id: ${String(event.id)}\nevent: ${String(event.type)}\ndata: ${JSON.stringify(event.data)}\n\n`,
-  ).join("");
+  );
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      for (const frame of frames) {
+        controller.enqueue(encoder.encode(frame));
+        await new Promise((resolve) => window.setTimeout(resolve, 20));
+      }
+      controller.close();
+    },
+  });
   return new Response(body, { headers: { "cache-control": "private, no-store", "content-type": "text/event-stream; charset=utf-8" } });
 }
 
@@ -92,9 +115,42 @@ function installPrivateApiFixture() {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin);
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
     const identity = new URLSearchParams(location.search).get("identity") ?? "owner-a";
+    const query = new URLSearchParams(location.search);
+    const savedFlags = (() => {
+      try { return JSON.parse(sessionStorage.getItem(routeFlagsKey) ?? "[]") as string[]; }
+      catch { return []; }
+    })();
+
+    if (url.pathname === "/api/auth/session" && method === "GET") {
+      return Response.json({ user: sessionStorage.getItem(authSessionKey) ? { userId: "e2e-user-a", email: "jugador@example.test" } : null });
+    }
+    if (url.pathname === "/api/auth/login" && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { email?: string; password?: string };
+      if (query.has("login-error") || !body.email || !body.password) return Response.json({ error: "invalid_credentials" }, { status: 401 });
+      sessionStorage.setItem(authSessionKey, "authenticated");
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/api/auth/logout" && method === "POST") {
+      sessionStorage.removeItem(authSessionKey);
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/api/usage" && method === "GET") {
+      return Response.json({
+        projects: { used: 0, limit: 10 }, concurrency: { used: 0, limit: 1 },
+        tokens: { used: 0, reserved: 0, limit: 100_000 }, images: { used: 0, reserved: 0, limit: 20 },
+        storage: { usedBytes: 0, reservedBytes: 0, limitBytes: 50 * 1024 * 1024 },
+        run: { maxTokens: 20_000, maxDurationMs: 600_000 },
+      });
+    }
+    if (url.pathname === "/api/projects" && method === "GET") return Response.json({ items: [], nextCursor: null });
+    if (url.pathname === "/api/projects" && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string };
+      sessionStorage.setItem(projectNameKey, body.name?.trim() || "Aventura de prueba");
+      return Response.json({ id: projectId, name: sessionStorage.getItem(projectNameKey), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, { status: 201 });
+    }
 
     if (url.pathname === `/api/projects/${projectId}/versions` && method === "GET") {
-      const items = new URLSearchParams(location.search).has("versions") ? [{
+      const items = query.has("versions") || savedFlags.includes("versions") ? [{
         id: "c31d319e-831a-47e0-a1f3-e965c7b7a243", projectId, versionNumber: 3, status: "ready",
       }] : [];
       return Response.json({ items, latestVersionId: items[0]?.id ?? null, nextCursor: null });
@@ -184,14 +240,17 @@ function installPrivateApiFixture() {
       if (body.contributorConsent !== true || !readMessages().some((message) => message.requestId === body.messageRequestId)) {
         return Response.json({ error: "contributor_consent_required" }, { status: 400 });
       }
-      const activeFixture = new URLSearchParams(location.search).has("run-active");
+      const enqueueError = query.get("enqueue-error");
+      if (enqueueError) return Response.json({ error: enqueueError }, { status: enqueueError.startsWith("usage_limit_") ? 429 : 503 });
+      const activeFixture = query.has("run-active");
+      const runFailure = query.get("run-fail");
       const id = crypto.randomUUID();
       const createdAt = new Date().toISOString();
       const run: RunFixture["run"] = {
         id,
         projectId,
-        status: activeFixture ? "running" : "succeeded",
-        errorCode: null,
+        status: activeFixture ? "running" : runFailure ? "failed" : "succeeded",
+        errorCode: runFailure,
         cancelRequested: false,
         createdAt,
         updatedAt: createdAt,
@@ -201,7 +260,9 @@ function installPrivateApiFixture() {
         fixtureEvent(id, 2, "run.status", { status: "planning" }),
         fixtureEvent(id, 3, "plan.created", { summary: "Crear un juego de prueba.", objective: "Moverse hasta la meta.", steps: [{ id: "scene", title: "Crear la escena" }] }),
         fixtureEvent(id, 4, "step.started", { stepId: "write-1", title: "Escribir un archivo" }),
-        ...(activeFixture ? [] : [
+        ...(activeFixture ? [] : runFailure ? [
+          fixtureEvent(id, 5, "run.failed", { errorCode: runFailure }),
+        ] : [
           fixtureEvent(id, 5, "step.completed", { stepId: "write-1", title: "Escribir un archivo", status: "succeeded" }),
           fixtureEvent(id, 6, "file.changed", { path: "src/main.ts", bytesWritten: 64 }),
           fixtureEvent(id, 7, "verification.result", { check: "npm run build", status: "passed", exitCode: 0, summary: "Build correcto." }),
@@ -262,11 +323,25 @@ function installPrivateApiFixture() {
 
 function EditorTestApp() {
   installPrivateApiFixture();
-  const projectName = readProjectName();
+  const pathname = location.pathname;
   const params = new URLSearchParams(location.search);
-  const previewEnabled = params.has("preview");
-  const handoffPage = location.pathname === `/projects/${projectId}/preview/handoff`;
-  const versions = params.has("versions") ? [{
+  if (pathname === "/sign-in" && params.has("e2e-flow")) {
+    sessionStorage.setItem(routeFlagsKey, JSON.stringify(["preview", "versions", "publishing"].filter((flag) => params.has(flag))));
+  }
+  const savedFlags = (() => {
+    try { return JSON.parse(sessionStorage.getItem(routeFlagsKey) ?? "[]") as string[]; }
+    catch { return []; }
+  })();
+  const hasFlag = (flag: string) => params.has(flag) || savedFlags.includes(flag);
+  useEffect(() => {
+    if ((pathname === "/projects" || pathname.startsWith("/projects/")) && !sessionStorage.getItem(authSessionKey)) {
+      window.location.replace("/sign-in");
+    }
+  }, [pathname]);
+  const projectName = readProjectName();
+  const previewEnabled = hasFlag("preview");
+  const handoffPage = pathname === `/projects/${projectId}/preview/handoff`;
+  const versions = hasFlag("versions") ? [{
     id: "c31d319e-831a-47e0-a1f3-e965c7b7a243",
     versionNumber: 3,
     status: "ready" as const,
@@ -279,6 +354,21 @@ function EditorTestApp() {
           <PreviewHandoff projectId={projectId} projectName={projectName} baseDomain="preview.example.test" />
         </Theme>
       </StrictMode>
+    );
+  }
+
+  if (pathname === "/sign-in") {
+    return <Theme appearance="dark" accentColor="blue" grayColor="slate" hasBackground={false} panelBackground="solid" radius="medium"><AuthPage mode="login" /></Theme>;
+  }
+
+  if (pathname === "/projects") {
+    return (
+      <Theme appearance="dark" accentColor="blue" grayColor="slate" hasBackground={false} panelBackground="solid" radius="medium">
+        <main className="shell">
+          <header className="topbar"><a className="brand" href="/projects">Forja</a><AuthControls /></header>
+          <ProjectsDashboard initialPage={{ items: [], nextCursor: null }} initialUsage={fixtureUsage} />
+        </main>
+      </Theme>
     );
   }
 
@@ -300,7 +390,7 @@ function EditorTestApp() {
             initialCursor={null}
             previewBaseDomain={previewEnabled ? "preview.example.test" : undefined}
             versions={versions}
-            publishingEnabled={params.has("publishing")}
+            publishingEnabled={hasFlag("publishing")}
           />
         </main>
       </Theme>

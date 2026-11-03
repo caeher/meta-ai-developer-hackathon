@@ -36,6 +36,7 @@
     "infra:down": "node scripts/check-node-version.mjs && node scripts/infra-down.mjs",
     "screenshots:theme": "node scripts/check-node-version.mjs && node scripts/capture-theme-screenshots.mjs",
     "test:e2e": "node scripts/check-node-version.mjs && playwright test --config tests/e2e/playwright.config.ts",
+    "test:performance": "node scripts/check-node-version.mjs && playwright test --config tests/e2e/performance.config.ts",
     "test:e2e:game-templates": "node scripts/check-node-version.mjs && playwright test --config tests/game-templates/playwright.config.ts",
     "test:e2e:server": "node scripts/check-node-version.mjs && vite --config tests/e2e/vite.config.ts",
     "test:security:offline": "node scripts/check-node-version.mjs && node --import tsx scripts/security-runner.ts --offline",
@@ -54,18 +55,19 @@
     "check:node": "node scripts/check-node-version.mjs"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
     "@next/eslint-plugin-next": "16.4.3",
     "@testing-library/react": "16.3.0",
     "dotenv": "18.0.9",
     "drizzle-kit": "0.31.11",
     "eslint": "10.14.0",
     "jsdom": "26.1.0",
+    "phaser": "3.90.0",
     "playwright": "1.64.1",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.1",
     "vite": "7.3.7",
-    "vitest": "3.2.7",
-    "phaser": "3.90.0"
+    "vitest": "3.2.7"
   }
 }
