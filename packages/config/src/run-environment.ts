@@ -16,7 +16,7 @@ export const RunEnvironmentSchema = z.object({
   SANDBOX_IDLE_TTL_SECONDS: positiveInteger(900, 86_400),
   PROJECT_DELETION_RETENTION_DAYS: retentionDays,
   PROJECT_MAX_RUN_STEPS: positiveInteger(20, 1000),
-  RUN_MAX_TOKENS: positiveInteger(16_000, 2_000_000),
+  RUN_MAX_TOKENS: positiveInteger(32_000, 2_000_000),
   RUN_MAX_DURATION_MS: positiveInteger(600_000, 3_600_000),
   USER_DAILY_TOKEN_LIMIT: positiveInteger(100_000, 20_000_000),
   USER_DAILY_IMAGE_LIMIT: positiveInteger(10, 100_000),

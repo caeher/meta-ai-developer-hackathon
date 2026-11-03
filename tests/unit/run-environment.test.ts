@@ -9,7 +9,7 @@ describe("configuración de runs", () => {
       REDIS_URL: "redis://127.0.0.1:6379",
       USER_MAX_CONCURRENT_JOBS: 1,
       PROJECT_MAX_RUN_STEPS: 20,
-      RUN_MAX_TOKENS: 16_000,
+      RUN_MAX_TOKENS: 32_000,
       RUN_MAX_DURATION_MS: 600_000,
       USER_DAILY_TOKEN_LIMIT: 100_000,
       USER_DAILY_IMAGE_LIMIT: 10,
