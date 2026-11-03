@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   appendClaimedRunAgentEvents,
   claimRun,
+  ContributorConsentRequiredError,
   createDatabaseFromEnvironment,
   createRepositories,
   finishClaimedRun,
@@ -13,6 +14,7 @@ import {
   transitionClaimedRun,
   runEvents,
   runOutbox,
+  runs,
   usageLedger,
   usageReservations,
   users,
@@ -29,6 +31,7 @@ const model = "muse-spark-1.3-contributor";
 
 describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () => {
   const userId = `user_agent${randomUUID().replaceAll("-", "").slice(0, 18)}`;
+  const noConsentUserId = `user_agentNoConsent${randomUUID().replaceAll("-", "").slice(0, 12)}`;
   let database: ReturnType<typeof createDatabaseFromEnvironment>;
   let repositories: ReturnType<typeof createRepositories>;
 
@@ -39,13 +42,14 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
 
   afterAll(async () => {
     if (!database) return;
-    await database.db.delete(users).where(inArray(users.userId, [userId]));
+    await database.db.delete(users).where(inArray(users.userId, [userId, noConsentUserId]));
     await database.close();
   });
 
   it("liga consentimiento y mensaje, persiste plan antes de write/verify y cobra uso una vez", async () => {
     const identity = identityFromAuthenticatedSession({ userId: userId });
     const project = await repositories.projects.create(identity, { name: "Agent integration" });
+    await database.db.update(users).set({ contributorConsentAt: new Date() }).where(eq(users.userId, userId));
     const message = await repositories.messages.create(identity, {
       projectId: project.id,
       requestId: `agent-message-${randomUUID()}`,
@@ -238,18 +242,28 @@ describe.skipIf(!integrationEnabled)("orquestador durable con PostgreSQL", () =>
       payload: { summary: "tarde", verification: "passed" },
     } as AgentRunEvent])).rejects.toBeInstanceOf(StaleRunWorkerError);
 
-    const noConsentMessage = await repositories.messages.create(identity, {
-      projectId: project.id,
+    const noConsentIdentity = identityFromAuthenticatedSession({ userId: noConsentUserId });
+    const noConsentProject = await repositories.projects.create(noConsentIdentity, { name: "Agent sin consentimiento" });
+    const noConsentMessage = await repositories.messages.create(noConsentIdentity, {
+      projectId: noConsentProject.id,
       requestId: `agent-message-${randomUUID()}`,
       role: "user",
       content: "Mensaje sin consentimiento para Contributor.",
     });
-    const noConsentRun = await repositories.runs.enqueueRun(identity, {
-      projectId: project.id,
+    await expect(repositories.runs.enqueueRun(noConsentIdentity, {
+      projectId: noConsentProject.id,
+      idempotencyKey: `agent-run-${randomUUID()}`,
+      messageRequestId: noConsentMessage.requestId,
+      policy: { maxConcurrentJobs: 2, runMaxTokens: 20_000, dailyTokenLimit: 30_000, dailyImageLimit: 10 },
+    })).rejects.toThrow(ContributorConsentRequiredError);
+    await database.db.update(users).set({ contributorConsentAt: new Date() }).where(eq(users.userId, noConsentUserId));
+    const noConsentRun = await repositories.runs.enqueueRun(noConsentIdentity, {
+      projectId: noConsentProject.id,
       idempotencyKey: `agent-run-${randomUUID()}`,
       messageRequestId: noConsentMessage.requestId,
       policy: { maxConcurrentJobs: 2, runMaxTokens: 20_000, dailyTokenLimit: 30_000, dailyImageLimit: 10 },
     });
+    await database.db.update(runs).set({ contributorConsent: false }).where(eq(runs.id, noConsentRun.run.id));
     const noConsentClaim = await claimRun(database.db, {
       runId: noConsentRun.run.id,
       idempotencyKey: noConsentRun.run.idempotencyKey,

@@ -52,6 +52,7 @@ describe.skipIf(!integrationEnabled)("cola durable, cuotas y fencing con Postgre
     createdUserIds.push(userId);
     const identity = identityFromAuthenticatedSession({ userId: userId });
     const project = await repositories.projects.create(identity, { name: `Durable run ${label}` });
+    await database.db.update(users).set({ contributorConsentAt: new Date() }).where(eq(users.userId, userId));
     return { userId, identity, project };
   }
 

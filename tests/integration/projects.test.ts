@@ -90,6 +90,7 @@ describe.skipIf(!integrationEnabled)("proyectos privados y chat persistente", ()
     const idleProject = await repositories.projects.create(lifecycleIdentity, { name: "Sandbox inactivo" });
     const activeProject = await repositories.projects.create(lifecycleIdentity, { name: "Sandbox con run activo" });
     const leasedProject = await repositories.projects.create(lifecycleIdentity, { name: "Sandbox con lease activo" });
+    await database.db.update(users).set({ contributorConsentAt: new Date() }).where(eq(users.userId, authLifecycle));
     await repositories.sandboxes.upsert(lifecycleIdentity, {
       projectId: idleProject.id, status: "ready", runtimeId: `managed-${suffix}`, leaseExpiresAt: new Date(Date.now() - 1),
     });

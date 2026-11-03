@@ -99,6 +99,7 @@ describe.skipIf(!integrationEnabled)("orquestador de assets con PostgreSQL, Silo
 
   it("emits serial durable asset cards and feeds Silo outputs to Phaser preview", async () => {
     const project = await repositories.projects.create(identity, { name: "Issue 36 asset orchestration" });
+    await database.db.update(users).set({ contributorConsentAt: new Date() }).where(eq(users.userId, userId));
     const message = await repositories.messages.create(identity, {
       projectId: project.id,
       requestId: `asset-message-${randomUUID()}`,

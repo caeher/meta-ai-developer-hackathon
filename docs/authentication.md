@@ -4,7 +4,7 @@ Forja autentica cuentas con correo y contraseña sin un servicio de identidad ex
 
 ## Flujos
 
-- `/sign-up` crea una cuenta con correo normalizado y contraseña de al menos 12 caracteres. El acceso requiere verificar el correo.
+- `/sign-up` crea una cuenta con correo normalizado y contraseña de al menos 12 caracteres. El formulario exige marcar la confirmación de 18 años o más y los términos de Meta Contributor (`contributorConsent: true`); sin ella la API responde `400 contributor_consent_required` y no crea la cuenta ni envía correo. El acceso requiere verificar el correo.
 - `/verify-email?token=...` envía el token por `POST /api/auth/verify-email`; no consume tokens durante un `GET` o prefetch.
 - `/sign-in` inicia sesión y rota el token de sesión anterior.
 - `/forgot-password` siempre responde con el mismo mensaje para que no revele si existe el correo. `/reset-password?token=...` consume un token de un solo uso y revoca todas las sesiones al cambiar la contraseña.
@@ -19,6 +19,8 @@ Forja autentica cuentas con correo y contraseña sin un servicio de identidad ex
 - `auth_rate_limits` guarda solo un HMAC-SHA-256 del correo normalizado y fallos. `AUTH_SECRET` protege los buckets contra búsquedas de correos; producción requiere un valor aleatorio de al menos 32 caracteres. Tras 5, 8 y 10 fallos aplica esperas progresivas de 1, 5 y 30 minutos; el contador se reinicia al pasar 15 minutos sin actividad. No se confía en `X-Forwarded-For` para identificar al cliente.
 - Las mutaciones requieren `Origin` exacto de `AUTH_ALLOWED_ORIGINS` (o `APP_ORIGIN`) y rechazan `Sec-Fetch-Site` incompatible.
 - La migración 0009 agrega las tablas propias y reemplaza la identidad externa. Las filas de usuarios y las relaciones internas por UUID se conservan; las cuentas anteriores sin correo/contraseña quedan sin iniciar sesión y requieren un procedimiento de reasignación si deben recuperarse.
+- `users.contributor_consent_at` guarda cuándo la cuenta aceptó la mayoría de edad y los términos de Meta Contributor; es la fuente de verdad. La migración 0015 agrega la columna y marca con `now()` a las cuentas existentes no borradas. El registro fija el instante al crear la cuenta; re-registrar un correo no verificado con la casilla marcada lo fija antes de reenviar la verificación.
+- `POST /api/projects/:id/runs` deriva el consentimiento de la sesión (`users.contributor_consent_at` por `userId`), nunca del body: el campo `contributorConsent` del contrato quedó deprecated y se ignora. Sin consentimiento responde `403 contributor_consent_required` sin crear run ni reserva; `runs.contributor_consent` se sigue guardando en `true` como historial.
 
 ## Correo
 
@@ -32,4 +34,4 @@ Inicia los servicios locales con `npm run infra:up -- --web`, aplica `npm run db
 
 ## Verificación
 
-Las pruebas unitarias cubren scrypt, tokens, rotación, vencimiento deslizante/absoluto, revocación, política de cookies, bloqueo progresivo, CSRF y acceso cruzado. Las pruebas de integración verifican ownership con PostgreSQL y los recursos privados; E2E usa fixtures de navegador. Los flujos locales de correo no acreditan un proveedor de correo de producción.
+Las pruebas unitarias cubren scrypt, tokens, rotación, vencimiento deslizante/absoluto, revocación, política de cookies, bloqueo progresivo, CSRF, acceso cruzado, registro bloqueante sin casilla y consentimiento de runs derivado de la sesión (incluido el 403 sin crear run ni reserva). Las pruebas de integración verifican ownership con PostgreSQL y los recursos privados; E2E usa fixtures de navegador. Los flujos locales de correo no acreditan un proveedor de correo de producción.

@@ -39,10 +39,10 @@ describe.skipIf(!integrationEnabled)("autenticación propia con PostgreSQL", () 
   });
 
   it("registra, verifica correo, rota sesiones, recupera contraseña y revoca sesiones", async () => {
-    const registered = await handlers.register(post("register", { email, password: "juego-seguro-inicial" }));
+    const registered = await handlers.register(post("register", { email, password: "juego-seguro-inicial", contributorConsent: true }));
     expect(registered.status).toBe(202);
     expect(delivered.verification).toBeTruthy();
-    const duplicate = await handlers.register(post("register", { email, password: "otra-clave-valida-001" }));
+    const duplicate = await handlers.register(post("register", { email, password: "otra-clave-valida-001", contributorConsent: true }));
     expect(await duplicate.json()).toEqual(await registered.clone().json());
 
     const verificationToken = queryToken(delivered.verification!);
@@ -113,7 +113,7 @@ describe.skipIf(!integrationEnabled)("autenticación propia con PostgreSQL", () 
 
   it("elimina cuenta propia, revoca sesiones y encola la limpieza privada con auditoría", async () => {
     const password = "cuenta-de-prueba-segura";
-    expect((await handlers.register(post("register", { email: deletionEmail, password }))).status).toBe(202);
+    expect((await handlers.register(post("register", { email: deletionEmail, password, contributorConsent: true }))).status).toBe(202);
     const verification = await handlers.verifyEmail(post("verify-email", { token: queryToken(delivered.verification!) }));
     expect(verification.status).toBe(200);
     const loggedIn = await handlers.login(post("login", { email: deletionEmail, password }));
