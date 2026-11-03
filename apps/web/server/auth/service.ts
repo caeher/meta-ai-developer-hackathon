@@ -24,7 +24,7 @@ import { getAllowedOrigins, getPrimaryAppOrigin } from "./config";
 import type { Mailer } from "./mailer";
 import { apiErrorResponse, assertSameOriginRequest, readLimitedJson } from "./http";
 
-const registerSchema = z.object({ email: z.string(), password: z.string() }).strict();
+const registerSchema = z.object({ email: z.string(), password: z.string(), contributorConsent: z.literal(true) }).strict();
 const loginSchema = z.object({ email: z.string(), password: z.string() }).strict();
 const tokenSchema = z.object({ token: z.string().min(20).max(256) }).strict();
 const resetSchema = z.object({ token: z.string().min(20).max(256), password: z.string() }).strict();
@@ -108,14 +108,26 @@ export function createAuthHandlers(options: {
       try {
         assertSameOriginRequest(request, getAllowedOrigins());
         if (!mailer) return response(503, { error: "email_delivery_unavailable" });
-        const parsed = registerSchema.parse(await readLimitedJson(request, 8 * 1024));
+        const parsedBody = registerSchema.safeParse(await readLimitedJson(request, 8 * 1024));
+        if (!parsedBody.success) {
+          const missingConsent = parsedBody.error.issues.some((issue) => issue.path.length === 1 && issue.path[0] === "contributorConsent");
+          if (missingConsent) return response(400, { error: "contributor_consent_required" });
+          throw parsedBody.error;
+        }
+        const parsed = parsedBody.data;
         const email = normalizeEmail(parsed.email);
         const password = passwordSchema.parse(parsed.password);
         if (!(await recordAllowedAttempt(database, `register:${email}`))) return response(429, { error: "try_again_later" });
         const passwordHash = await hashPassword(password);
-        const [created] = await database.insert(users).values({ userId: createUserId(), email, passwordHash })
+        const consentAt = new Date();
+        const [created] = await database.insert(users).values({ userId: createUserId(), email, passwordHash, contributorConsentAt: consentAt })
           .onConflictDoNothing({ target: users.email }).returning({ id: users.id });
-        const user = created ? await findUserByIdRow(database, created.id) : await findUserByEmail(database, email);
+        let user = created ? await findUserByIdRow(database, created.id) : await findUserByEmail(database, email);
+        if (user && !user.contributorConsentAt) {
+          await database.update(users).set({ contributorConsentAt: consentAt, updatedAt: consentAt })
+            .where(and(eq(users.id, user.id), isNull(users.contributorConsentAt)));
+          user = { ...user, contributorConsentAt: consentAt };
+        }
         if (user && user.email && !user.emailVerifiedAt) {
           const token = await createOneTimeToken(database, user.id, "verify_email", EMAIL_TTL_MS);
           await mailer.sendVerificationEmail({ email: user.email, url: `${getPrimaryAppOrigin()}/verify-email?token=${encodeURIComponent(token)}` });
