@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ProjectApiContext } from "./api";
 import { apiErrorResponse, assertSameOriginRequest } from "../auth/http";
 import { OwnedResourceNotFoundError } from "@meta-game/db";
+import { isOpaqueTelemetryId } from "@meta-game/config";
 
 type Params = { params: Promise<{ projectId: string; versionId?: string }> };
 const UUID = z.string().uuid();
@@ -78,11 +79,12 @@ export function createVersionHandlers(context: ProjectApiContext, options: {
           return Response.json({ error: "version_restore_unavailable" }, { status: 503, headers: privateHeaders });
         }
         const endpoint = new URL(`/internal/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(parsed.data)}/restore`, workerUrl);
+        const requestId = request.headers.get("x-request-id");
         const response = await (options.fetcher ?? fetch)(endpoint, {
           method: "POST",
           redirect: "error",
           cache: "no-store",
-          headers: { authorization: `Bearer ${options.workerToken}`, "content-type": "application/json" },
+          headers: { authorization: `Bearer ${options.workerToken}`, "content-type": "application/json", ...(isOpaqueTelemetryId(requestId) ? { "x-request-id": requestId } : {}) },
           body: JSON.stringify({ userId: context.identity.userId }),
           signal: AbortSignal.timeout(9 * 60_000),
         });

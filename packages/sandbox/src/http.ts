@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { SandboxBusyError, SandboxNotFoundError, SandboxService } from "./service";
 import { SandboxRuntimeError } from "./driver";
+import { createTelemetryLogger, isOpaqueTelemetryId, withTelemetryContext, type TelemetryMetrics } from "@meta-game/config";
 import {
   SandboxInstallDependenciesInputSchema,
   SandboxReadFileInputSchema,
@@ -27,12 +28,22 @@ const execSchema = z.object({
   timeoutMs: z.number().int().min(1_000).max(120_000).optional(),
 }).strict();
 
-export function createSandboxControllerServer(service: SandboxService, token: string): Server {
+export function createSandboxControllerServer(service: SandboxService, token: string, metrics?: TelemetryMetrics): Server {
   if (Buffer.byteLength(token) < 32 || /placeholder|replace-me|change-me/i.test(token)) {
     throw new Error("SANDBOX_CONTROLLER_TOKEN must be a generated secret");
   }
   const server = createServer((request, response) => {
-    void handleRequest(request, response, service, token);
+    const logger = createTelemetryLogger("sandbox-controller");
+    const started = Date.now();
+    response.once("finish", () => {
+      const method = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]).has(request.method ?? "") ? request.method! : "OTHER";
+      const statusClass = String(Math.floor(response.statusCode / 100)) + "xx";
+      metrics?.increment("http_requests_total", { method, status_class: statusClass });
+      metrics?.observe("http_request_duration_seconds", Math.max(0, Date.now() - started) / 1_000, { method });
+    });
+    const runHeader = request.headers["x-run-id"];
+    const runId = typeof runHeader === "string" && isOpaqueTelemetryId(runHeader) ? runHeader : undefined;
+    void withTelemetryContext(runId ? { runId } : {}, () => handleRequest(request, response, service, token, metrics, logger));
   });
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;
@@ -40,13 +51,22 @@ export function createSandboxControllerServer(service: SandboxService, token: st
   return server;
 }
 
-async function handleRequest(request: IncomingMessage, response: ServerResponse, service: SandboxService, token: string): Promise<void> {
+async function handleRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  service: SandboxService,
+  token: string,
+  metrics?: TelemetryMetrics,
+  logger?: ReturnType<typeof createTelemetryLogger>,
+): Promise<void> {
   setSecurityHeaders(response);
   if (request.method === "GET" && request.url === "/healthz") {
     send(response, 200, { status: "ready" });
     return;
   }
   if (!validBearer(request.headers.authorization, token)) {
+    metrics?.increment("sandbox_operations_total", { operation: "exec", outcome: "denied" });
+    logger?.warn("sandbox.request_denied", { operation: "exec", outcome: "denied" });
     send(response, 401, { error: "unauthorized" });
     return;
   }
@@ -62,30 +82,57 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     return;
   }
   const projectId = parsedId.data;
+  const pathTool = toolPath.exec(pathname)?.[2];
+  const operation = pathTool === "read-file" || pathTool === "read-binary-file" || pathTool === "read-logs" ? "read"
+    : pathTool === "write-file" || pathTool === "write-binary-file" ? "write"
+      : pathTool === "delete-file" ? "delete"
+      : pathTool === "list-files" ? "list"
+        : pathTool === "install-dependencies" ? "install"
+          : pathTool === "run-command" || execPath.test(pathname) ? "exec"
+            : pathTool === "verify-game" ? "verify"
+              : pathTool === "start-dev-server" ? "start_server"
+                : cleanupPath.test(pathname) || quiescePath.test(pathname) ? "cleanup"
+                  : request.method === "DELETE" ? "delete"
+                    : request.method === "GET" ? "inspect" : stopPath.test(pathname) ? "stop" : "create";
+  const recordOperation = (outcome: "success" | "error" | "denied") => {
+    metrics?.increment("sandbox_operations_total", { operation, outcome });
+    if (outcome === "success") logger?.info("sandbox.operation_completed", { operation, outcome });
+    else logger?.error("sandbox.operation_failed", { operation, outcome, errorCode: "sandbox_operation_failed" });
+  };
   try {
     if (request.method === "POST" && projectPath.test(pathname)) {
-      send(response, 200, await service.create(projectId));
+      const result = await service.create(projectId);
+      recordOperation("success");
+      send(response, 200, result);
       return;
     }
     if (request.method === "GET" && projectPath.test(pathname)) {
-      send(response, 200, await service.inspect(projectId));
+      const result = await service.inspect(projectId);
+      recordOperation("success");
+      send(response, 200, result);
       return;
     }
     if (request.method === "DELETE" && projectPath.test(pathname)) {
-      send(response, 200, await service.destroy(projectId));
+      const result = await service.destroy(projectId);
+      recordOperation("success");
+      send(response, 200, result);
       return;
     }
     if (request.method === "POST" && stopPath.test(pathname)) {
-      send(response, 200, await service.stop(projectId));
+      const result = await service.stop(projectId);
+      recordOperation("success");
+      send(response, 200, result);
       return;
     }
     if (request.method === "POST" && cleanupPath.test(pathname)) {
       await service.cleanupManagedProject(projectId);
+      recordOperation("success");
       send(response, 200, { cleaned: true });
       return;
     }
     if (request.method === "POST" && quiescePath.test(pathname)) {
       await service.quiesceManagedProject(projectId);
+      recordOperation("success");
       send(response, 200, { quiesced: true });
       return;
     }
@@ -96,16 +143,22 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
         send(response, 400, { error: "invalid_request" });
         return;
       }
-      send(response, 200, await service.exec(projectId, input.data.argv, input.data.cwd, input.data.timeoutMs));
+      const result = await service.exec(projectId, input.data.argv, input.data.cwd, input.data.timeoutMs);
+      recordOperation("success");
+      send(response, 200, result);
       return;
     }
     const tool = toolPath.exec(pathname)?.[2];
     if (tool === "read-logs" && request.method === "GET") {
-      send(response, 200, await service.readLogs(projectId));
+      const result = await service.readLogs(projectId);
+      recordOperation("success");
+      send(response, 200, result);
       return;
     }
     if (tool === "start-dev-server" && request.method === "POST") {
-      send(response, 200, await service.startDevServer(projectId));
+      const result = await service.startDevServer(projectId);
+      metrics?.increment("sandbox_operations_total", { operation: "start_server", outcome: "success" });
+      send(response, 200, result);
       return;
     }
     if (tool && request.method === "POST") {
@@ -113,25 +166,33 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       if (tool === "read-file") {
         const input = SandboxReadFileInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
-        send(response, 200, await service.readFile(projectId, input.data.path));
+        const result = await service.readFile(projectId, input.data.path);
+        recordOperation("success");
+        send(response, 200, result);
         return;
       }
       if (tool === "read-binary-file") {
         const input = SandboxReadBinaryFileInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
-        send(response, 200, await service.readBinaryFile(projectId, input.data.path));
+        const result = await service.readBinaryFile(projectId, input.data.path);
+        recordOperation("success");
+        send(response, 200, result);
         return;
       }
       if (tool === "write-file") {
         const input = SandboxWriteFileInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
-        send(response, 200, await service.writeFile(projectId, input.data.path, input.data.content));
+        const result = await service.writeFile(projectId, input.data.path, input.data.content);
+        recordOperation("success");
+        send(response, 200, result);
         return;
       }
       if (tool === "delete-file") {
         const input = SandboxDeleteFileInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
-        send(response, 200, await service.deleteFile(projectId, input.data.path));
+        const result = await service.deleteFile(projectId, input.data.path);
+        recordOperation("success");
+        send(response, 200, result);
         return;
       }
       if (tool === "write-binary-file") {
@@ -139,36 +200,47 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
         const bytes = Buffer.from(input.data.contentBase64, "base64");
         if (bytes.toString("base64") !== input.data.contentBase64) { send(response, 400, { error: "invalid_tool_input" }); return; }
-        send(response, 200, await service.writeBinaryFile(projectId, input.data.path, bytes));
+        const result = await service.writeBinaryFile(projectId, input.data.path, bytes);
+        recordOperation("success");
+        send(response, 200, result);
         return;
       }
       if (tool === "list-files") {
         const input = z.object({ path: z.string().max(512).default("") }).strict().safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
-        send(response, 200, await service.listFiles(projectId, input.data.path));
+        const result = await service.listFiles(projectId, input.data.path);
+        recordOperation("success");
+        send(response, 200, result);
         return;
       }
       if (tool === "install-dependencies") {
         const input = SandboxInstallDependenciesInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_dependency_specification" }); return; }
-        send(response, 200, await service.installDependencies(projectId, input.data));
+        const result = await service.installDependencies(projectId, input.data);
+        recordOperation("success");
+        send(response, 200, result);
         return;
       }
       if (tool === "run-command") {
         const input = SandboxRunCommandInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
-        send(response, 200, await service.runCommand(projectId, input.data));
+        const result = await service.runCommand(projectId, input.data);
+        recordOperation("success");
+        send(response, 200, result);
         return;
       }
       if (tool === "verify-game") {
         const input = GameBrowserVerificationInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
-        send(response, 200, await service.verifyGameInteraction(projectId, input.data));
+        const result = await service.verifyGameInteraction(projectId, input.data);
+        recordOperation("success");
+        send(response, 200, result);
         return;
       }
     }
     send(response, 405, { error: "method_not_allowed" });
   } catch (error) {
+    recordOperation("error");
     if (error instanceof SandboxNotFoundError || (error instanceof Error && error.name === "SandboxProjectNotFoundError")) {
       send(response, 404, { error: "not_found" });
     } else if (error instanceof SandboxBusyError || (error instanceof Error && error.name === "SandboxOperationConflictError")) {

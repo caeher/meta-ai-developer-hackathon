@@ -1,6 +1,7 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { isIP, type Socket } from "node:net";
+import { isIP } from "node:net";
+import type { Duplex } from "node:stream";
 import {
   PREVIEW_EGRESS_PROXY_PORT,
   PREVIEW_SESSION_COOKIE,
@@ -16,6 +17,7 @@ import {
   type PreviewStore,
 } from "@meta-game/preview";
 import { previewProjectHostname } from "@meta-game/preview";
+import { createTelemetryLogger, currentTelemetryContext, isOpaqueTelemetryId, withTelemetryContext, type TelemetryMetrics } from "@meta-game/config";
 
 export type GatewayPreviewTarget = Readonly<{
   ownerUserId: string;
@@ -27,7 +29,7 @@ export type GatewayPreviewTarget = Readonly<{
 
 type ProxyAddress = Readonly<{ hostname: string; port: number }>;
 type AuthorizedRequest = Readonly<{ session: PreviewSession; target: GatewayPreviewTarget; sessionIdHash: string }>;
-type SocketPair = { browser: Socket; upstream: Socket; timer: NodeJS.Timeout; projectId: string };
+type SocketPair = { browser: Duplex; upstream: Duplex; timer: NodeJS.Timeout; projectId: string };
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const allowedMethods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
@@ -201,13 +203,13 @@ function websocketHeaders(request: IncomingMessage, origin: string): Record<stri
   return headers;
 }
 
-function writeUpgradeFailure(socket: Socket, status: number, text: string): void {
+function writeUpgradeFailure(socket: Duplex, status: number, text: string): void {
   if (socket.destroyed) return;
   const body = `${text}\n`;
   socket.end(`HTTP/1.1 ${status} ${status === 404 ? "Not Found" : "Bad Gateway"}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nCache-Control: private, no-store\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\n\r\n${body}`);
 }
 
-function sendCloseFrame(socket: Socket, code: number): void {
+function sendCloseFrame(socket: Duplex, code: number): void {
   if (socket.destroyed || !socket.writable) return;
   const frame = Buffer.from([0x88, 0x02, (code >> 8) & 0xff, code & 0xff]);
   socket.write(frame);
@@ -220,23 +222,31 @@ export function createPreviewGateway(options: {
   store: PreviewStore;
   keyRing: PreviewVerifierKeyRing;
   resolveTarget(projectId: string): Promise<GatewayPreviewTarget | undefined>;
+  metrics?: TelemetryMetrics;
   proxyAddress?(target: GatewayPreviewTarget): ProxyAddress;
   clock?: () => number;
 }) {
   const clock = options.clock ?? Date.now;
+  const logger = createTelemetryLogger("preview-gateway");
   const sockets = new Map<string, Set<SocketPair>>();
-  const connections = new Set<Socket>();
+  const connections = new Set<Duplex>();
   let stopRevocations: (() => Promise<void>) | undefined;
 
   async function resolveAuthorization(request: IncomingMessage, projectId: string): Promise<AuthorizedRequest | undefined> {
     const sessionId = readSessionCookie(request);
-    if (!sessionId) return undefined;
+    if (!sessionId) { options.metrics?.increment("gateway_denials_total", { reason: "missing_session" }); return undefined; }
     const sessionIdHash = hashPreviewSessionId(sessionId);
     const session = await options.store.readSession(sessionIdHash, projectId, Math.floor(clock() / 1000));
-    if (!session) return undefined;
+    if (!session) { options.metrics?.increment("gateway_denials_total", { reason: "invalid_grant" }); return undefined; }
     const target = await options.resolveTarget(projectId);
-    if (!target || target.projectId !== projectId || target.ownerUserId !== session.userId ||
-      target.devServerPort !== 4173 || target.leaseExpiresAt.getTime() <= clock() || !uuidPattern.test(target.sandboxId)) return undefined;
+    if (!target) { options.metrics?.increment("gateway_denials_total", { reason: "not_ready" }); return undefined; }
+    if (target.ownerUserId !== session.userId) { options.metrics?.increment("gateway_denials_total", { reason: "owner_mismatch" }); return undefined; }
+    if (target.projectId !== projectId || target.devServerPort !== 4173 || target.leaseExpiresAt.getTime() <= clock() || !uuidPattern.test(target.sandboxId)) {
+      options.metrics?.increment("gateway_denials_total", { reason: "not_ready" }); return undefined;
+    }
+    if (isOpaqueTelemetryId(session.runId)) {
+      withTelemetryContext({ ...currentTelemetryContext(), runId: session.runId }, () => logger.info("preview.authorized", { outcome: "success" }));
+    }
     return { session, target, sessionIdHash };
   }
 
@@ -269,6 +279,7 @@ export function createPreviewGateway(options: {
     }
     const allowed = await options.store.allowRateLimit(rateKey(`exchange:${projectId}`, clientIp(request)), 60, 60);
     if (!allowed) {
+      options.metrics?.increment("gateway_denials_total", { reason: "rate_limited" });
       response.writeHead(429, headers).end(JSON.stringify({ error: "rate_limited" }));
       return;
     }
@@ -280,12 +291,14 @@ export function createPreviewGateway(options: {
       formExchange = body.form;
     }
     catch {
+      options.metrics?.increment("gateway_denials_total", { reason: "invalid_request" });
       response.writeHead(400, headers).end(JSON.stringify({ error: "invalid_request" }));
       return;
     }
     let claims: PreviewGrantClaims;
     try { claims = verifyPreviewGrant(input.grant, options.keyRing, Math.floor(clock() / 1000)); }
     catch {
+      options.metrics?.increment("gateway_denials_total", { reason: "invalid_grant" });
       response.writeHead(404, headers).end(JSON.stringify({ error: "preview_unavailable" }));
       return;
     }
@@ -296,6 +309,7 @@ export function createPreviewGateway(options: {
     const target = await options.resolveTarget(projectId);
     if (!target || target.projectId !== projectId || target.ownerUserId !== claims.userId ||
       target.devServerPort !== 4173 || target.leaseExpiresAt.getTime() <= clock()) {
+      options.metrics?.increment("gateway_denials_total", { reason: target?.ownerUserId !== claims.userId ? "owner_mismatch" : "not_ready" });
       response.writeHead(404, headers).end(JSON.stringify({ error: "preview_unavailable" }));
       return;
     }
@@ -309,6 +323,7 @@ export function createPreviewGateway(options: {
     const session = PreviewSessionSchema.parse({
       userId: claims.userId,
       projectId,
+      ...(claims.runId ? { runId: claims.runId } : {}),
       epoch: claims.epoch,
       expiresAt: nowSeconds + options.sessionTtlSeconds,
     });
@@ -356,12 +371,13 @@ export function createPreviewGateway(options: {
     }
     const route = projectFromHost(request.headers.host, options.baseDomain);
     const host = route?.hostname ?? `invalid.${options.baseDomain}`;
-    if (!route) { denial(response, host, options.appOrigin); return; }
+    if (!route) { options.metrics?.increment("gateway_denials_total", { reason: "unknown_host" }); denial(response, host, options.appOrigin); return; }
     const parsedTarget = parseRequestTarget(request.url);
-    if (!parsedTarget) { denial(response, host, options.appOrigin); return; }
+    if (!parsedTarget) { options.metrics?.increment("gateway_denials_total", { reason: "invalid_request" }); denial(response, host, options.appOrigin); return; }
     if (parsedTarget.path === "/__session") {
       if (parsedTarget.query) { denial(response, route.hostname, options.appOrigin, 400); return; }
       void exchangeSession(request, response, route.projectId, route.hostname).catch(() => {
+        options.metrics?.increment("gateway_denials_total", { reason: "not_ready" });
         if (!response.headersSent) denial(response, route.hostname, options.appOrigin, 503);
         else response.destroy();
       });
@@ -431,9 +447,9 @@ export function createPreviewGateway(options: {
     timer.unref();
   }
 
-  function handleUpgrade(request: IncomingMessage, browser: Socket, head: Buffer): void {
+  function handleUpgrade(request: IncomingMessage, browser: Duplex, head: Buffer): void {
     const route = projectFromHost(request.headers.host, options.baseDomain);
-    if (!route) { writeUpgradeFailure(browser, 404, "Preview unavailable"); return; }
+    if (!route) { options.metrics?.increment("gateway_denials_total", { reason: "unknown_host" }); writeUpgradeFailure(browser, 404, "Preview unavailable"); return; }
     const parsedTarget = parseRequestTarget(request.url);
     const origin = `https://${route.hostname}`;
     const headers = websocketHeaders(request, origin);
@@ -506,6 +522,7 @@ export function createPreviewGateway(options: {
           browser.once("close", () => { removeSocketPair(pair); upstreamSocket.destroy(); });
           upstreamSocket.once("close", () => { removeSocketPair(pair); browser.destroy(); });
         }).catch(() => {
+        options.metrics?.increment("gateway_denials_total", { reason: "proxy_error" });
           removeSocketPair(pair);
           upstreamSocket.destroy();
           writeUpgradeFailure(browser, 404, "Preview unavailable");
@@ -524,7 +541,18 @@ export function createPreviewGateway(options: {
     })().catch(() => writeUpgradeFailure(browser, 404, "Preview unavailable"));
   }
 
-  const server: Server = createServer((request, response) => handleHttp(request, response));
+  const server: Server = createServer((request, response) => {
+    const requestId = randomUUID();
+    const started = Date.now();
+    response.setHeader("x-request-id", requestId);
+    response.once("finish", () => {
+      const method = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]).has(request.method ?? "") ? request.method! : "OTHER";
+      const statusClass = String(Math.floor(response.statusCode / 100)) + "xx";
+      options.metrics?.increment("http_requests_total", { method, status_class: statusClass });
+      options.metrics?.observe("http_request_duration_seconds", Math.max(0, Date.now() - started) / 1_000, { method });
+    });
+    void withTelemetryContext({ requestId }, () => handleHttp(request, response));
+  });
   server.headersTimeout = 5_000;
   server.requestTimeout = 30_000;
   server.keepAliveTimeout = 2_000;
@@ -533,7 +561,10 @@ export function createPreviewGateway(options: {
     connections.add(socket);
     socket.once("close", () => connections.delete(socket));
   });
-  server.on("upgrade", handleUpgrade);
+  server.on("upgrade", (request, socket, head) => {
+    const requestId = randomUUID();
+    void withTelemetryContext({ requestId }, () => handleUpgrade(request, socket, head));
+  });
 
   return {
     server,

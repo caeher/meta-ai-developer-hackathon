@@ -1,6 +1,6 @@
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseSandboxEnvironment } from "@meta-game/config";
+import { parseSandboxEnvironment, TelemetryMetrics, withTelemetryContext } from "@meta-game/config";
 import type { SandboxRecord, SandboxState } from "@meta-game/db";
 import {
   assertSandboxUid,
@@ -376,12 +376,15 @@ describe("sandbox rootless contract", () => {
 
   it("autentica worker, resuelve projectId sin aceptar owner y confina las operaciones", async () => {
     const f = fixture();
-    const server = createSandboxControllerServer(f.service, TOKEN);
+    const metrics = new TelemetryMetrics("sandbox-controller");
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const server = createSandboxControllerServer(f.service, TOKEN, metrics);
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address() as AddressInfo;
     const url = `http://127.0.0.1:${address.port}/`;
     const endpoint = `${url}v1/projects/${PROJECT_ID}/sandbox`;
+    const runId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
     const denied = await fetch(endpoint, { method: "POST" });
     expect(denied.status).toBe(401);
@@ -389,9 +392,15 @@ describe("sandbox rootless contract", () => {
     expect(f.driver.create).not.toHaveBeenCalled();
 
     const client = new SandboxControllerClient(url, TOKEN);
-    const created = await client.create(PROJECT_ID);
+    const created = await withTelemetryContext({ runId }, () => client.create(PROJECT_ID));
     expect(created.state).toBe("ready");
     expect(f.driver.create).toHaveBeenCalledWith(expect.objectContaining({ projectId: PROJECT_ID, uid: 23451 }));
+    const createLog = output.mock.calls.map(([chunk]) => String(chunk)).find((line) => line.includes('"event":"sandbox.operation_completed"') && line.includes('"operation":"create"'));
+    expect(createLog).toContain('"runId":"' + runId + '"');
+    expect(createLog).not.toContain(TOKEN);
+    expect(createLog).not.toContain(PROJECT_ID);
+    expect(metrics.value("sandbox_operations_total", { operation: "create", outcome: "success" })).toBe(1);
+    output.mockRestore();
 
     await expect(client.exec(PROJECT_ID, ["npm", "run", "build"])).resolves.toMatchObject({ stdout: "ok", exitCode: 0, truncated: false });
     await expect(client.writeBinaryFile(PROJECT_ID, "public/assets/generated/00000000-0000-4000-8000-000000000002.png", new Uint8Array([137, 80, 78, 71])))

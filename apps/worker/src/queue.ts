@@ -1,4 +1,7 @@
 import { Queue, Worker, type Job, type QueueOptions, type WorkerOptions } from "bullmq";
+import { statfs } from "node:fs/promises";
+import { count } from "drizzle-orm";
+import { createTelemetryLogger, evaluateOperationalAlerts, TelemetryMetrics, withTelemetryContext } from "@meta-game/config";
 import type { GameDatabase } from "@meta-game/db";
 import {
   claimRunOutboxBatch,
@@ -7,6 +10,7 @@ import {
   markRunOutboxDispatched,
   markRunOutboxRetryable,
   reopenMissingQueuedRunOutbox,
+  sandboxes,
   type ClaimedRunOutbox,
 } from "@meta-game/db";
 import { RunQueueJobSchema, type RunQueueJob } from "@meta-game/contracts";
@@ -101,9 +105,12 @@ async function dispatchOne(database: GameDatabase, queue: Queue<RunQueueJob>, it
   }
 }
 
-async function reconcileRedisQueue(database: GameDatabase, queue: Queue<RunQueueJob>): Promise<void> {
+async function reconcileRedisQueue(database: GameDatabase, queue: Queue<RunQueueJob>, metrics?: TelemetryMetrics): Promise<void> {
   const expired = await reconcileExpiredRunLeases(database, 100);
-  if (expired > 0) return;
+  if (expired > 0) {
+    metrics?.increment("run_lock_events_total", { outcome: "expired" }, expired);
+    return;
+  }
   const rows = await listDispatchedQueuedRuns(database, 100);
   for (const row of rows) {
     const jobId = `run-${row.runId}-${row.generation}`;
@@ -125,12 +132,26 @@ async function processRun(
   job: Job<RunQueueJob>,
   handler: RunHandler,
   leaseMs: number,
-): Promise<{ status: "processed" | "skipped" }> {
+  metrics?: TelemetryMetrics,
+): Promise<{ status: "processed" | "skipped"; outcome: "succeeded" | "failed" | "cancelled" | "skipped" }> {
   const payload = RunQueueJobSchema.parse(job.data);
-  const claimed = await claimRun(database, { ...payload, leaseMs });
-  if (!claimed) return { status: "skipped" };
+  let claimed: Awaited<ReturnType<typeof claimRun>>;
+  try { claimed = await claimRun(database, { ...payload, leaseMs }); }
+  catch (error) {
+    metrics?.increment("run_lock_events_total", { outcome: "error" });
+    throw error;
+  }
+  if (!claimed) {
+    metrics?.increment("run_lock_events_total", { outcome: "busy" });
+    return { status: "skipped", outcome: "skipped" };
+  }
+  metrics?.increment("run_lock_events_total", { outcome: "acquired" });
   const { claim, cancelRequested } = claimed;
   const controller = new AbortController();
+  const finish = async (input: Parameters<typeof finishClaimedRun>[2]) => {
+    await finishClaimedRun(database, claim, input);
+    metrics?.increment("run_lock_events_total", { outcome: "released" });
+  };
   let verifying = false;
   const markVerifying = async () => {
     if (verifying) return;
@@ -143,12 +164,14 @@ async function processRun(
     heartbeatBusy = true;
     void renewRunLease(database, claim, leaseMs)
       .then((result) => {
+        metrics?.increment("run_lock_events_total", { outcome: result.valid ? "renewed" : "lost" });
         if (!result.valid || result.cancelRequested) {
           controller.abort();
           clearInterval(heartbeat);
         }
       })
       .catch(() => {
+        metrics?.increment("run_lock_events_total", { outcome: "error" });
         controller.abort();
         clearInterval(heartbeat);
       })
@@ -158,37 +181,38 @@ async function processRun(
 
   try {
     if (cancelRequested) {
-      await finishClaimedRun(database, claim, { status: "cancelled" });
-      return { status: "processed" };
+      await finish({ status: "cancelled" });
+      return { status: "processed", outcome: "cancelled" };
     }
     await transitionClaimedRun(database, claim, "running");
     const run: WorkerRun = { id: payload.runId, projectId: claim.projectId, idempotencyKey: payload.idempotencyKey };
     const result = await handler(run, { signal: controller.signal, claim, markVerifying });
     if (controller.signal.aborted) {
-      await finishClaimedRun(database, claim, { status: "cancelled", usage: result.usage });
-      return { status: "processed" };
+      await finish({ status: "cancelled", usage: result.usage });
+      return { status: "processed", outcome: "cancelled" };
     }
     await markVerifying();
-    await finishClaimedRun(database, claim, { status: "succeeded", usage: result.usage });
-    return { status: "processed" };
+    await finish({ status: "succeeded", usage: result.usage });
+    return { status: "processed", outcome: "succeeded" };
   } catch (error) {
     if (controller.signal.aborted) {
-      await finishClaimedRun(database, claim, {
+      await finish({
         status: "cancelled",
         usage: error instanceof RunProcessingError ? error.usage : undefined,
       });
-      return { status: "processed" };
+      return { status: "processed", outcome: "cancelled" };
     }
     if (error instanceof RunProcessingError && !error.retryable) {
-      await finishClaimedRun(database, claim, { status: "failed", errorCode: error.code, usage: error.usage });
-      return { status: "processed" };
+      await finish({ status: "failed", errorCode: error.code, usage: error.usage });
+      return { status: "processed", outcome: "failed" };
     }
     const attempts = job.opts.attempts ?? MAX_JOB_ATTEMPTS;
     if (job.attemptsMade + 1 >= attempts) {
-      await finishClaimedRun(database, claim, { status: "failed", errorCode: "worker_retries_exhausted" });
-      return { status: "processed" };
+      await finish({ status: "failed", errorCode: "worker_retries_exhausted" });
+      return { status: "processed", outcome: "failed" };
     }
     await releaseRunForRetry(database, claim, job.attemptsMade + 1);
+    metrics?.increment("run_lock_events_total", { outcome: "retry" });
     throw error instanceof Error ? error : new Error("worker_retryable_error");
   } finally {
     clearInterval(heartbeat);
@@ -203,6 +227,7 @@ export interface RunWorkerServiceOptions {
   leaseMs?: number;
   pollIntervalMs?: number;
   concurrency?: number;
+  metrics?: TelemetryMetrics;
 }
 
 export function startRunWorkerService(options: RunWorkerServiceOptions) {
@@ -210,9 +235,92 @@ export function startRunWorkerService(options: RunWorkerServiceOptions) {
   const leaseMs = options.leaseMs ?? 30_000;
   const pollIntervalMs = options.pollIntervalMs ?? 1_000;
   const queue = createRunQueue(options.redisUrl, queueName);
+  const logger = createTelemetryLogger("worker");
+  const metrics = options.metrics;
+  const alertWindow: Array<{ at: number; providerRequests: number; providerErrors: number; cleanupFailures: number }> = [];
+  const previousCounters = new Map<string, number>();
+  const activeAlerts = new Set<string>();
+  const counterDelta = (key: string, current: number): number => {
+    const previous = previousCounters.get(key) ?? current;
+    previousCounters.set(key, current);
+    return current >= previous ? current - previous : current;
+  };
+  const updateMetrics = async () => {
+    if (!metrics) return;
+    const counts = await queue.getJobCounts("waiting", "active", "delayed", "failed");
+    for (const state of ["waiting", "active", "delayed", "failed"] as const) metrics.set("queue_jobs", counts[state] ?? 0, { state });
+    const sandboxCounts = await options.database.select({ state: sandboxes.status, instances: count() }).from(sandboxes).groupBy(sandboxes.status);
+    const sandboxStates = ["provisioning", "ready", "suspending", "suspended", "stopping", "stopped", "failed"] as const;
+    for (const state of sandboxStates) {
+      const instances = sandboxCounts.find((item) => item.state === state)?.instances ?? 0;
+      metrics.set("sandbox_instances", instances, { state });
+    }
+    const waiting = await queue.getJobs(["waiting"], 0, 99, false);
+    const oldestMs = waiting.reduce((value, job) => Math.max(value, Math.max(0, Date.now() - job.timestamp)), 0);
+    const oldestSeconds = oldestMs / 1_000;
+    metrics.set("queue_oldest_waiting_seconds", oldestSeconds);
+    metrics.set("queue_stuck_jobs", oldestSeconds >= 900 ? counts.waiting ?? 0 : 0);
+    let diskUsedRatio: number | undefined;
+    if (process.platform === "linux") {
+      const filesystem = await statfs("/");
+      const total = Number(filesystem.blocks) * Number(filesystem.bsize);
+      const free = Number(filesystem.bavail) * Number(filesystem.bsize);
+      if (total > 0 && Number.isFinite(total) && Number.isFinite(free)) {
+        diskUsedRatio = Math.min(1, Math.max(0, 1 - free / total));
+        metrics.set("disk_used_ratio", diskUsedRatio, { mount: "root" });
+      }
+    }
+    const tasks = ["plan", "code", "image", "smoke"] as const;
+    let providerRequests = 0;
+    let providerErrors = 0;
+    for (const task of tasks) {
+      const succeeded = metrics.value("meta_requests_total", { task, outcome: "success" });
+      const failed = metrics.value("meta_requests_total", { task, outcome: "error" });
+      const ambiguous = metrics.value("meta_requests_total", { task, outcome: "ambiguous" });
+      providerRequests += counterDelta("meta:" + task + ":success", succeeded) + counterDelta("meta:" + task + ":error", failed) + counterDelta("meta:" + task + ":ambiguous", ambiguous);
+      providerErrors += counterDelta("error:" + task, failed) + counterDelta("ambiguous:" + task, ambiguous);
+    }
+    const cleanupFailures = counterDelta("cleanup:failed", metrics.value("cleanup_runs_total", { outcome: "failed" }));
+    const now = Date.now();
+    alertWindow.push({ at: now, providerRequests, providerErrors, cleanupFailures });
+    while (alertWindow.length && alertWindow[0]!.at < now - 300_000) alertWindow.shift();
+    const signals = alertWindow.reduce((result, item) => ({
+      providerRequests: result.providerRequests + item.providerRequests,
+      providerErrors: result.providerErrors + item.providerErrors,
+      cleanupFailures: result.cleanupFailures + item.cleanupFailures,
+    }), { providerRequests: 0, providerErrors: 0, cleanupFailures: 0 });
+    const currentAlerts = new Set(evaluateOperationalAlerts({
+      oldestWaitingSeconds: oldestSeconds,
+      diskUsedRatio,
+      ...signals,
+    }));
+    for (const alert of currentAlerts) if (!activeAlerts.has(alert)) logger.error("alert.fired", { alert });
+    for (const alert of activeAlerts) if (!currentAlerts.has(alert)) logger.info("alert.resolved", { alert });
+    activeAlerts.clear();
+    for (const alert of currentAlerts) activeAlerts.add(alert);
+  };
   const worker = new Worker<RunQueueJob>(
     queueName,
-    (job) => processRun(options.database, job, options.handler, leaseMs),
+    async (job) => {
+      const started = Date.now();
+      return withTelemetryContext({ runId: job.data.runId }, async () => {
+        logger.info("run.started");
+        let outcome: "succeeded" | "failed" | "cancelled" | "skipped" = "failed";
+        try {
+          const result = await processRun(options.database, job, options.handler, leaseMs, metrics);
+          outcome = result.outcome;
+          return result;
+        } catch {
+          logger.error("run.retryable_error", { errorCode: "worker_retryable_error" });
+          throw new Error("worker_retryable_error");
+        } finally {
+          const durationMs = Math.max(0, Date.now() - started);
+          metrics?.increment("run_jobs_total", { outcome });
+          metrics?.observe("run_duration_seconds", durationMs / 1_000, { outcome });
+          logger.info("run.finished", { outcome, durationMs });
+        }
+      });
+    },
     {
       connection: redisConnectionOptions(options.redisUrl, true),
       concurrency: options.concurrency ?? 4,
@@ -228,12 +336,12 @@ export function startRunWorkerService(options: RunWorkerServiceOptions) {
     if (polling || closed) return;
     polling = true;
     try {
-      await reconcileRedisQueue(options.database, queue);
+      await reconcileRedisQueue(options.database, queue, metrics);
+      try { await updateMetrics(); } catch { logger.warn("metrics.collection_failed", { errorCode: "metrics_collection_failed" }); }
       const batch = await claimRunOutboxBatch(options.database, { limit: 25, leaseMs: Math.min(120_000, Math.max(3_000, leaseMs)) });
       for (const item of batch) await dispatchOne(options.database, queue, item);
-    } catch (error) {
-      const name = error instanceof Error ? error.name : "unknown";
-      process.stderr.write(`run_queue_reconciliation_error ${name}\n`);
+    } catch {
+      logger.error("queue.reconciliation_failed", { errorCode: "queue_reconciliation_failed" });
     } finally {
       polling = false;
     }
@@ -242,7 +350,7 @@ export function startRunWorkerService(options: RunWorkerServiceOptions) {
   timer.unref();
   void poll();
 
-  worker.on("error", (error) => process.stderr.write(`run_worker_error ${error.name}\n`));
+  worker.on("error", () => logger.error("run_worker.failed", { errorCode: "worker_runtime_failed" }));
 
   return {
     queue,

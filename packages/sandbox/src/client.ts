@@ -1,5 +1,6 @@
 import type { PublicSandboxState } from "./service";
 import { SandboxRuntimeError } from "./driver";
+import { currentTelemetryContext } from "@meta-game/config";
 import {
   SandboxWriteBinaryFileInputSchema,
   SandboxReadBinaryFileInputSchema,
@@ -119,13 +120,14 @@ export class SandboxControllerClient {
   }
 
   private async request<T>(path: string, method: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    const runId = currentTelemetryContext().runId;
     let response: Response;
     try {
       response = await this.fetcher(new URL(path, this.baseUrl), {
         method,
         redirect: "error",
         cache: "no-store",
-        headers: { authorization: `Bearer ${this.token}`, ...(body ? { "content-type": "application/json" } : {}) },
+        headers: { authorization: `Bearer ${this.token}`, ...(runId ? { "x-run-id": runId } : {}), ...(body ? { "content-type": "application/json" } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}),
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(130_000)]) : AbortSignal.timeout(130_000),
       });

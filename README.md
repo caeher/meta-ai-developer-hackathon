@@ -153,3 +153,19 @@ La imagen del sandbox incluye el runner Chromium fijado a Playwright 1.64.1; se 
 - `.github/workflows/ci.yml`: verificación en Node 24, sin secretos.
 
 Phaser es el motor predeterminado para juegos generados según la arquitectura definida en [AGENTS.md](AGENTS.md); los procesos de juego no se ejecutan dentro de Next.
+
+
+## Operacion y recuperacion local (#26)
+
+La decision del propietario en AGENTS.md define Compose local como desarrollo, staging y aceptacion internos. Las menciones antiguas a VPS, DNS publico o un host Linux dedicado quedan sustituidas por perfiles Docker Desktop, dominios *.localhost y TLS local cuando haga falta. La autenticacion es propia y no depende de Clerk.
+
+Consulta [guia de operacion, metricas, alertas y backup/restore](docs/operations-issue-26.md) y [evidencia del simulacro PostgreSQL + Silo](docs/backup-restore-report.md). La guia documenta logs sanitizados, correlacion requestId/runId, healthchecks, rotacion de claves cifradas y restauracion solo a destinos vacios.
+
+```sh
+npm run infra:config
+npm run infra:up -- --web --worker
+npm run backup:acceptance
+npm run backup:create
+```
+
+El endpoint de metrics web es `/api/metrics`; los servicios internos mantienen `/livez`, `/readyz` y `/metrics` en la red Compose, sin publicar el puerto 9090.

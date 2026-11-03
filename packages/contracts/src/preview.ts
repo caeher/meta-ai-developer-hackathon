@@ -15,6 +15,7 @@ export const PreviewGrantClaimsSchema = z.object({
   sub: userId,
   userId: userId,
   projectId: uuid,
+  runId: uuid.optional(),
   aud: z.literal(PREVIEW_GRANT_AUDIENCE),
   iat: z.number().int().positive(),
   exp: z.number().int().positive(),
@@ -27,6 +28,7 @@ export const PreviewGrantClaimsSchema = z.object({
 export const PreviewSessionSchema = z.object({
   userId: userId,
   projectId: uuid,
+  runId: uuid.optional(),
   epoch: z.number().int().nonnegative().safe(),
   expiresAt: z.number().int().positive(),
 }).strict();

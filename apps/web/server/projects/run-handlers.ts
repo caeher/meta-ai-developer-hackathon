@@ -1,6 +1,8 @@
 import { EnqueueRunRequestSchema, RunResponseSchema } from "@meta-game/contracts";
 import type { RunQuotaPolicy, VerifiedIdentityContext } from "@meta-game/db";
 import { apiErrorResponse, assertSameOriginRequest, readLimitedJson } from "../auth/http";
+import { isOpaqueTelemetryId, newRequestId, withTelemetryContext } from "@meta-game/config";
+import { webLogger } from "../observability";
 
 interface RunProjectLookup {
   get(identity: VerifiedIdentityContext, projectId: string): Promise<unknown | undefined>;
@@ -65,6 +67,9 @@ export function createRunHandlers(options: {
     },
 
     async POST(request: Request, context: { params: Promise<{ projectId: string }> }): Promise<Response> {
+      const candidateRequestId = request.headers.get("x-request-id");
+      const requestId = isOpaqueTelemetryId(candidateRequestId) ? candidateRequestId : newRequestId();
+      return withTelemetryContext({ requestId }, async () => {
       try {
         assertSameOriginRequest(request, options.allowedOrigins);
         const body = EnqueueRunRequestSchema.parse(await readLimitedJson(request, 4 * 1024));
@@ -84,10 +89,12 @@ export function createRunHandlers(options: {
           contributorConsent: true,
           policy: options.policy,
         });
+        withTelemetryContext({ requestId, runId: result.run.id }, () => webLogger.info("run.enqueued", { outcome: result.created ? "created" : "duplicate" }));
         return Response.json({ run: toRunResponse(result.run), duplicate: !result.created }, { status: result.created ? 202 : 200, headers: privateHeaders });
       } catch (error) {
         return apiErrorResponse(error);
       }
+      });
     },
 
     async GET(_request: Request, context: { params: Promise<{ projectId: string; runId: string }> }): Promise<Response> {

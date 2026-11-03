@@ -7,6 +7,7 @@ import {
 import type { VerifiedIdentityContext } from "@meta-game/db";
 import { OwnedResourceNotFoundError } from "@meta-game/db";
 import { apiErrorResponse } from "../auth/http";
+import { adjustSseConnections, recordSseEvent } from "../observability";
 
 interface StoredRunEvent {
   sequence: number;
@@ -68,6 +69,8 @@ export function createRunEventsHandler(options: {
         runId,
         afterSequence,
         request,
+        onConnectionChange: adjustSseConnections,
+        onEvent: recordSseEvent,
         now,
         wait,
         validateSession: options.validateSession,
@@ -85,6 +88,8 @@ function createEventStream(input: {
   runId: string;
   afterSequence: number;
   request: Request;
+  onConnectionChange(change: 1 | -1): void;
+  onEvent(type: string): void;
   now: () => number;
   wait: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   validateSession?: () => Promise<void>;
@@ -100,9 +105,11 @@ function createEventStream(input: {
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
+      input.onConnectionChange(1);
       const close = () => {
         if (closed) return;
         closed = true;
+        input.onConnectionChange(-1);
         requestSignal.removeEventListener("abort", abort);
         try { controller.close(); } catch { /* The client may already have cancelled the stream. */ }
       };
@@ -145,6 +152,7 @@ function createEventStream(input: {
               const projected = pending.shift();
               if (!projected) break;
               cursor = projected.event.sequence;
+              input.onEvent(projected.event.type);
               controller.enqueue(encodeEvent(projected.event, encoder));
               lastHeartbeatAt = input.now();
               if (projected.terminal) {
@@ -178,6 +186,7 @@ function createEventStream(input: {
       void pump();
     },
     cancel() {
+      if (!closed) input.onConnectionChange(-1);
       cancelled = true;
       closed = true;
     },

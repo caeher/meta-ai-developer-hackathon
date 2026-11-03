@@ -5,6 +5,7 @@ import {
   type MetaCodeEvent,
   type MetaImageResult,
   type MetaPlanResult,
+  type MetaUsage,
 } from "@meta-game/contracts";
 import type { MetaConfig } from "./config.js";
 import { loadMetaConfig } from "./config.js";
@@ -35,6 +36,19 @@ export interface MetaOperationOptions {
   signal?: AbortSignal;
   maxOutputTokens?: number;
 }
+
+export interface MetaTelemetryMetrics {
+  increment(name: string, labels: Readonly<Record<string, string>>, amount?: number): void;
+  observe(name: string, value: number, labels: Readonly<Record<string, string>>): void;
+}
+
+export type MetaBillingRates = Readonly<{
+  planInputUsdPerMillion?: number;
+  planOutputUsdPerMillion?: number;
+  codeInputUsdPerMillion?: number;
+  codeOutputUsdPerMillion?: number;
+  imageUsd?: number;
+}>;
 
 export interface MetaToolDefinition<TSchema extends z.ZodType = z.ZodType> {
   name: string;
@@ -150,6 +164,8 @@ export class MetaClient {
   constructor(
     private readonly config: MetaConfig = loadMetaConfig(),
     fetchImpl: typeof fetch = fetch,
+    private readonly metrics?: MetaTelemetryMetrics,
+    private readonly billingRates: MetaBillingRates = {},
   ) {
     this.transport = new MetaTransport(config, fetchImpl);
   }
@@ -158,12 +174,32 @@ export class MetaClient {
     assertPrompt(prompt, 80 * 1024, "planning prompt");
     const payload = buildPlanPayload(this.config.modelPlan, prompt, boundedOutputTokens(options.maxOutputTokens, 1_024));
     assertPayloadSize(payload);
-    const result = await this.transport.createResponse(payload, options.signal);
-    assertCompleted(result.response, this.config.modelPlan);
-    return parsePlanResponse(result.response, result.requestId);
+    return this.measure("plan", async () => {
+      const result = await this.transport.createResponse(payload, options.signal);
+      assertCompleted(result.response, this.config.modelPlan);
+      return parsePlanResponse(result.response, result.requestId);
+    });
   }
 
   async *streamCode(request: MetaCodeRequest, options: MetaOperationOptions = {}): AsyncGenerator<MetaCodeEvent> {
+    const started = Date.now();
+    let outcome: "success" | "error" | "ambiguous" = "error";
+    let usage: MetaUsage | undefined;
+    try {
+      for await (const event of this.streamCodeInternal(request, options)) {
+        if (event.type === "completed") usage = event.usage;
+        yield event;
+      }
+      outcome = "success";
+    } catch (error) {
+      outcome = error instanceof MetaApiError && error.ambiguous ? "ambiguous" : "error";
+      throw error;
+    } finally {
+      this.recordUsage("code", outcome, started, usage);
+    }
+  }
+
+  private async *streamCodeInternal(request: MetaCodeRequest, options: MetaOperationOptions): AsyncGenerator<MetaCodeEvent> {
     assertPrompt(request.prompt, 256 * 1024, "code prompt");
     const toolSet = prepareTools(request.tools);
     const payload = buildCodePayload({
@@ -338,9 +374,11 @@ export class MetaClient {
       ? { mimeType: options.referenceImage.mimeType, base64: Buffer.from(options.referenceImage.bytes).toString("base64") }
       : undefined);
     assertPayloadSize(payload);
-    const result = await this.transport.createResponse(payload, options.signal);
-    assertCompleted(result.response, this.config.modelImage);
-    return parseImageResponse(result.response, result.requestId);
+    return this.measure("image", async () => {
+      const result = await this.transport.createResponse(payload, options.signal);
+      assertCompleted(result.response, this.config.modelImage);
+      return parseImageResponse(result.response, result.requestId);
+    }, true);
   }
 
   async editImage(
@@ -355,7 +393,41 @@ export class MetaClient {
   }
 
   async smokeTest(options: MetaSmokeOptions = {}, signal?: AbortSignal): Promise<MetaSmokeResult> {
-    return runMetaSmoke(this.config, options, this.transport, signal);
+    return this.measure("smoke", () => runMetaSmoke(this.config, options, this.transport, signal));
+  }
+
+  private async measure<T>(task: "plan" | "image" | "smoke", operation: () => Promise<T>, image = false, readUsage: (result: T) => MetaUsage | undefined = (result) =>
+    (result as { usage?: MetaUsage }).usage): Promise<T> {
+    const started = Date.now();
+    let outcome: "success" | "error" | "ambiguous" = "error";
+    try {
+      const result = await operation();
+      outcome = "success";
+      this.recordUsage(task, outcome, started, readUsage(result), image ? 1 : 0);
+      return result;
+    } catch (error) {
+      outcome = error instanceof MetaApiError && error.ambiguous ? "ambiguous" : "error";
+      this.recordUsage(task, outcome, started);
+      throw error;
+    }
+  }
+
+  private recordUsage(task: "plan" | "code" | "image" | "smoke", outcome: "success" | "error" | "ambiguous", started: number, usage?: MetaUsage, images = 0): void {
+    if (!this.metrics) return;
+    const labels = { task, outcome };
+    this.metrics.increment("meta_requests_total", labels);
+    this.metrics.observe("meta_request_duration_seconds", Math.max(0, Date.now() - started) / 1_000, labels);
+    if (usage && usage.totalTokens > 0) this.metrics.increment("meta_usage_tokens_total", { task }, usage.totalTokens);
+    if (images > 0) this.metrics.increment("meta_usage_images_total", { task }, images);
+    const rates = task === "plan" ? [this.billingRates.planInputUsdPerMillion, this.billingRates.planOutputUsdPerMillion]
+      : task === "code" ? [this.billingRates.codeInputUsdPerMillion, this.billingRates.codeOutputUsdPerMillion]
+        : [];
+    const estimatedCost = usage && rates.length === 2 && rates.every((rate) => rate !== undefined)
+      ? usage.inputTokens * rates[0]! / 1_000_000 + usage.outputTokens * rates[1]! / 1_000_000
+      : task === "image" && images > 0 ? this.billingRates.imageUsd : undefined;
+    if (estimatedCost !== undefined && Number.isFinite(estimatedCost) && estimatedCost > 0) {
+      this.metrics.increment("meta_estimated_cost_usd_total", { task }, estimatedCost);
+    }
   }
 
   static toolResult(callId: string, value: unknown): MetaConversationItem {

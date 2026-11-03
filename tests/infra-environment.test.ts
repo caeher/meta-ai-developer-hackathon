@@ -29,7 +29,21 @@ const validEnvironment = {
 
 describe("local infrastructure environment", () => {
   it("accepts the documented local service configuration", () => {
-    expect(parseInfraEnvironment(validEnvironment)).toEqual(validEnvironment);
+    expect(parseInfraEnvironment(validEnvironment)).toEqual({
+      ...validEnvironment,
+      OBSERVABILITY_PORT: "9090",
+      META_PRICE_PLAN_INPUT_USD_PER_1M: "",
+      META_PRICE_PLAN_OUTPUT_USD_PER_1M: "",
+      META_PRICE_CODE_INPUT_USD_PER_1M: "",
+      META_PRICE_CODE_OUTPUT_USD_PER_1M: "",
+      META_PRICE_IMAGE_USD: "",
+      LOG_LEVEL: "info",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "",
+      BACKUP_KEY_ID: "local-key-v1",
+      BACKUP_ENCRYPTION_KEYS: '{"local-key-v1":"replace-with-base64-32-byte-key"}',
+      BACKUP_DIR: "./backups/encrypted",
+      BACKUP_RETENTION_DAYS: 30,
+    });
   });
 
   it("rejects invalid ports without including secret values in errors", () => {

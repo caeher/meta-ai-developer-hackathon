@@ -10,6 +10,7 @@
     "start": "node ../../scripts/check-node-version.mjs && node --conditions=react-server --import tsx src/index.ts"
   },
   "dependencies": {
+    "@meta-game/config": "0.1.0",
     "@meta-game/contracts": "0.1.0",
     "@meta-game/db": "0.1.0",
     "@meta-game/storage": "0.1.0",

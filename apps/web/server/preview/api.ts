@@ -40,10 +40,12 @@ export async function withPreviewGrantHandler(
   try {
     const identity = await requireUser();
     database = createDatabaseFromEnvironment();
+    const repositories = createRepositories(database.db);
     const handlers = createPreviewGrantHandlers({
       authenticator: { requireUser: async () => identity },
-      projects: createRepositories(database.db).projects,
+      projects: repositories.projects,
       target: (projectId) => getPreviewTarget(database!.db, projectId),
+      latestRunId: async (verifiedIdentity, projectId) => (await repositories.runs.latest(verifiedIdentity, projectId))?.id,
       store: getStore(),
       keyRing,
       allowedOrigins,

@@ -3,6 +3,7 @@ import Redis from "ioredis";
 import { PreviewSessionSchema, type PreviewSession } from "@meta-game/contracts";
 
 export type PreviewStore = Readonly<{
+  ping?(): Promise<boolean>;
   getProjectEpoch(projectId: string): Promise<number>;
   createSessionFromGrant(input: {
     projectId: string;
@@ -79,6 +80,12 @@ export function createRedisPreviewStore(redisUrl: string): PreviewStore {
   };
 
   return {
+    async ping() {
+      try {
+        await ensureConnected();
+        return (await client.ping()) === "PONG";
+      } catch { return false; }
+    },
     async getProjectEpoch(projectId) {
       await ensureConnected();
       const value = await client.get(projectEpochKey(projectId));

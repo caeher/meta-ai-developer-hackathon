@@ -2,10 +2,17 @@
 # Mantener el nombre para conservar los volúmenes locales existentes.
 name: meta-ai-game-platform
 
+x-bounded-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: docker.io/library/postgres:17.11-alpine3.24@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-meta_game}
       POSTGRES_USER: ${POSTGRES_USER:-meta_game}
@@ -34,6 +41,7 @@ services:
   redis:
     image: docker.io/library/redis:8.10.2-alpine3.23@sha256:9f8d2d789b9a1d1e3f283f979aa9cbf393373806472e1ccd460e2f9c869b833b
     restart: unless-stopped
+    logging: *bounded-logging
     command:
       - redis-server
       - --appendonly
@@ -61,6 +69,7 @@ services:
   mailpit:
     image: docker.io/axllent/mailpit:v1.27.8@sha256:6abc8e633df15eaf785cfcf38bae48e66f64beecdc03121e249d0f9ec15f0707
     restart: unless-stopped
+    logging: *bounded-logging
     ports:
       - name: mailpit-smtp-loopback
         target: 1025
@@ -85,6 +94,7 @@ services:
   s3:
     image: docker.io/pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
     restart: unless-stopped
+    logging: *bounded-logging
     command: [server, /data, --console-address, ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-meta_game_local}
@@ -123,9 +133,12 @@ services:
       dockerfile: infra/web.Dockerfile
     init: true
     restart: "no"
+    logging: *bounded-logging
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}
       REDIS_URL: redis://redis:6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:3000}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
@@ -189,7 +202,7 @@ services:
         - CMD
         - node
         - -e
-        - fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+        - fetch('http://127.0.0.1:3000/api/health/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
       interval: 10s
       timeout: 5s
       retries: 12
@@ -208,11 +221,20 @@ services:
       dockerfile: infra/worker.Dockerfile
     init: true
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}
       REDIS_URL: redis://redis:6379
       RUNS_ENABLED: ${RUNS_ENABLED:-false}
       PUBLISHING_ENABLED: ${PUBLISHING_ENABLED:-false}
+      OBSERVABILITY_PORT: ${OBSERVABILITY_PORT:-9090}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      META_PRICE_PLAN_INPUT_USD_PER_1M: ${META_PRICE_PLAN_INPUT_USD_PER_1M:-}
+      META_PRICE_PLAN_OUTPUT_USD_PER_1M: ${META_PRICE_PLAN_OUTPUT_USD_PER_1M:-}
+      META_PRICE_CODE_INPUT_USD_PER_1M: ${META_PRICE_CODE_INPUT_USD_PER_1M:-}
+      META_PRICE_CODE_OUTPUT_USD_PER_1M: ${META_PRICE_CODE_OUTPUT_USD_PER_1M:-}
+      META_PRICE_IMAGE_USD: ${META_PRICE_IMAGE_USD:-}
       USER_MAX_CONCURRENT_JOBS: ${USER_MAX_CONCURRENT_JOBS:-1}
       PROJECT_MAX_RUN_STEPS: ${PROJECT_MAX_RUN_STEPS:-20}
       RUN_MAX_TOKENS: ${RUN_MAX_TOKENS:-16000}
@@ -241,6 +263,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:9090/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -256,9 +284,13 @@ services:
       dockerfile: infra/publishing-origin.Dockerfile
     init: true
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       PUBLISHING_ENABLED: ${PUBLISHING_ENABLED:-false}
       PUBLISHING_ORIGIN_PORT: ${PUBLISHING_ORIGIN_PORT:-8083}
+      OBSERVABILITY_PORT: ${OBSERVABILITY_PORT:-9090}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       PUBLISH_BASE_DOMAIN: ${PUBLISH_BASE_DOMAIN:-games.localhost}
       PUBLISH_READ_DATABASE_URL: ${PUBLISH_READ_DATABASE_URL:-postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}}
       S3_ENDPOINT: http://s3:9000
@@ -271,6 +303,12 @@ services:
         condition: service_healthy
       s3:
         condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:9090/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -286,9 +324,13 @@ services:
       dockerfile: infra/preview-gateway.Dockerfile
     init: true
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}
       REDIS_URL: redis://redis:6379
+      OBSERVABILITY_PORT: ${OBSERVABILITY_PORT:-9090}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
       PREVIEW_BASE_DOMAIN: ${PREVIEW_BASE_DOMAIN:-preview.localhost}
       PREVIEW_GATEWAY_ENABLED: ${PREVIEW_GATEWAY_ENABLED:-false}
@@ -300,6 +342,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:9090/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -353,6 +401,7 @@ services:
     profiles: [local-domains]
     image: docker.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     restart: unless-stopped
+    logging: *bounded-logging
     ports:
       - name: local-https-loopback
         target: 443

@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { identityFromAuthenticatedSession } from "@meta-game/db";
+import { createTelemetryLogger, isOpaqueTelemetryId, withTelemetryContext } from "@meta-game/config";
 import { z } from "zod";
 
 const restorePath = /^\/internal\/projects\/([0-9a-f-]{36})\/versions\/([0-9a-f-]{36})\/restore$/i;
@@ -21,7 +22,11 @@ export function createWorkerVersionServer(options: {
   if (Buffer.byteLength(options.token) < 32 || /placeholder|replace-me|change-me/i.test(options.token)) {
     throw new Error("WORKER_INTERNAL_TOKEN must be a generated secret");
   }
-  const server = createServer((request, response) => { void handle(request, response, options); });
+  const server = createServer((request, response) => {
+    const value = request.headers["x-request-id"];
+    const requestId = typeof value === "string" && isOpaqueTelemetryId(value) ? value : undefined;
+    void withTelemetryContext(requestId ? { requestId } : {}, () => handle(request, response, options));
+  });
   server.requestTimeout = 10 * 60_000;
   server.headersTimeout = 15_000;
   server.keepAliveTimeout = 5_000;
@@ -33,6 +38,7 @@ async function handle(
   response: ServerResponse,
   options: Parameters<typeof createWorkerVersionServer>[0],
 ) {
+  const logger = createTelemetryLogger("worker");
   securityHeaders(response);
   if (!request.url || !["POST", "DELETE"].includes(request.method ?? "")) { send(response, 405, { error: "method_not_allowed" }); return; }
   if (!validBearer(request.headers.authorization, options.token)) { send(response, 401, { error: "unauthorized" }); return; }
@@ -59,10 +65,18 @@ async function handle(
       result = await options.revoke(identity, revoke[1]!, revoke[2]!);
     }
     if (!result) { send(response, 404, { error: "not_found" }); return; }
-    if (restore) send(response, 200, { restored: result });
-    else if (publish) send(response, 202, { publication: publicPublication(result) });
-    else send(response, 200, { publication: publicPublication(result) });
+    if (restore) {
+      logger.info("version.restore_completed", { operation: "restore", outcome: "success" });
+      send(response, 200, { restored: result });
+    } else if (publish) {
+      logger.info("publication.build_started", { operation: "publish", outcome: "success" });
+      send(response, 202, { publication: publicPublication(result) });
+    } else {
+      logger.info("publication.revoked", { operation: "revoke", outcome: "success" });
+      send(response, 200, { publication: publicPublication(result) });
+    }
   } catch (error) {
+    logger.error("internal.operation_failed", { operation: restore ? "restore" : "publish", outcome: "failed", errorCode: "worker_internal_operation_failed" });
     if (error instanceof Error && error.name === "ProjectRunBusyError") {
       send(response, 409, { error: "project_busy" });
       return;

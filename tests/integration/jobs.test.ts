@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { TelemetryMetrics } from "@meta-game/config";
 import {
   createDatabaseFromEnvironment,
   createRepositories,
@@ -247,12 +248,14 @@ describe.skipIf(!integrationEnabled)("cola durable, cuotas y fencing con Postgre
   it("publica el outbox en Redis y procesa el run una sola vez con consumo durable", async () => {
     const owner = await fixture("RedisQueue");
     const queueName = `run-it-${randomUUID().replaceAll("-", "").slice(0, 18)}`;
+    const metrics = new TelemetryMetrics("worker");
     const service = startRunWorkerService({
       database: database.db,
       redisUrl: process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
       queueName,
       leaseMs: 3_000,
       pollIntervalMs: 25,
+      metrics,
       handler: async () => ({ usage: { tokens: 9, images: 0 } }),
     });
     try {
@@ -269,6 +272,9 @@ describe.skipIf(!integrationEnabled)("cola durable, cuotas y fencing con Postgre
       expect(outbox?.status).toBe("dispatched");
       expect(charges).toHaveLength(1);
       expect(charges[0]?.tokens).toBe(9);
+      expect(metrics.value("run_lock_events_total", { outcome: "acquired" })).toBeGreaterThanOrEqual(1);
+      expect(metrics.value("run_lock_events_total", { outcome: "released" })).toBeGreaterThanOrEqual(1);
+      expect(metrics.value("run_jobs_total", { outcome: "succeeded" })).toBeGreaterThanOrEqual(1);
     } finally {
       await service.close();
     }

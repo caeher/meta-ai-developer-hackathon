@@ -29,6 +29,12 @@ export const InfraEnvironmentSchema = z
     PUBLISHING_ENABLED: z.enum(["true", "false"]).default("false"),
     PUBLISH_BASE_DOMAIN: z.string().default("games.localhost"),
     PUBLISHING_ORIGIN_PORT: localPort.default("8083"),
+    OBSERVABILITY_PORT: localPort.default("9090"),
+    META_PRICE_PLAN_INPUT_USD_PER_1M: z.string().max(32).default("").refine((value) => !value || /^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(value)),
+    META_PRICE_PLAN_OUTPUT_USD_PER_1M: z.string().max(32).default("").refine((value) => !value || /^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(value)),
+    META_PRICE_CODE_INPUT_USD_PER_1M: z.string().max(32).default("").refine((value) => !value || /^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(value)),
+    META_PRICE_CODE_OUTPUT_USD_PER_1M: z.string().max(32).default("").refine((value) => !value || /^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(value)),
+    META_PRICE_IMAGE_USD: z.string().max(32).default("").refine((value) => !value || /^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(value)),
     SANDBOX_DRIVER: z.enum(["disabled", "rootless"]).default("disabled"),
     PREVIEW_GATEWAY_ENABLED: z.enum(["true", "false"]).default("false"),
     PREVIEW_BASE_DOMAIN: z.string().default("preview.localhost"),
@@ -38,6 +44,18 @@ export const InfraEnvironmentSchema = z
     PREVIEW_TOKEN_TTL_SECONDS: z.string().regex(/^\d+$/).default("60"),
     PREVIEW_SESSION_TTL_SECONDS: z.string().regex(/^\d+$/).default("900"),
     APP_ORIGIN: z.string().url().default("http://localhost:3000"),
+    LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+    OTEL_EXPORTER_OTLP_ENDPOINT: z.string().max(2048).default("").refine((value) => {
+      if (!value) return true;
+      try {
+        const parsed = new URL(value);
+        return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password && !parsed.search && !parsed.hash;
+      } catch { return false; }
+    }, "OTEL_EXPORTER_OTLP_ENDPOINT must be an HTTP(S) collector URL without credentials"),
+    BACKUP_KEY_ID: z.string().regex(/^[A-Za-z0-9._-]{1,64}$/).default("local-key-v1"),
+    BACKUP_ENCRYPTION_KEYS: z.string().min(2).max(4096).default('{"local-key-v1":"replace-with-base64-32-byte-key"}'),
+    BACKUP_DIR: z.string().min(1).max(512).default("./backups/encrypted"),
+    BACKUP_RETENTION_DAYS: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(3650)).default(30),
   })
   .strict()
   .refine(

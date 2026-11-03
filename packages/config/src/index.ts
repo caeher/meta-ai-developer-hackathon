@@ -15,3 +15,21 @@ export {
   parseSandboxEnvironment,
 } from "./sandbox-environment";
 export type { SandboxEnvironment } from "./sandbox-environment";
+export {
+  createTelemetryLogger,
+  createTelemetryServer,
+  currentTelemetryContext,
+  evaluateOperationalAlerts,
+  isOpaqueTelemetryId,
+  newRequestId,
+  redactTelemetryFields,
+  TelemetryMetrics,
+  withTelemetryContext,
+} from "./telemetry";
+export type {
+  OperationalSignals,
+  TelemetryContext,
+  TelemetryFields,
+  TelemetryLevel,
+  TelemetryService,
+} from "./telemetry";

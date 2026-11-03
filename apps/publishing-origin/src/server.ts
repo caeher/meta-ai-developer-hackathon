@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { canonicalPublicationManifest, PublicationManifestSchema, publicationArtifactKey } from "@meta-game/contracts";
+import type { TelemetryMetrics } from "@meta-game/config";
 
 const MAX_REQUEST_TARGET = 2_048;
 
@@ -10,9 +11,19 @@ export function createPublishingOriginServer(input: {
     slug: string; artifactKey: string; artifactSha256: string | null; manifest: Record<string, unknown>; status: string;
   } | undefined> };
   artifacts: { read(slug: string, file: { path: string; contentType: string; bytes: number; sha256: string; key: string }): Promise<Uint8Array> };
+  metrics?: TelemetryMetrics;
 }): Server {
   const domain = normalizeBaseDomain(input.baseDomain);
-  const server = createServer((request, response) => { void handle(request, response, domain, input); });
+  const server = createServer((request, response) => {
+    const started = Date.now();
+    response.once("finish", () => {
+      const method = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]).has(request.method ?? "") ? request.method! : "OTHER";
+      const statusClass = String(Math.floor(response.statusCode / 100)) + "xx";
+      input.metrics?.increment("http_requests_total", { method, status_class: statusClass });
+      input.metrics?.observe("http_request_duration_seconds", Math.max(0, Date.now() - started) / 1_000, { method });
+    });
+    void handle(request, response, domain, input);
+  });
   server.requestTimeout = 10_000;
   server.headersTimeout = 5_000;
   server.keepAliveTimeout = 5_000;

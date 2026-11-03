@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { createDatabaseFromEnvironment, createRepositories } from "@meta-game/db";
-import { parseRunEnvironment } from "@meta-game/config";
+import { createTelemetryLogger, createTelemetryServer, parseRunEnvironment, TelemetryMetrics } from "@meta-game/config";
 import { loadMetaConfig, MetaClient } from "@meta-game/meta";
 import { SandboxControllerClient } from "@meta-game/sandbox";
 import { createPrivateCheckpointStorageFromEnvironment, createPrivateSnapshotStorageFromEnvironment, createPrivateStorageFromEnvironment, createPublicationArtifactStorageFromEnvironment, createS3PrivateObjectClient, readStorageEnvironment } from "@meta-game/storage";
@@ -29,6 +29,8 @@ dotenv.config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) }
 
 const environment = parseRunEnvironment(process.env);
 const database = createDatabaseFromEnvironment();
+const telemetryMetrics = new TelemetryMetrics("worker");
+const telemetryLogger = createTelemetryLogger("worker");
 let versionService: ReturnType<typeof createVersionService> | undefined;
 let publicationPipeline: ReturnType<typeof createPublicationPipeline> | undefined;
 let checkpointStorage: ReturnType<typeof createPrivateCheckpointStorageFromEnvironment> | undefined;
@@ -84,7 +86,22 @@ const service = startRunWorkerService({
   database: database.db,
   redisUrl: environment.REDIS_URL,
   handler,
+  metrics: telemetryMetrics,
 });
+const observabilityPort = parseObservabilityPort(process.env.OBSERVABILITY_PORT);
+const observabilityServer = createTelemetryServer({
+  service: "worker",
+  metrics: telemetryMetrics,
+  port: observabilityPort,
+  ready: async () => {
+    try {
+      await database.pool.query("SELECT 1");
+      const redis = await service.queue.waitUntilReady();
+      return redis.status === "ready";
+    } catch { return false; }
+  },
+});
+observabilityServer.on("error", () => telemetryLogger.error("observability.server_failed", { errorCode: "observability_server_failed" }));
 projectJobCleaner.remove = (jobs) => removeProjectRunJobs(service.queue, jobs);
 
 let snapshotReconciler: NodeJS.Timeout | undefined;
@@ -93,10 +110,10 @@ if (versionService && environment.RUNS_ENABLED) {
     try {
       const result = await versionService!.reconcilePendingSnapshots();
       if (result.recovered || result.failed) {
-        process.stdout.write(`snapshot_reconciliation scanned=${result.scanned} recovered=${result.recovered} failed=${result.failed} deferred=${result.deferred}\n`);
+        telemetryLogger.info("snapshot.reconciliation", { count: result.scanned, outcome: result.failed ? "failed" : "success" });
       }
     } catch {
-      process.stderr.write("snapshot_reconciliation_failed\n");
+      telemetryLogger.error("snapshot.reconciliation_failed", { errorCode: "snapshot_reconciliation_failed" });
     }
   };
   void reconcile();
@@ -111,10 +128,21 @@ if (resourceLifecycle) {
       const deletedSandboxes = await resourceLifecycle!.reapDeletedSandboxes();
       const result = await resourceLifecycle!.suspendExpired();
       const cleanup = await resourceLifecycle!.reconcileDeletedProjects();
-      if (deletedSandboxes.quiesced || deletedSandboxes.failed || result.suspended || result.failed || cleanup.completed || cleanup.failed) {
-        process.stdout.write(`resource_lifecycle quiesced_deleted_sandboxes=${deletedSandboxes.quiesced} quiesce_failed=${deletedSandboxes.failed} suspended=${result.suspended} preserved=${result.preserved} suspend_failed=${result.failed} cleanup_completed=${cleanup.completed} cleanup_failed=${cleanup.failed}\n`);
+      if (cleanup.completed > 0) telemetryMetrics.increment("cleanup_runs_total", { outcome: "succeeded" }, cleanup.completed);
+      if (cleanup.failed > 0) telemetryMetrics.increment("cleanup_runs_total", { outcome: "failed" }, cleanup.failed);
+      if (deletedSandboxes.failed || result.failed || cleanup.failed) {
+        telemetryMetrics.increment("sandbox_operations_total", { operation: "cleanup", outcome: "error" });
       }
-    } catch { process.stderr.write("sandbox_lifecycle_failed\n"); }
+      if (deletedSandboxes.quiesced || deletedSandboxes.failed || result.suspended || result.failed || cleanup.completed || cleanup.failed) {
+        telemetryLogger.info("resource_lifecycle.reconciled", {
+          count: deletedSandboxes.quiesced + result.suspended + cleanup.completed,
+          outcome: cleanup.failed || result.failed || deletedSandboxes.failed ? "failed" : "success",
+        });
+      }
+    } catch {
+      telemetryMetrics.increment("cleanup_runs_total", { outcome: "failed" });
+      telemetryLogger.error("sandbox_lifecycle.failed", { errorCode: "sandbox_lifecycle_failed" });
+    }
   };
   void reconcile();
   lifecycleReconciler = setInterval(() => { void reconcile(); }, 30_000);
@@ -126,8 +154,8 @@ if (publicationPipeline) {
   const reconcile = async () => {
     try {
       const result = await publicationPipeline!.reconcileExpiredBuilds();
-      if (result.started || result.cleaned) process.stdout.write(`publication_reconciliation scanned=${result.scanned} started=${result.started} cleaned=${result.cleaned}\n`);
-    } catch { process.stderr.write("publication_reconciliation_failed\n"); }
+      if (result.started || result.cleaned) telemetryLogger.info("publication.reconciliation", { count: result.scanned, outcome: "success" });
+    } catch { telemetryLogger.error("publication.reconciliation_failed", { errorCode: "publication_reconciliation_failed" }); }
   };
   void reconcile();
   publicationReconciler = setInterval(() => { void reconcile(); }, 30_000);
@@ -157,7 +185,7 @@ async function createEnabledAgentHandler() {
   const store = createPostgresAgentRunStore(database.db);
   const skills = await createSkillRouter({ rootDir });
   const sandbox = getSandboxClient();
-  const meta = new MetaClient(loadMetaConfig());
+  const meta = new MetaClient(loadMetaConfig(), fetch, telemetryMetrics, readMetaBillingRates());
   const storage = createPrivateStorageFromEnvironment(repositories.assets);
   const checkpoints = getCheckpointStorage();
   closeCallbacks.push(() => { storage.close(); });
@@ -257,6 +285,7 @@ async function shutdown(): Promise<void> {
   if (lifecycleReconciler) clearInterval(lifecycleReconciler);
   if (publicationReconciler) clearInterval(publicationReconciler);
   if (versionServer) await new Promise<void>((resolve, reject) => versionServer!.close((error) => error ? reject(error) : resolve()));
+  await new Promise<void>((resolve, reject) => observabilityServer.close((error) => error ? reject(error) : resolve()));
   await publicationPipeline?.close();
   await service.close();
   await previewStore?.close();
@@ -266,3 +295,28 @@ async function shutdown(): Promise<void> {
 
 process.once("SIGINT", () => { void shutdown(); });
 process.once("SIGTERM", () => { void shutdown(); });
+
+function parseObservabilityPort(value: string | undefined): number {
+  const port = value === undefined ? 9090 : Number(value);
+  if (!Number.isInteger(port) || port < 1_024 || port > 65_535) throw new Error("OBSERVABILITY_PORT must be a valid internal TCP port");
+  return port;
+}
+
+function readMetaBillingRates() {
+  const parse = (name: string): number | undefined => {
+    const raw = process.env[name];
+    if (raw === undefined || raw === "") return undefined;
+    const value = Number(raw);
+    if (!/^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(raw) || !Number.isFinite(value) || value < 0 || value > 100_000) {
+      throw new Error("Invalid optional Meta billing rate: " + name);
+    }
+    return value;
+  };
+  return {
+    planInputUsdPerMillion: parse("META_PRICE_PLAN_INPUT_USD_PER_1M"),
+    planOutputUsdPerMillion: parse("META_PRICE_PLAN_OUTPUT_USD_PER_1M"),
+    codeInputUsdPerMillion: parse("META_PRICE_CODE_INPUT_USD_PER_1M"),
+    codeOutputUsdPerMillion: parse("META_PRICE_CODE_OUTPUT_USD_PER_1M"),
+    imageUsd: parse("META_PRICE_IMAGE_USD"),
+  };
+}

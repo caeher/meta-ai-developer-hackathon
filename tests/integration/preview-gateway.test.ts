@@ -2,7 +2,7 @@ import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign as crypt
 import { createServer as createHttpServer, request as httpRequest, type Server } from "node:http";
 import { createConnection, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PREVIEW_GRANT_AUDIENCE,
   PREVIEW_GRANT_ISSUER,
@@ -85,7 +85,7 @@ function target(projectId = projectA, ownerUserId = ownerA): GatewayPreviewTarge
   };
 }
 
-function grant(keyRing: PreviewKeyRing, projectId = projectA, userId = ownerA, epoch = 0, nowSeconds = Math.floor(Date.now() / 1000)) {
+function grant(keyRing: PreviewKeyRing, projectId = projectA, userId = ownerA, epoch = 0, nowSeconds = Math.floor(Date.now() / 1000), runId?: string) {
   return signPreviewGrant({
     iss: PREVIEW_GRANT_ISSUER,
     sub: userId,
@@ -96,6 +96,7 @@ function grant(keyRing: PreviewKeyRing, projectId = projectA, userId = ownerA, e
     exp: nowSeconds + 60,
     jti: randomUUID(),
     epoch,
+    ...(runId ? { runId } : {}),
   }, keyRing);
 }
 
@@ -293,6 +294,22 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
     const revokedCookie = String(next.headers["set-cookie"]).split(";")[0] ?? "";
     const denied = await request(gatewayPort, "/", { host: hostA, cookie: revokedCookie });
     expect(denied.status).toBe(404);
+  });
+
+  it("correlaciona autorizacion de gateway con runId opaco sin registrar owner ni credenciales", async () => {
+    const runId = randomUUID();
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const session = await exchange(grant(keyRing, projectA, ownerA, 0, Math.floor(Date.now() / 1000), runId));
+      const cookie = String(session.headers["set-cookie"]).split(";")[0] ?? "";
+      const response = await request(gatewayPort, "/", { host: hostA, cookie });
+      expect(session.status).toBe(200);
+      expect(response.status).toBe(200);
+      const authorized = output.mock.calls.map(([chunk]) => String(chunk)).find((line) => line.includes('"event":"preview.authorized"'));
+      expect(authorized).toContain('"runId":"' + runId + '"');
+      expect(authorized).not.toContain(ownerA);
+      expect(authorized).not.toContain(cookie);
+    } finally { output.mockRestore(); }
   });
 
   it("comprueba la cookie particionada y admite el canje de primer nivel sin poner el grant en la URL", async () => {
@@ -515,12 +532,14 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
   });
 
   it("emite grants solo tras same-origin y ownership verificado", async () => {
+    const runId = randomUUID();
     const handlers = createPreviewGrantHandlers({
       authenticator: { requireUser: async () => ({ userId: ownerA } as never) },
       projects: { get: async (identity) => identity.userId === ownerA ? { id: projectA } : undefined },
       target: async (projectId) => projectId === projectA ? { projectId, ownerUserId: ownerA, sandboxId: sandboxA } : undefined,
       store,
       keyRing,
+      latestRunId: async () => runId,
       allowedOrigins: [appOrigin],
       baseDomain,
     });
@@ -539,6 +558,7 @@ describe("preview privada: grants y proxy HTTP/WebSocket", () => {
     expect(payload.previewUrl).not.toContain("grant=");
     expect(new URL(payload.previewUrl).search).toBe("");
     expect(payload.grant.split(".")).toHaveLength(3);
+    expect(verifyPreviewGrant(payload.grant, keyRing).runId).toBe(runId);
 
     const revoke = await handlers.DELETE(new Request(`${appOrigin}/api/projects/${projectA}/preview-grant`, {
       method: "DELETE", headers: { origin: appOrigin },

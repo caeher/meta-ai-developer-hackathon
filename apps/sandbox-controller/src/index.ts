@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import { createDatabaseFromEnvironment } from "@meta-game/db";
-import { parseSandboxEnvironment } from "@meta-game/config";
+import { createTelemetryLogger, createTelemetryServer, parseSandboxEnvironment, TelemetryMetrics } from "@meta-game/config";
 import { createSandboxControllerServer, createSandboxRegistry, RootlessDockerDriver, SandboxService } from "@meta-game/sandbox";
 
 dotenv.config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
@@ -21,28 +21,44 @@ const driver = new RootlessDockerDriver(environment.SANDBOX_DOCKER_SOCKET, envir
 await driver.verifyHost();
 const service = new SandboxService(createSandboxRegistry(database.db), driver, environment);
 await service.reapExpired();
-const server = createSandboxControllerServer(service, environment.SANDBOX_CONTROLLER_TOKEN);
+const telemetryMetrics = new TelemetryMetrics("sandbox-controller");
+const telemetryLogger = createTelemetryLogger("sandbox-controller");
+const observabilityPort = Number(process.env.OBSERVABILITY_PORT ?? "9090");
+if (!Number.isInteger(observabilityPort) || observabilityPort < 1_024 || observabilityPort > 65_535) throw new Error("observability_port_invalid");
+const observabilityServer = createTelemetryServer({
+  service: "sandbox-controller",
+  metrics: telemetryMetrics,
+  port: observabilityPort,
+  ready: async () => {
+    try { await database.pool.query("SELECT 1"); return true; }
+    catch { return false; }
+  },
+});
+const managedServer = createSandboxControllerServer(service, environment.SANDBOX_CONTROLLER_TOKEN, telemetryMetrics);
 
 await new Promise<void>((resolve, reject) => {
-  server.once("error", reject);
-  server.listen(environment.SANDBOX_CONTROLLER_PORT, environment.SANDBOX_CONTROLLER_HOST, resolve);
+  managedServer.once("error", reject);
+  managedServer.listen(environment.SANDBOX_CONTROLLER_PORT, environment.SANDBOX_CONTROLLER_HOST, resolve);
 });
 
 const reaper = setInterval(() => {
-  void service.reapExpired().catch((error: unknown) => {
-    const code = error instanceof Error && /^[a-z][a-z0-9_]{0,79}$/.test(error.message) ? error.message : "sandbox_reaper_failed";
-    process.stderr.write(`${code}\n`);
+  void service.reapExpired().then((removed) => {
+    if (removed > 0) telemetryMetrics.increment("sandbox_operations_total", { operation: "cleanup", outcome: "success" }, removed);
+  }).catch(() => {
+    telemetryMetrics.increment("sandbox_operations_total", { operation: "cleanup", outcome: "error" });
+    telemetryLogger.error("sandbox.reaper_failed", { errorCode: "sandbox_reaper_failed" });
   });
 }, 30_000);
 reaper.unref();
-process.stdout.write(`sandbox_controller_listening ${environment.SANDBOX_CONTROLLER_HOST}:${environment.SANDBOX_CONTROLLER_PORT}\n`);
+telemetryLogger.info("service.started", { operation: "start_server" });
 
 let closing = false;
 async function shutdown(): Promise<void> {
   if (closing) return;
   closing = true;
   clearInterval(reaper);
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  await new Promise<void>((resolve, reject) => observabilityServer.close((error) => error ? reject(error) : resolve()));
+  await new Promise<void>((resolve, reject) => managedServer.close((error) => error ? reject(error) : resolve()));
   await database.close();
 }
 process.once("SIGINT", () => { void shutdown(); });

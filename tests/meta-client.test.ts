@@ -3,6 +3,7 @@ import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 import { MetaClient, loadMetaConfig } from "@meta-game/meta";
 import type { MetaConversationItem } from "@meta-game/contracts";
+import { TelemetryMetrics } from "@meta-game/config";
 import { agentToolDefinitions } from "../apps/worker/src/agent/tools";
 
 const spark = "muse-spark-1.3-contributor";
@@ -73,6 +74,23 @@ describe("MetaClient plan and image contracts", () => {
     expect(body.store).toBe(false);
     expect(body.text).toMatchObject({ format: { type: "json_schema", name: "game_creation_plan", strict: true } });
     expect(body).not.toHaveProperty("response_format");
+  });
+
+  it("registra uso y coste estimado solo con precios operativos configurados", async () => {
+    const response = JSON.parse(await fixture("text-response.json")) as unknown;
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(response));
+    const metrics = new TelemetryMetrics("worker");
+    const client = new MetaClient(config(), fetchMock, metrics, {
+      planInputUsdPerMillion: 1,
+      planOutputUsdPerMillion: 2,
+    });
+
+    await client.plan("Create a small platform game.");
+
+    const exposition = metrics.render();
+    expect(exposition).toContain('meta_requests_total{service="worker",task="plan",outcome="success"} 1');
+    expect(exposition).toContain('meta_usage_tokens_total{service="worker",task="plan"} 68');
+    expect(exposition).toContain('meta_estimated_cost_usd_total{service="worker",task="plan"} 0.000091');
   });
 
   it("rejects malformed visible plans and invalid usage", async () => {

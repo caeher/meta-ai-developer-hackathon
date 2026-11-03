@@ -10,6 +10,8 @@ import type { PreviewKeyRing } from "@meta-game/preview";
 import { signPreviewGrant, type PreviewStore } from "@meta-game/preview";
 import { AuthenticationRequiredError } from "../auth/guards";
 import { OriginValidationError, assertSameOriginRequest } from "../auth/http";
+import { isOpaqueTelemetryId, newRequestId, withTelemetryContext } from "@meta-game/config";
+import { webLogger } from "../observability";
 
 type Authenticator = { requireUser(): Promise<VerifiedIdentityContext> };
 type ProjectLookup = { get(identity: VerifiedIdentityContext, projectId: string): Promise<unknown | undefined> };
@@ -40,6 +42,7 @@ export function createPreviewGrantHandlers(dependencies: {
   authenticator: Authenticator;
   projects: ProjectLookup;
   target(projectId: string): Promise<PreviewTarget | undefined>;
+  latestRunId?(identity: VerifiedIdentityContext, projectId: string): Promise<string | undefined>;
   store: PreviewStore;
   keyRing: PreviewKeyRing;
   allowedOrigins: readonly string[];
@@ -66,17 +69,22 @@ export function createPreviewGrantHandlers(dependencies: {
         if (!allowed) return Response.json({ error: "rate_limited" }, { status: 429, headers: secureHeaders });
 
         const issuedAt = Math.floor(now() / 1000);
+        const latestRunId = await dependencies.latestRunId?.(identity, projectId);
         const claims = PreviewGrantClaimsSchema.parse({
           iss: PREVIEW_GRANT_ISSUER,
           sub: identity.userId,
           userId: identity.userId,
           projectId,
+          ...(isOpaqueTelemetryId(latestRunId) ? { runId: latestRunId } : {}),
           aud: PREVIEW_GRANT_AUDIENCE,
           iat: issuedAt,
           exp: issuedAt + PREVIEW_GRANT_TTL_SECONDS,
           jti: randomUUID(),
           epoch: await dependencies.store.getProjectEpoch(projectId),
         });
+        const candidateRequestId = request.headers.get("x-request-id");
+        const requestId = isOpaqueTelemetryId(candidateRequestId) ? candidateRequestId : newRequestId();
+        withTelemetryContext({ requestId, ...(claims.runId ? { runId: claims.runId } : {}) }, () => webLogger.info("preview.grant_issued", { outcome: "success" }));
         const grant = signPreviewGrant(claims, dependencies.keyRing);
         return Response.json({
           grant,

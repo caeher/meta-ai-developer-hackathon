@@ -4,6 +4,7 @@ import { OwnedResourceNotFoundError } from "@meta-game/db";
 import { publicationUrl } from "@meta-game/contracts";
 import type { ProjectApiContext } from "./api";
 import { apiErrorResponse, assertSameOriginRequest } from "../auth/http";
+import { isOpaqueTelemetryId } from "@meta-game/config";
 
 type Params = { params: Promise<{ projectId: string; publicationId?: string }> };
 const UUID = z.string().uuid();
@@ -47,9 +48,10 @@ export function createPublicationHandlers(context: ProjectApiContext, options: {
         const worker = workerConfig();
         if (!worker) return unavailable();
         const endpoint = new URL(`/internal/projects/${encodeURIComponent(projectId)}/publications`, worker.url);
+        const requestId = request.headers.get("x-request-id");
         const response = await (options.fetcher ?? fetch)(endpoint, {
           method: "POST", redirect: "error", cache: "no-store",
-          headers: { authorization: `Bearer ${worker.token}`, "content-type": "application/json" },
+          headers: { authorization: `Bearer ${worker.token}`, "content-type": "application/json", ...(isOpaqueTelemetryId(requestId) ? { "x-request-id": requestId } : {}) },
           body: JSON.stringify({ userId: context.identity.userId, ...parsed.data }),
           signal: AbortSignal.timeout(15_000),
         });
@@ -84,9 +86,10 @@ export function createPublicationHandlers(context: ProjectApiContext, options: {
         const worker = workerConfig();
         if (!worker) return unavailable();
         const endpoint = new URL(`/internal/projects/${encodeURIComponent(projectId)}/publications/${encodeURIComponent(publicationId.data)}`, worker.url);
+        const requestId = request.headers.get("x-request-id");
         const response = await (options.fetcher ?? fetch)(endpoint, {
           method: "DELETE", redirect: "error", cache: "no-store",
-          headers: { authorization: `Bearer ${worker.token}`, "content-type": "application/json" },
+          headers: { authorization: `Bearer ${worker.token}`, "content-type": "application/json", ...(isOpaqueTelemetryId(requestId) ? { "x-request-id": requestId } : {}) },
           body: JSON.stringify({ userId: context.identity.userId }),
           signal: AbortSignal.timeout(120_000),
         });
