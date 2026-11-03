@@ -17,6 +17,8 @@
 - `/api/health/livez`, `/api/health/readyz`, `/api/metrics` en web y `/livez`, `/readyz`, `/metrics` del worker devolvieron HTTP 200 desde Compose.
 - Readiness devuelve 503 sin detalles internos cuando falla su dependencia, cubierto por `tests/unit/telemetry.test.ts`.
 - No se configuro exportador OTLP durante la aceptacion.
+- Los perfiles Compose `preview` y `publishing-origin` se construyeron y pasaron `/livez`, `/readyz` y `/metrics` con HTTP 200; sus contenedores se retiraron al terminar y los flags predeterminados siguen apagados.
+- El smoke del gateway uso una clave publica RSA efimera generada en memoria; no se persistio ninguna clave.
 
 ## RPO/RTO medidos
 

@@ -22,6 +22,7 @@ RUN npm ci --no-audit --no-fund
 
 COPY apps/publishing-origin/src apps/publishing-origin/src
 COPY apps/publishing-origin/tsconfig.json apps/publishing-origin/tsconfig.json
+COPY packages/config/src packages/config/src
 COPY packages/contracts/src packages/contracts/src
 COPY packages/db/src packages/db/src
 COPY packages/storage/src packages/storage/src

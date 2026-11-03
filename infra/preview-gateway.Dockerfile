@@ -22,6 +22,7 @@ RUN npm ci --no-audit --no-fund
 
 COPY apps/preview-gateway/src apps/preview-gateway/src
 COPY apps/preview-gateway/tsconfig.json apps/preview-gateway/tsconfig.json
+COPY packages/config/src packages/config/src
 COPY packages/contracts/src packages/contracts/src
 COPY packages/db/src packages/db/src
 COPY packages/preview/src packages/preview/src
