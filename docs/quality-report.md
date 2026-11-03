@@ -21,3 +21,17 @@ Aceptación local, 2 de noviembre de 2026 (Windows 11 Pro, Node 24.22.1, Playwri
 - `npm run lint`, `npm run typecheck`, `npm run build`, `npm run build:worker`, `npm run build:controller`, `npm run build:gateway`, `npm run build:publishing-origin` y `npm run build:game-template` finalizaron correctamente. `npm run infra:config`, `npm run infra:up -- --web --worker` y `npm run infra:down` también; Compose detuvo los contenedores y conservó los volúmenes.
 
 Las suites de navegador usan respuestas API deterministas: no ejecutan llamadas facturables a Meta ni el sandbox de producto. La integración local sí ejercita las dependencias Compose reales. El smoke de Meta es opt-in; `RUNS_ENABLED=false` y `PREVIEW_GATEWAY_ENABLED=false` siguen siendo los defaults documentados.
+
+
+## Aceptacion local de issue #37 - 3 de noviembre de 2026
+
+El escenario determinista genero un personaje con idle/run y un tilemap con suelo, pared y celda vacia mediante generate_image simulado, inspect_asset, pack_spritesheet, define_animation, create_tileset y create_tilemap. PostgreSQL y Silo conservaron los manifests/bytes; no se llamo a Meta ni se incurrieron cargos.
+
+npm run test:assets:acceptance paso contra Compose: 15 archivos y 53 pruebas de integracion aprobadas, una prueba Redis omitida por su gate, y una prueba Playwright Chromium aprobada. Un contenedor de sandbox aislado ejecuto tests/lint/build de Vite y Phaser 3.90, sirvio los resultados persistidos, comprobo rectangulos del atlas sin solapes/fuera de limites, pivotes, orden y velocidad de animacion, render de tiles, colision de pared/celda vacia y movimiento con teclado. No hubo errores de pagina, warnings Phaser, respuestas fallidas ni solicitudes fuera del origen local. JSON de evidencia: docs/evidence/issue-37-docker-preview.json; se guardo reporte, sin screenshots, videos ni traces.
+
+Validacion adicional: npm test en el runner Compose (303 aprobadas, 47 omitidas por gates; incluye 8 pruebas de sandbox hostil Docker), npm run lint, npm run typecheck, npm run build, npm run build:game-template, y el E2E Chromium de tarjeta durable/reconexion (1 aprobado).
+
+Para la preview el runner usa Vite 7.3.7 y Phaser 3.90.0 fijados en el lockfile y copiados localmente al sandbox; el sandbox tuvo egress deshabilitado. El mount tmpfs del workspace declara exec porque Rollup carga un addon nativo desde alli; /tmp y /run conservan noexec.
+
+
+Nota de red: el proxy npm respondio HTTP 502 a un intento de instalar desde el sandbox. La aceptacion final uso las dependencias exactas ya instaladas en el runner Compose, verifico sus versiones contra el lockfile y deshabilito egress en el sandbox. Por tanto, esta evidencia valida build/preview/animacion/colision, no una descarga externa de npm.

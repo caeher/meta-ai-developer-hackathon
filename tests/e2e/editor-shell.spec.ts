@@ -214,6 +214,14 @@ test.describe("editor de dos paneles", () => {
     await card.getByRole("button", { name: "Abrir preview privada de Imagen generada" }).click();
     await expect(page.getByRole("dialog")).toContainText("El asset se sirve con la sesión privada del proyecto.");
     await expect(page.getByRole("dialog").getByRole("img", { name: "Asset Sprite" })).toBeVisible();
+    await page.getByRole("button", { name: "Cerrar preview" }).click();
+    await page.reload();
+    const recoveredCard = page.getByRole("article", { name: "Imagen generada" });
+    await expect(recoveredCard).toBeVisible();
+    await expect(recoveredCard).toContainText("1 frame; PNG y manifiesto guardados.");
+    await expect(recoveredCard).toHaveCount(1);
+    await recoveredCard.getByText("IDs y hashes verificados").click();
+    await expect(recoveredCard.getByText(assetId, { exact: true })).toBeVisible();
   });
 
   test("muestra la respuesta de autenticación propia cuando falla el inicio de sesión", async ({ page }) => {

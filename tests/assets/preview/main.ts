@@ -1,4 +1,4 @@
-import Phaser from "phaser";
+import type PhaserNamespace from "phaser";
 import { addGeneratedTileset, applyGeneratedTilesetCollisions, parseGeneratedTilesetMetadata } from "../../../packages/game-templates/phaser/src/game/tilesets";
 import { createGeneratedTilemap } from "../../../packages/game-templates/phaser/src/game/tilemaps";
 import { parseGeneratedSpritesheetAtlas } from "../../../packages/game-templates/phaser/src/game/generated-assets";
@@ -15,6 +15,10 @@ type PreviewState = Readonly<{
   playerBottom: number;
   floorTop: number;
   collisionEnabled: boolean;
+  actorX?: number;
+  cameraScrollX?: number;
+  emptyTileCollides?: boolean;
+  wallTileCollides?: boolean;
   tileset?: {
     name: string;
     firstgid: number;
@@ -50,10 +54,14 @@ type PreviewState = Readonly<{
 
 declare global {
   interface Window {
+    Phaser?: typeof PhaserNamespace;
     __ASSET_PREVIEW_TEST__?: () => PreviewState;
     __ASSET_PREVIEW_RESTART__?: () => void;
   }
 }
+
+const PhaserRuntime = window.Phaser;
+if (!PhaserRuntime) throw new Error("phaser_runtime_missing");
 
 const ATLAS_URL = "/fixtures/hero.json";
 const HERO_URL = "/fixtures/hero.png";
@@ -62,13 +70,15 @@ const ANIMATION_URL = "/fixtures/run.json";
 const TILESET_URL = "/fixtures/terrain.json";
 const TILEMAP_URL = "/fixtures/level.json";
 
-class AssetPreviewScene extends Phaser.Scene {
-  private actor?: Phaser.Physics.Arcade.Sprite;
-  private testActorBody?: Phaser.Physics.Arcade.Body;
-  private freeActorBody?: Phaser.Physics.Arcade.Body;
+class AssetPreviewScene extends PhaserRuntime.Scene {
+  private actor?: PhaserNamespace.Physics.Arcade.Sprite;
+  private cursors?: PhaserNamespace.Types.Input.Keyboard.CursorKeys;
+  private idleAnimationEnabled = false;
+  private testActorBody?: PhaserNamespace.Physics.Arcade.Body;
+  private freeActorBody?: PhaserNamespace.Physics.Arcade.Body;
   private observedFrames: Sample[] = [];
   private lastFrame = "";
-  private yoyoActor?: Phaser.GameObjects.Sprite;
+  private yoyoActor?: PhaserNamespace.GameObjects.Sprite;
   private yoyoObservedFrames: string[] = [];
   private lastYoyoFrame = "";
   private sceneCreateCount = 0;
@@ -92,7 +102,7 @@ class AssetPreviewScene extends Phaser.Scene {
       this.load.tilemapTiledJSON("generated-map", "/fixtures/generated-tilemap.json");
       this.load.image("generated-map-image", "/fixtures/generated-map-tileset.png");
       this.load.json("generated-map-tileset-metadata", "/fixtures/generated-map-tileset.json");
-      this.load.once("loaderror", (file: Phaser.Loader.File) => {
+      this.load.once("loaderror", (file: PhaserNamespace.Loader.File) => {
         this.state = { ...this.state, error: `load_error:${file.key}` };
       });
       return;
@@ -104,7 +114,7 @@ class AssetPreviewScene extends Phaser.Scene {
       this.load.tilemapTiledJSON("generated-map", "/fixtures/generated-tilemap.json");
       this.load.image("generated-map-image", "/fixtures/generated-map-tileset.png");
       this.load.json("generated-map-tileset-metadata", "/fixtures/generated-map-tileset.json");
-      this.load.once("loaderror", (file: Phaser.Loader.File) => {
+      this.load.once("loaderror", (file: PhaserNamespace.Loader.File) => {
         this.state = { ...this.state, error: "load_error:" + file.key };
       });
       return;
@@ -112,7 +122,7 @@ class AssetPreviewScene extends Phaser.Scene {
     if (mode === "generated-tileset") {
       this.load.image("generated-tileset", "/fixtures/generated-tileset.png");
       this.load.json("generated-tileset-metadata", "/fixtures/generated-tileset.json");
-      this.load.once("loaderror", (file: Phaser.Loader.File) => {
+      this.load.once("loaderror", (file: PhaserNamespace.Loader.File) => {
         this.state = { ...this.state, error: `load_error:${file.key}` };
       });
       return;
@@ -122,7 +132,7 @@ class AssetPreviewScene extends Phaser.Scene {
     this.load.json("run", ANIMATION_URL);
     this.load.json("terrainDescriptor", TILESET_URL);
     this.load.json("level", TILEMAP_URL);
-    this.load.once("loaderror", (file: Phaser.Loader.File) => {
+    this.load.once("loaderror", (file: PhaserNamespace.Loader.File) => {
       this.state = { ...this.state, error: `load_error:${file.key}` };
     });
   }
@@ -199,6 +209,12 @@ class AssetPreviewScene extends Phaser.Scene {
       this.state = { ...this.state, playerBottom, ...(tilemap ? { tilemap } : {}) };
       return;
     }
+    const direction = Number(this.cursors?.right?.isDown === true) - Number(this.cursors?.left?.isDown === true);
+    actor.setVelocityX(direction * 110);
+    if (this.idleAnimationEnabled) {
+      const animationKey = direction === 0 ? "acceptance-idle" : "acceptance-run";
+      if (actor.anims.currentAnim?.key !== animationKey) actor.play(animationKey, true);
+    }
     const name = actor.frame.name;
     if (name !== this.lastFrame) {
       this.lastFrame = name;
@@ -230,6 +246,7 @@ class AssetPreviewScene extends Phaser.Scene {
       yoyoObservedFrames: [...this.yoyoObservedFrames],
       sceneCreateCount: this.sceneCreateCount,
       playerBottom: this.actor?.body?.bottom ?? this.testActorBody?.bottom ?? 0,
+      ...(this.actor ? { actorX: this.actor.x, cameraScrollX: this.cameras.main.scrollX } : {}),
     };
   }
 
@@ -256,7 +273,7 @@ class AssetPreviewScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, 128, 96);
     const actor = this.add.rectangle(24, 38, 10, 12, 0xffffff);
     this.physics.add.existing(actor);
-    this.testActorBody = actor.body as Phaser.Physics.Arcade.Body;
+    this.testActorBody = actor.body as PhaserNamespace.Physics.Arcade.Body;
     this.testActorBody.setSize(10, 12).setOffset(0, 0);
     this.physics.add.collider(actor, layer);
     const localIndex = binding.localIndexByName.ground;
@@ -299,17 +316,20 @@ class AssetPreviewScene extends Phaser.Scene {
     const props = generated.layers.find(({ name }) => name === "props");
     if (!background || !hidden || !ground || !props) throw new Error("generated_tilemap_required_layer_missing");
     const floorTile = ground.layer.getTileAt(1, 4);
-    const emptyTile = ground.layer.getTileAt(7, 4);
-    const unselectedSolidTile = props.layer.getTileAt(7, 4);
+    const emptyCellX = generated.map.width > 8 ? 14 : 7;
+    const propsCellX = generated.map.width > 8 ? 15 : 7;
+    const emptyTile = ground.layer.getTileAt(emptyCellX, 4);
+    const unselectedSolidTile = props.layer.getTileAt(propsCellX, 4);
     this.physics.world.setBounds(0, 0, generated.map.widthInPixels, generated.map.heightInPixels);
+    this.cameras.main.setBounds(0, 0, generated.map.widthInPixels, generated.map.heightInPixels);
     const player = this.add.rectangle(24, 34, 10, 12, 0xffffff);
     this.physics.add.existing(player);
-    this.testActorBody = player.body as Phaser.Physics.Arcade.Body;
+    this.testActorBody = player.body as PhaserNamespace.Physics.Arcade.Body;
     this.testActorBody.setSize(10, 12).setOffset(0, 0);
     this.physics.add.collider(player, ground.layer);
     const freePlayer = this.add.rectangle(120, 34, 10, 12, 0xf7768e);
     this.physics.add.existing(freePlayer);
-    this.freeActorBody = freePlayer.body as Phaser.Physics.Arcade.Body;
+    this.freeActorBody = freePlayer.body as PhaserNamespace.Physics.Arcade.Body;
     this.freeActorBody.setSize(10, 12).setOffset(0, 0);
     this.physics.add.collider(freePlayer, props.layer);
 
@@ -348,8 +368,11 @@ class AssetPreviewScene extends Phaser.Scene {
     const manifest = this.cache.json.get("packed-animation") as GeneratedAnimationManifest;
     const animation = manifest?.animations?.find(({ key }) => key === "acceptance-run");
     const yoyoAnimation = manifest?.animations?.find(({ key }) => key === "acceptance-yoyo");
+    const idleAnimation = manifest?.animations?.find(({ key }) => key === "acceptance-idle");
+    this.idleAnimationEnabled = atlas?.frameNames.includes("idle_0") === true;
     if (!animation || !yoyoAnimation || animation.frameNames.some((name) => !atlas.frameNames.includes(name)) ||
-        yoyoAnimation.frameNames.some((name) => !atlas.frameNames.includes(name))) {
+        yoyoAnimation.frameNames.some((name) => !atlas.frameNames.includes(name)) ||
+        (this.idleAnimationEnabled && (!idleAnimation || !idleAnimation.frameNames.includes("idle_0")))) {
       throw new Error("generated_spritesheet_animation_invalid");
     }
     this.yoyoObservedFrames = [];
@@ -379,17 +402,25 @@ class AssetPreviewScene extends Phaser.Scene {
     const props = generated.layers.find(({ name }) => name === "props");
     if (!ground || !props) throw new Error("generated_tilemap_required_layer_missing");
     const floorTile = ground.layer.getTileAt(1, 4);
-    const emptyTile = ground.layer.getTileAt(7, 4);
-    const unselectedSolidTile = props.layer.getTileAt(7, 4);
+    const emptyCellX = generated.map.width > 8 ? 14 : 7;
+    const propsCellX = generated.map.width > 8 ? 15 : 7;
+    const emptyTile = ground.layer.getTileAt(emptyCellX, 4);
+    const wallTile = ground.layer.getTileAt(6, 3);
+    const unselectedSolidTile = props.layer.getTileAt(propsCellX, 4);
     this.physics.world.setBounds(0, 0, generated.map.widthInPixels, generated.map.heightInPixels);
+    this.cameras.main.setBounds(0, 0, generated.map.widthInPixels, generated.map.heightInPixels);
     this.actor = this.physics.add.sprite(24, 38, "packed-spritesheet", animation.frameNames[0]);
     this.actor.body?.setSize(10, 12).setOffset(3, 2);
     this.physics.add.collider(this.actor, ground.layer);
-    playGeneratedAnimation(this.actor, animation.key);
-    const freeActor = this.add.rectangle(120, 34, 10, 12, 0xf7768e);
+    this.actor.setCollideWorldBounds(true);
+    this.cameras.main.startFollow(this.actor, true, 1, 0);
+    this.cursors = this.input.keyboard?.createCursorKeys();
+    playGeneratedAnimation(this.actor, this.idleAnimationEnabled ? "acceptance-idle" : animation.key);
+    const freeActor = this.add.rectangle(emptyCellX * generated.map.tileWidth + 8, 34, 10, 12, 0xf7768e);
     this.physics.add.existing(freeActor);
-    this.freeActorBody = freeActor.body as Phaser.Physics.Arcade.Body;
+    this.freeActorBody = freeActor.body as PhaserNamespace.Physics.Arcade.Body;
     this.freeActorBody.setSize(10, 12).setOffset(0, 0);
+    this.physics.add.collider(freeActor, ground.layer);
     this.physics.add.collider(freeActor, props.layer);
     this.state = {
       loaded: true,
@@ -401,6 +432,10 @@ class AssetPreviewScene extends Phaser.Scene {
       playerBottom: this.actor.body?.bottom ?? 0,
       floorTop: floorTile?.pixelY ?? 0,
       collisionEnabled: floorTile?.collides === true,
+      actorX: this.actor.x,
+      cameraScrollX: this.cameras.main.scrollX,
+      emptyTileCollides: emptyTile?.collides === true,
+      wallTileCollides: wallTile?.collides === true,
       atlasValid: true,
       atlasTextureSize: { width: atlas.width, height: atlas.height },
       animationRuntime: {
@@ -444,21 +479,22 @@ class AssetPreviewScene extends Phaser.Scene {
   }
 }
 
-const game = new Phaser.Game({
-  type: Phaser.CANVAS,
+const game = new PhaserRuntime.Game({
+  type: PhaserRuntime.CANVAS,
   parent: "preview",
   width: 128,
   height: 96,
   backgroundColor: "#1a1b26",
   pixelArt: true,
   physics: { default: "arcade", arcade: { gravity: { x: 0, y: 520 }, debug: false } },
+  audio: { noAudio: true },
   scene: [AssetPreviewScene],
-  scale: { mode: Phaser.Scale.NONE, width: 128, height: 96 },
+  scale: { mode: PhaserRuntime.Scale.NONE, width: 128, height: 96 },
   render: { antialias: false, roundPixels: true },
   fps: { target: 60, forceSetTimeOut: true },
 });
 
-game.events.once(Phaser.Core.Events.DESTROY, () => {
+game.events.once(PhaserRuntime.Core.Events.DESTROY, () => {
   delete window.__ASSET_PREVIEW_TEST__;
   delete window.__ASSET_PREVIEW_RESTART__;
 });

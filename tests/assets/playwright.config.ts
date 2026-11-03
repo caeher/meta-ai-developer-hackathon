@@ -2,7 +2,9 @@ import { defineConfig } from "playwright/test";
 
 export default defineConfig({
   testDir: ".",
-  testMatch: ["inspect-preview.spec.ts", "edit-sprite-preview.spec.ts", "create-tileset-preview.spec.ts", "create-tilemap-preview.spec.ts", "pack-spritesheet-preview.spec.ts"],
+  testMatch: process.env.ISSUE_37_ASSET_ACCEPTANCE === "1"
+    ? ["pack-spritesheet-preview.spec.ts"]
+    : ["inspect-preview.spec.ts", "edit-sprite-preview.spec.ts", "create-tileset-preview.spec.ts", "create-tilemap-preview.spec.ts", "pack-spritesheet-preview.spec.ts"],
   fullyParallel: false,
   workers: 1,
   reporter: "list",

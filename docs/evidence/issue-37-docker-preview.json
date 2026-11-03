@@ -1,0 +1,39 @@
+{
+  "status": "passed",
+  "frameNames": [
+    "idle_0",
+    "run_0",
+    "run_1",
+    "run_2"
+  ],
+  "animationFps": 6,
+  "renderedTilePixels": [
+    [
+      35,
+      115,
+      230
+    ],
+    [
+      38,
+      220,
+      80
+    ],
+    [
+      190,
+      70,
+      225
+    ],
+    [
+      230,
+      190,
+      35
+    ]
+  ],
+  "actorX": 91,
+  "cameraScrollX": 27,
+  "collision": "solid wall blocked; empty cell passed",
+  "pageErrors": 0,
+  "phaserWarnings": 0,
+  "failedResponses": 0,
+  "externalRequests": 0
+}
