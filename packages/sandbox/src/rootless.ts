@@ -711,7 +711,7 @@ export class RootlessDockerDriver implements SandboxDriver {
     if (this.hostRuntimeMode === "rootless") {
       if (!securityOptions.some((option) => option.includes("rootless"))) throw new SandboxRuntimeError("rootless_runtime_required");
       if (info.CgroupDriver !== "systemd") throw new SandboxRuntimeError("systemd_cgroup_driver_required");
-    } else if (info.OperatingSystem !== "Docker Desktop" || info.CgroupDriver !== "cgroupfs" || this.workspaceMode !== "tmpfs") {
+    } else if (!(info.OperatingSystem === "Docker Desktop" || (typeof info.OperatingSystem === "string" && info.OperatingSystem.indexOf("Docker Desktop") === 0)) || info.CgroupDriver !== "cgroupfs" || this.workspaceMode !== "tmpfs") {
       throw new SandboxRuntimeError("docker_desktop_security_runtime_required");
     }
     if (!securityOptions.some((option) => option.includes("seccomp"))) throw new SandboxRuntimeError("seccomp_required");
