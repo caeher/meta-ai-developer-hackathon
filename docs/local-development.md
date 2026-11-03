@@ -1,115 +1,86 @@
-# Desarrollo local
+# Entorno interno Docker Compose
+
+## Decisión de arquitectura
+
+La aplicación es un monolito de producto en este repositorio. `infra/compose.yml` es el entorno interno de desarrollo, staging y aceptación; no se despliega a un VPS, servidor remoto ni host Linux dedicado. Docker Desktop con motor Linux es el destino local de contenedores. Postgres, Redis y Silo usan volúmenes Compose; no requieren servicios externos.
+
+Las pruebas que históricamente mencionaban VPS, staging remoto, DNS/TLS wildcard, cuotas o rollback se ejecutan contra este entorno local. Los nombres de preview/publicación deben usar `*.localhost`; si una prueba necesita HTTPS, se usa TLS local autofirmado. El despliegue público final queda a cargo del propietario y no bloquea el estado de las issues.
 
 ## Requisitos
 
-- Node.js `24.x` y npm para los comandos del repositorio.
-- Docker Engine y el plugin Docker Compose v2. En Windows se admite Docker Desktop con integración WSL2 habilitada para la distribución usada.
-- Puertos locales disponibles: `3000`, `5432`, `6379`, `9000` y `9001`. Se pueden cambiar los puertos de infraestructura en `infra/.env`.
+- Node.js `24.x` y npm.
+- Docker Desktop con motor Linux activo y Docker Compose v2.
+- Puertos `3000`, `5432`, `6379`, `9000` y `9001` disponibles. Los puertos de infraestructura se pueden cambiar en `infra/.env`. Para `--preview` o `--publishing`, también se necesita libre `127.0.0.1:443`.
 
-Compose es solo para servicios de control y desarrollo. No ejecuta juegos, no monta el socket Docker y no incluye el controlador rootless. apps/sandbox-controller corre nativamente en un host Linux dedicado, fuera de web y worker. Docker Desktop con WSL2 no sustituye ese host.
+## Levantar el entorno
 
-## Configuración e inicio
-
-Desde la raíz:
+Desde la raíz del repositorio:
 
 ```sh
 npm ci
 npm run infra:config
-npm run infra:up
+npm run infra:up -- --web --worker
 ```
 
-La primera ejecución crea `infra/.env` desde `infra/env.example`. El archivo contiene credenciales locales de ejemplo, queda ignorado por Git y no se copia a `.env.local`. Puedes editar sus puertos, nombres de buckets y credenciales antes de iniciar los servicios. El validador solo acepta valores de un formato local portable y reporta nombres de variables inválidas, nunca sus valores.
+El comando inicia Postgres, Redis, Silo, la aplicación web y el worker. La web queda en <http://localhost:3000>; la API de salud está en `/api/health`. El worker mantiene las features deshabilitadas según sus flags locales. Para levantar solo las dependencias de datos, ejecuta `npm run infra:up`.
 
-El perfil `web` utiliza la entrada Next.js ya existente y recibe solo `APP_ORIGIN`, `NEXT_PUBLIC_APP_URL` y `NEXT_TELEMETRY_DISABLED`. Para iniciarlo junto con las dependencias:
+`infra:config` valida Compose y la configuración sin mostrar valores. `infra:up` crea `infra/.env` desde `infra/env.example` si falta, crea los buckets privados y espera a que los healthchecks estén listos. El archivo local está ignorado por Git; no copies secretos al repositorio ni al chat.
 
-```sh
-npm run infra:up -- --web
-```
-
-El worker tiene perfil Compose desde #11; recibe solo URL y token placeholder del controlador, nunca el socket Docker. El gateway de preview sigue pendiente.
-
-La configuración Compose directa también se puede revisar con:
+Para revisar estado y configuración sin imprimir variables de entorno:
 
 ```sh
-docker compose -f infra/compose.yml config
 docker compose -f infra/compose.yml --env-file infra/.env ps
+docker compose -f infra/compose.yml --env-file infra/.env config --quiet
 ```
 
-## Persistencia local
+## Dominios locales y HTTPS
 
-Con Postgres y Silo disponibles, aplica la migración y carga los fixtures sintéticos:
+Los perfiles de preview y publicación usan `preview.localhost` y `games.localhost`; el navegador resuelve esos nombres a loopback sin DNS externo. Al iniciar `--preview` o `--publishing`, `infra:up` agrega el perfil `local-domains`. El servicio Caddy publica HTTPS solo en `127.0.0.1:443`, termina TLS con su CA interna y enruta a los servicios privados del Compose. La CA y sus claves quedan en el volumen local `caddy-data`, nunca en Git.
+
+Las funciones siguen apagadas por defecto. El gateway requiere `PREVIEW_GATEWAY_ENABLED=true` y claves RSA locales; el origen requiere `PUBLISHING_ENABLED=true` y runtime sandbox validado. Si `infra/.env` ya existía, `infra:up` conserva el archivo: cambia allí los dominios `PREVIEW_BASE_DOMAIN=preview.localhost` y `PUBLISH_BASE_DOMAIN=games.localhost` al habilitar esos perfiles. Para inspeccionar la CA raíz y, opcionalmente, confiarla en el almacén del usuario de Windows:
+
+```powershell
+$router = docker compose -f infra/compose.yml --env-file infra/.env ps --quiet local-router
+docker cp "${router}:/data/caddy/pki/authorities/local/root.crt" "$env:TEMP\meta-ai-local-root.crt"
+Import-Certificate -FilePath "$env:TEMP\meta-ai-local-root.crt" -CertStoreLocation Cert:\CurrentUser\Root
+```
+
+La importación es opcional y se revierte quitando ese certificado de `Cert:\CurrentUser\Root`. Si `infra:down --volumes` borra `caddy-data`, Caddy emite una CA nueva y hay que volver a confiarla.
+
+## Migraciones y validación Docker local
+
+Con los servicios activos, la base de datos se prepara y se verifica con:
 
 ```sh
 npm run db:migrate
 npm run db:seed
-```
-
-`db:migrate` usa `DATABASE_URL` del entorno si está definido. Si falta, arma la URL de loopback con las variables de `infra/.env`; nunca lee `.env.local`. Drizzle registra cada migración aplicada, por lo que volver a ejecutar el comando no repite ni altera una migración anterior.
-
-`db:seed` requiere PostgreSQL local en loopback y rechaza `NODE_ENV=production`. Inserta dos identidades autenticación propia sintéticas, proyectos, mensajes, runs, eventos, sandboxes y registros de uso con IDs reservados. Repetir el comando no duplica fixtures. No genera datos personales ni pretende autenticar a esas identidades.
-
-Las pruebas integradas usan una base y un bucket privados temporales:
-
-```sh
 npm run test:integration
 ```
 
-El comando necesita permiso para crear/eliminar una base y un bucket en los servicios locales. Migra la base temporal desde cero, repite la migración, aplica el seed sintético dos veces y compara sus filas, verifica consultas de dos dueños y lectura S3 anónima, y elimina la base y el bucket temporal al finalizar. No configura ni contacta un PostgreSQL o bucket remoto.
+La suite de integración crea recursos temporales en Postgres, Redis y Silo locales, verifica ownership y almacenamiento privado, y limpia esos recursos al terminar. Los datos de seed son sintéticos.
 
-La primera migración puede revertirse solo de forma manual en una base local descartable. Detén la aplicación y ejecuta desde la raíz:
+La suite unitaria y de regresión offline es `npm test` y `npm run test:security:offline`. Las pruebas de runtime deben ejecutarse también desde el perfil Docker local correspondiente y comprobar límites observables dentro de contenedores; un mock no acredita el runtime. No se debe sustituir esta validación por una referencia a un host remoto.
 
-```sh
-# PowerShell
-psql "$env:DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/db/migrations/0000_normal_chameleon_down.sql
+## Imágenes y almacenamiento
 
-# Linux/macOS
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/db/migrations/0000_normal_chameleon_down.sql
-```
+Compose fija Postgres, Redis, Silo y las imágenes Node por digest en `infra/compose.yml` y `infra/images.lock.json`. Silo ofrece la API S3 compatible que usan los tests de almacenamiento. Los buckets locales se crean privados.
 
-El archivo elimina todas las tablas y tipos de esta migración, incluidos sus datos. No lo ejecutes en staging ni producción. `0001_dazzling_red_skull_down.sql` cambia los UUID del ledger a una secuencia nueva; los IDs/cursors externos no se conservan, así que usa un backup si los necesitas. No hay rollback automático de migraciones futuras; cada cambio posterior debe ser aditivo y tener un plan explícito.
+La red de control permite egress para desarrollo. El código de juegos corre en sandboxes separados, con política egress propia; no se debe describir la red de control como aislamiento de sandbox. Cada issue que cambie runtime, cuotas, gateway u observabilidad debe añadir su servicio/configuración Compose y una prueba Docker local reproducible.
 
-Los servicios publicados en el host enlazan `127.0.0.1`. La red bridge de desarrollo permite egress de los contenedores de control; no ejecuta código de juegos ni constituye la política de egress del sandbox. Los puertos de datos no se publican en perfiles de despliegue. Web no recibe claves de autenticación propia, Meta o del controlador.
+## Parada y persistencia
 
-## Servicios e imágenes
-
-Postgres 17.11, Redis 8.10.2 y el storage S3 local están fijados por digest en `infra/compose.yml` y registrados en `infra/images.lock.json`. PostgreSQL usa su volumen administrado; Redis persiste AOF; storage conserva objetos en otro volumen. Los healthchecks prueban readiness específica del proceso.
-
-MinIO archivó su repositorio comunitario el 25 de abril de 2026 y dejó de distribuir imágenes comunitarias mantenidas. La imagen comunitaria oficial no está disponible para descarga anónima y Docker Hardened Images requiere un derecho ELS para MinIO. Para que el entorno siga ejecutable, Compose usa **Silo**, fork mantenido que conserva las interfaces S3 y las variables de configuración `MINIO_*`. Es una sustitución local transparente para la API S3 seleccionada, no una imagen oficial de MinIO. Revisar compatibilidad con los flujos concretos antes de cambiar el proveedor y no asumir soporte comercial ni garantía upstream.
-
-`infra:up` crea los buckets configurados y fija acceso anónimo `none` en ambos. Puede verificarse que no haya lectura anónima (la respuesta debe ser `403`):
-
-```sh
-curl -i http://127.0.0.1:9000/meta-game-private
-curl -i http://127.0.0.1:9000/meta-game-public
-```
-
-Si cambiaste los nombres de bucket, usa los valores de `infra/.env`. Para ver readiness y servicios:
-
-```sh
-docker compose -f infra/compose.yml --env-file infra/.env ps
-```
-
-## Parada, persistencia y reset
-
-La parada normal conserva datos:
+La parada normal conserva la base, Redis y objetos S3:
 
 ```sh
 npm run infra:down
 ```
 
-Los volúmenes administrados no se borran al detener los contenedores ni al ejecutar `down`. Para comprobar persistencia, sube servicios, escribe un objeto de prueba con un cliente S3, ejecuta `infra:down`, vuelve a iniciar y lee el mismo objeto.
-
-El borrado completo es destructivo y explícito; detén primero los servicios y ejecuta solo si aceptas perder la base, Redis, buckets y cachés locales:
+Para reiniciar, repite `npm run infra:up -- --web --worker`. El reset completo borra los volúmenes y es destructivo:
 
 ```sh
 docker compose -f infra/compose.yml --env-file infra/.env down --volumes
 ```
 
-Después, `npm run infra:up` crea de nuevo los volúmenes y los buckets vacíos. No ejecutes el reset contra datos que quieras conservar.
+## Alcance de la demo
 
-## Límites
-
-- Los valores del ejemplo son únicamente locales. Usa credenciales únicas si necesitas exponer el entorno dentro de una LAN; los puertos están intencionalmente restringidos a loopback.
-- El servicio S3 compatible local no sustituye una decisión de almacenamiento para producción.
-- La red bridge local no restringe el egress de los servicios de control; el futuro sandbox necesitará su propia política de salida comprobada desde código arbitrario.
-- Las pruebas de escape, SSRF y aislamiento multiusuario requieren el runner Linux desechable de seguridad; no se ejecutan en este Compose ni en una máquina personal.
+Una issue queda `COMPLETA` cuando su código y checks aplicables, incluidas las pruebas Docker locales, pasan. Queda `PARCIAL` solo cuando falta código o falla una prueba, lint, typecheck o build. La publicación pública posterior no es un requisito pendiente del roadmap.

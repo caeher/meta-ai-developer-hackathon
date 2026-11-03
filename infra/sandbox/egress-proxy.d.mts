@@ -1,5 +1,9 @@
 export function validPublicIpv4(address: string): boolean;
 export function validPathname(pathname: string): boolean;
+export function resolvePublicIpv4(
+  hostname: string,
+  resolve?: (hostname: string, options: { all: true; family: 4; verbatim: true }) => Promise<Array<{ address: string; family: number }>>,
+): Promise<string>;
 export function validateRegistryRequest(
   path: string,
   hosts: ReadonlySet<string>,

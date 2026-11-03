@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSandboxEnvironment } from "@meta-game/config";
-import { validPathname, validPublicIpv4, validatePreviewRequest, validateRedirectLocation, validateRegistryRequest } from "../../infra/sandbox/egress-proxy.mjs";
+import { resolvePublicIpv4, validPathname, validPublicIpv4, validatePreviewRequest, validateRedirectLocation, validateRegistryRequest } from "../../infra/sandbox/egress-proxy.mjs";
 
 describe("sandbox egress policy", () => {
   it("allows only public IPv4 upstreams and blocks private, reserved and IPv6 destinations", () => {
@@ -30,6 +30,8 @@ describe("sandbox egress policy", () => {
     expect(validateRedirectLocation("https://169.254.169.254/latest/meta-data", "registry.npmjs.org", hosts)).toBeNull();
     expect(validateRedirectLocation("https://evil.example/pkg.tgz", "registry.npmjs.org", hosts)).toBeNull();
     expect(validateRedirectLocation("https://user:secret@registry.npmjs.org/pkg.tgz", "registry.npmjs.org", hosts)).toBeNull();
+    expect(validateRedirectLocation("https://registry.npmjs.org/%252e%252e/private.tgz", "registry.npmjs.org", hosts)).toBeNull();
+    expect(validateRegistryRequest("/registry/registry.npmjs.org/%252e%252e/private", hosts)).toBeNull();
   });
 
   it("routes preview only to its fixed sandbox and rejects hostile hosts or traversal", () => {
@@ -46,6 +48,9 @@ describe("sandbox egress policy", () => {
   it("rejects redirects or dependency allowlists that name private networks", () => {
     expect(validPathname("/phaser/-/phaser-3.90.0.tgz")).toBe(true);
     expect(validPathname("/x/%2e%2e/private")).toBe(false);
+    expect(validPathname("/x/%252e%252e/private")).toBe(false);
+    expect(validPathname("/x/%25252e%25252e/private")).toBe(false);
+    expect(validPathname("/x/%252f%252fevil.example/private")).toBe(false);
     expect(() => parseSandboxEnvironment({
       SANDBOX_DRIVER: "rootless",
       SANDBOX_IMAGE: `registry.example.test/sandbox@sha256:${"a".repeat(64)}`,
@@ -58,5 +63,21 @@ describe("sandbox egress policy", () => {
       SANDBOX_CONTROLLER_TOKEN: "test-controller-token-1234567890abcdef",
       SANDBOX_EGRESS_ALLOWLIST: "registry.npmjs.org,metadata.internal",
     })).toThrow("Invalid sandbox environment fields");
+  });
+
+  it("rejects DNS answers that rebind an allowlisted name to any private address", async () => {
+    const publicAnswer = [{ address: "104.16.24.34", family: 4 }];
+    const privateAnswer = [{ address: "169.254.169.254", family: 4 }];
+    let currentAnswer = publicAnswer;
+    const rotatingResolver = async () => currentAnswer;
+
+    await expect(resolvePublicIpv4("registry.npmjs.org", rotatingResolver)).resolves.toBe("104.16.24.34");
+    currentAnswer = privateAnswer;
+    await expect(resolvePublicIpv4("registry.npmjs.org", rotatingResolver)).rejects.toThrow("egress_destination_not_public");
+
+    await expect(resolvePublicIpv4("registry.npmjs.org", async () => [
+      { address: "104.16.24.34", family: 4 },
+      { address: "127.0.0.1", family: 4 },
+    ])).rejects.toThrow("egress_destination_not_public");
   });
 });

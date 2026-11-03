@@ -8,13 +8,14 @@ import {
 import { spawnSync } from "node:child_process";
 
 function parseOptions(arguments_) {
-  const options = { web: false, worker: false, preview: false, publishing: false };
+  const options = { web: false, worker: false, preview: false, publishing: false, localDomains: false };
 
   for (const argument of arguments_) {
     if (argument === "--web") options.web = true;
     else if (argument === "--worker") options.worker = true;
     else if (argument === "--preview") options.preview = true;
     else if (argument === "--publishing") options.publishing = true;
+    else if (argument === "--local-domains") options.localDomains = true;
     else throw new Error(`Opción desconocida para infra:up: ${argument}`);
   }
 
@@ -90,20 +91,23 @@ try {
   }
   if (options.publishing) {
     if (environment.PUBLISHING_ENABLED !== "true") throw new Error("Configura PUBLISHING_ENABLED=true antes de iniciar el origen público.");
-    if (environment.SANDBOX_DRIVER !== "rootless") throw new Error("Publicar requiere SANDBOX_DRIVER=rootless en el host Linux dedicado.");
+    if (environment.SANDBOX_DRIVER !== "rootless") throw new Error("Publicar requiere que el runtime sandbox local esté habilitado y validado en Compose.");
   }
+  if (options.preview || options.publishing) options.localDomains = true;
   const profiles = [
     ...(options.web || options.publishing ? ["--profile", "web"] : []),
     ...(options.worker || options.publishing ? ["--profile", "worker"] : []),
     ...(options.publishing ? ["--profile", "publishing"] : []),
     ...(options.preview ? ["--profile", "preview"] : []),
+    ...(options.localDomains ? ["--profile", "local-domains"] : []),
   ];
   runDocker(composeArguments([...profiles, "up", "--detach", "--wait"]));
   initializeStorageBuckets(environment);
   console.log("Postgres, Redis y S3 local están disponibles; los buckets siguen siendo privados.");
   if (options.web) console.log("La aplicación web está disponible en http://localhost:3000.");
   if (options.worker) console.log("El worker está activo; los runs terminan con orchestrator_pending hasta integrar el orquestador.");
-  if (options.publishing) console.log("El worker y el origen de publicación están activos; configura DNS/TLS wildcard y un bucket privado de lectura para el origen.");
+  if (options.publishing) console.log("El worker y el origen local de publicación están activos detrás de *.games.localhost.");
+  if (options.localDomains) console.log("El router local sirve *.preview.localhost y *.games.localhost con una CA TLS interna de Caddy en el volumen local.");
 } catch (error) {
   reportInfrastructureError(error);
 }

@@ -35,4 +35,4 @@ npm run build:worker
 - Configura `DATABASE_URL`, `REDIS_URL`, `USER_MAX_CONCURRENT_JOBS`, `RUN_MAX_TOKENS`, `USER_DAILY_TOKEN_LIMIT` y `USER_DAILY_IMAGE_LIMIT` para cada servicio; no copies `.env.local` al contenedor.
 - Redis debe usar persistencia AOF y `maxmemory-policy=noeviction` en producción. PostgreSQL sigue siendo la fuente de verdad si Redis reinicia o pierde un job.
 - `npm run infra:down` conserva los volúmenes locales. No borres los datos para resolver una cola atascada; inspecciona `run_outbox`, estado del run, `project_run_locks` y eventos antes de reconciliar.
-- En staging/producción, detén primero web/worker antes de aplicar rollback `0003_durable_runs_outbox_down.sql`, y respalda PostgreSQL. El rollback elimina estado nuevo de cola/leases.
+- En el Compose local, detén web/worker y respalda PostgreSQL antes de aplicar rollback `0003_durable_runs_outbox_down.sql`. El rollback elimina estado nuevo de cola/leases.

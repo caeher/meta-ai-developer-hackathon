@@ -14,4 +14,4 @@ Antes de escribir un objeto, el worker inserta la versión con estado `creating`
 
 - `npm test` cubre exclusión de `.env.local`, snapshots con assets binarios, checksums, restore como tercera versión, rollback, reconciliación de una reserva con objeto válido y de una reserva sin objeto, owner/CSRF de las rutas y autenticación del endpoint interno.
 - `npm run test:integration` incluye migraciones y repositorio de versiones sobre Postgres local; el S3 de prueba es temporal y privado. La fixture no demuestra ejecución del sandbox rootless.
-- La integración real con S3 y sandbox rootless, la preview jugable histórica sin alterar el workspace activo y la validación en el host Linux dedicado siguen pendientes. `RUNS_ENABLED=false` y `PREVIEW_GATEWAY_ENABLED=false` mantienen deshabilitada la ejecución/previsualización fuera de la configuración operativa validada.
+- La integración con S3 local pasa; la preview jugable histórica y el ciclo completo de sandbox/gateway en Compose siguen pendientes. `ESTADO: PARCIAL`; `RUNS_ENABLED=false` y `PREVIEW_GATEWAY_ENABLED=false` hasta validar esos recorridos localmente.

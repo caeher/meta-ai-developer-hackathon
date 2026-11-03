@@ -7,7 +7,7 @@ export type PreviewRouteMessage = Readonly<{ type: "preview:route"; path: string
 export function getPreviewOrigin(projectId: string, baseDomain: string | undefined): string | undefined {
   if (!previewUuidPattern.test(projectId) || !baseDomain || baseDomain.length > 253) return undefined;
   const domain = baseDomain.toLowerCase();
-  if (!previewDomainPattern.test(domain) || domain === "localhost" || domain.endsWith(".localhost")) return undefined;
+  if (!previewDomainPattern.test(domain) || domain === "localhost") return undefined;
   return `https://${projectId.toLowerCase()}.${domain}`;
 }
 

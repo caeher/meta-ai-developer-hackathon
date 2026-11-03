@@ -4,7 +4,7 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}
 export function parsePreviewBaseDomain(value: string | undefined): string | undefined {
   if (!value || value.length > 253 || value !== value.trim()) return undefined;
   const domain = value.toLowerCase();
-  if (!domainPattern.test(domain) || domain.endsWith(".localhost") || domain === "localhost") return undefined;
+  if (!domainPattern.test(domain) || domain === "localhost") return undefined;
   return domain;
 }
 

@@ -11,7 +11,14 @@ try {
   }
 
   ensureLocalEnvironmentFile();
-  runDocker(composeArguments(["--profile", "web", "down"]));
+  runDocker(composeArguments([
+    "--profile", "web",
+    "--profile", "worker",
+    "--profile", "preview",
+    "--profile", "publishing",
+    "--profile", "local-domains",
+    "down",
+  ]));
   console.log("Servicios detenidos. Los volúmenes y datos se conservaron.");
 } catch (error) {
   reportInfrastructureError(error);

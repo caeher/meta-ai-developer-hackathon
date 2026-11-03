@@ -1,0 +1,13 @@
+{
+	admin off
+}
+
+*.preview.localhost {
+	tls internal
+	reverse_proxy preview-gateway:8080
+}
+
+*.games.localhost {
+	tls internal
+	reverse_proxy publishing-origin:8083
+}

@@ -13,7 +13,7 @@
 
 ## Activación
 
-El modo permanece cerrado con `RUNS_ENABLED=false`. Activarlo requiere `META_API_KEY` y los modelos configurados, `SANDBOX_DRIVER=rootless`, `SANDBOX_CONTROLLER_URL` y `SANDBOX_CONTROLLER_TOKEN`, además de migrar PostgreSQL. El controlador real requiere el host Linux rootless dedicado validado por #12/#13. No se debe activar sobre Windows/Docker Desktop ni con `SANDBOX_DRIVER=disabled`.
+El modo permanece cerrado con `RUNS_ENABLED=false`. Activarlo en Compose requiere `META_API_KEY` y los modelos configurados, `SANDBOX_DRIVER=rootless`, `SANDBOX_CONTROLLER_URL` y `SANDBOX_CONTROLLER_TOKEN`, además de migrar PostgreSQL. El controlador/runtime local debe pasar primero #12/#13 con Docker Desktop. No se debe activar con `SANDBOX_DRIVER=disabled` ni antes de comprobar los límites desde el contenedor.
 
 La confirmación del servidor no reemplaza una explicación visible. El editor #17 informa que Contributor puede usar entradas para entrenamiento y pide confirmación de mayoría de edad antes de crear un run. Los detectores son heurísticos; no se deben enviar datos personales o confidenciales.
 
@@ -33,7 +33,7 @@ npm run lint
 npm run typecheck
 ```
 
-Los tests de orquestación usan Meta y sandbox falsos. No sustituyen `npm run meta:smoke` opt-in ni las pruebas de aislamiento en el host Linux dedicado. La conexión del editor y SSE están documentadas en [eventos de runs](run-events.md); la plantilla Phaser corresponde a #18 y los assets de imagen a #19.
+Los tests de orquestación usan Meta y sandbox falsos. No sustituyen `npm run meta:smoke` opt-in ni las pruebas de aislamiento en Docker Compose local. La conexión del editor y SSE están documentadas en [eventos de runs](run-events.md); la plantilla Phaser corresponde a #18 y los assets de imagen a #19.
 
 ## Imágenes generadas (#19)
 

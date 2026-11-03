@@ -130,7 +130,9 @@ try {
             throw new Error("db:seed no fue idempotente en la base temporal.");
           }
           process.env.PERSISTENCE_TEST_ENABLED = "1";
-          process.exitCode = runNodeScript("node_modules/vitest/vitest.mjs", ["run", "tests/integration"]);
+          // Los archivos de integración comparten el mismo PostgreSQL/Redis/Silo temporales.
+          // Ejecutarlos en paralelo puede intercalar cuotas y locks entre fixtures aislados.
+          process.exitCode = runNodeScript("node_modules/vitest/vitest.mjs", ["run", "--maxWorkers=1", "tests/integration"]);
         }
       }
     }

@@ -1,24 +1,26 @@
-# ADR 0004: controlador privado y driver rootless
+# ADR 0004: controlador privado y sandboxes locales
 
-Estado: aceptado como mínimo de ejecución; host Linux dedicado pendiente de validación.
+Estado: aceptada para Docker Compose local; `ESTADO: PARCIAL` hasta integrar el runtime y pasar sus pruebas Docker en esta máquina.
 
 ## Contexto
 
-Los juegos y comandos son código no confiable. Ni Next ni el worker de confianza deben acceder directamente a Docker; cada proyecto necesita aislamiento de filesystem, usuario, red y recursos.
+Los juegos y comandos son código no confiable. Ni Next ni el worker de confianza deben acceder directamente al runtime. El propietario decidió que no hay VPS, staging remoto ni host Linux dedicado: el entorno de aceptación es Docker Desktop con motor Linux y Compose en este repositorio.
 
 ## Decisión
 
-- Añadir `apps/sandbox-controller` como servicio Node separado y `packages/sandbox` como contrato, cliente worker, servicio y driver Docker Engine.
-- Ejecutar el controlador como usuario Linux dedicado, con socket Unix del daemon rootless disponible únicamente para ese usuario. Worker autentica con Bearer; owner se obtiene del proyecto activo en PostgreSQL y queda sujeto a FK compuesta. Web y sandbox no reciben el token ni el socket.
-- Crear una instancia y volumen local de Docker por proyecto, con UID interior único asignado por secuencia PostgreSQL. Configurar el filesystem de `DockerRootDir` como ext4/XFS con user quotas. Aplicar una cuota dura de disco al host UID que corresponde a cada UID interior; reservar UID 60.000 y una cuota de 16 MiB para el preflight.
-- Conectar el codigo a una red bridge interna por proyecto, habilitar IPv4/IPv6 con gateway mode `isolated` de Docker Engine 28+ y publicar cero puertos. El modo internal aislado no crea un endpoint bridge en el host. Un sidecar proxy de confianza se conecta a la red privada y a la red egress; el sandbox solo llega a rutas npm autorizadas por ese proxy. Verificar DNS, IPv4/IPv6 privados y metadata desde codigo dentro del contenedor.
-- Mantener apagado por defecto. El controller comprueba Docker rootless, cgroups v2, driver systemd, seccomp y crea un workspace de prueba para demostrar cuota de disco antes de escuchar. `sandbox:host-check` mide también RAM y PIDs en contenedores desechables.
-- Usar TTL persistido y reaper que reclama leases vencidas en Postgres. Los datos del workspace existen mientras siga vivo el volumen; snapshots/recovery no se atribuyen hasta #21.
+- Ejecutar `apps/sandbox-controller` y los servicios de control dentro del Compose local. El controlador resuelve owner/proyecto en PostgreSQL; el worker lo llama con Bearer. Web, worker y juegos no reciben el socket del runtime.
+- Solo el contenedor de controlador de confianza puede montar el socket del runtime local. No publicar el daemon por TCP ni dar acceso al socket a proyectos o procesos de generación. Mantener el controlador en la red privada de Compose.
+- Crear un sandbox y una red privada por proyecto con UID interior único, rootfs de solo lectura, `CapDrop=ALL`, `no-new-privileges`, seccomp, namespaces privados y cero puertos publicados. Solo el proxy interno confiable puede alcanzar el registro npm permitido; el sandbox no tiene egress directo.
+- Aplicar límites de CPU, memoria, PIDs, tiempo y disco mediante controles que el runtime Docker local realmente aplique. El preflight debe inspeccionar cgroups y llenar el workspace para comprobar `ENOSPC`; cualquier límite que no se aplique hace fallar el arranque y deja `SANDBOX_DRIVER=disabled`.
+- Mantener TTL, leases y reaper persistidos en PostgreSQL. La pausa/destrucción captura un snapshot verificable antes de retirar el workspace, según #21 y #23.
+- No marcar la ejecución como completa con tests de driver falso. La matriz hostil corre contra sandboxes desechables creados por el Compose local.
 
-## Consecuencias y riesgos
+## Consecuencias y validación
 
-Las cuotas de usuario viven en el filesystem dedicado de Docker root y se aplican a los host UIDs del rango `subuid` del daemon. Por eso ese filesystem debe tener user quotas habilitadas y no compartirse con otros servicios; el aprovisionador instala las cuotas del rango y el UID de prueba. El host-check Linux debe demostrar `ENOSPC`; Windows/Docker Desktop no sirve como evidencia. Rootless reduce privilegios pero comparte kernel; el endurecimiento posterior puede usar gVisor/microVM sin quitar ownership ni cuotas. La instalación real y el driver siguen pendientes de validación en un host Linux dedicado.
+El kernel sigue siendo el de Docker Desktop; esta arquitectura valida el producto en el entorno local elegido y no pretende probar un despliegue público. Docker Desktop 29.9.2 disponible informa `cgroupfs`, no modo rootless. Un daemon rootless anidado inicia, pero informa `CgroupDriver=none`, por lo que ignora límites cgroup; esa configuración no pasa el preflight actual. Falta el perfil Compose que aplique y pruebe recursos/cuotas en el runtime local. Hasta entonces `SANDBOX_DRIVER=disabled` y las funciones que dependen del sandbox permanecen apagadas.
+
+La verificación se ejecuta con los comandos Docker-local registrados en [desarrollo local](../local-development.md) y [el informe de seguridad](../security-test-report.md). No se necesita ni se crea un host remoto.
 
 ## Reversión
 
-Deshabilitar y detener el servicio, respaldar Postgres y ejecutar `packages/db/migrations/0004_sandbox-runtime-uid_down.sql` solo en una base descartable. Borrar volúmenes únicamente por IDs/labels `com.meta-game.managed=true` después de confirmar que no existen sandboxes activos. Al retirar el servicio, quitar las cuotas de los UIDs reservados mediante el procedimiento operativo del filesystem.
+Detener el perfil local, respaldar Postgres si se conservarán sus datos y retirar solo recursos etiquetados `com.meta-game.managed=true`. `npm run infra:down` conserva volúmenes; el borrado total requiere el reset explícito de [desarrollo local](../local-development.md).

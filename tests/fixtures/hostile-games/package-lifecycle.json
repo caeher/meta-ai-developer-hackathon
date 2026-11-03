@@ -1,0 +1,8 @@
+{
+  "name": "hostile-lifecycle-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "preinstall": "node -e \"require('node:fs').writeFileSync('/tmp/security-lifecycle-ran','yes')\""
+  }
+}

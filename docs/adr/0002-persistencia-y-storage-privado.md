@@ -18,7 +18,7 @@ Los proyectos, mensajes, runs, eventos, sandboxes, assets, versiones, publicacio
 
 ## Migración y rollback
 
-`0000_normal_chameleon.sql` crea el esquema inicial con secuencia en el ledger; `0001_dazzling_red_skull.sql` convierte su ID a UUID y conserva las filas. El segundo paso deja compatibles las bases locales que ya habían aplicado la primera ejecución durante el desarrollo y no repite cambios sobre una base nueva. `0000_normal_chameleon_down.sql` elimina el esquema completo y solo sirve para una base local descartable. `0001_dazzling_red_skull_down.sql` vuelve a generar IDs secuenciales, por lo que los IDs/cursors previos no se conservan. Ningún rollback se ejecuta desde `db:migrate`; usar backup para conservar identidades y no ejecutar estos scripts en staging/producción. Las siguientes migraciones serán aditivas y describirán un rollback específico junto a su SQL.
+`0000_normal_chameleon.sql` crea el esquema inicial con secuencia en el ledger; `0001_dazzling_red_skull.sql` convierte su ID a UUID y conserva las filas. El segundo paso deja compatibles las bases locales que ya habían aplicado la primera ejecución durante el desarrollo y no repite cambios sobre una base nueva. `0000_normal_chameleon_down.sql` elimina el esquema completo y solo sirve para una base local descartable. `0001_dazzling_red_skull_down.sql` vuelve a generar IDs secuenciales, por lo que los IDs/cursors previos no se conservan. Ningún rollback se ejecuta desde `db:migrate`; usar backup para conservar identidades y ejecutar estos scripts únicamente en una base descartable. Las siguientes migraciones serán aditivas y describirán un rollback específico junto a su SQL.
 
 ## Consecuencias
 

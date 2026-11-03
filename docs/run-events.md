@@ -19,6 +19,6 @@ La renovación automática de la preview solo escucha `preview.ready`; los fragm
 
 ## Operación y límites
 
-Configura el proxy de despliegue para permitir `text/event-stream`, desactivar buffering y mantener un timeout inactivo mayor que el heartbeat de 15 s. `RUNS_ENABLED=false` continúa siendo el valor por defecto. Activarlo requiere Meta válido, controlador rootless y host Linux dedicado; este checkout no prueba las cuentas autenticación propia reales, el dominio wildcard/TLS ni el sandbox de producción.
+El proxy local debe permitir `text/event-stream`, desactivar buffering y mantener un timeout inactivo mayor que el heartbeat de 15 s. `RUNS_ENABLED=false` continúa siendo el valor por defecto. Activarlo requiere Meta válido y controlador/runtime que hayan pasado las pruebas Docker locales; este checkout todavía no prueba el flujo completo de sandbox/preview en Compose.
 
 Las pruebas offline cubren esquema/versionado, cursor inválido y antiguo, replay, payloads omitidos, redacción, backpressure, owner distinto, conexión del editor, reload y cancelación. Los recorridos con fixtures no sustituyen la comprobación autenticada con dos identidades autenticación propia ni la ejecución real en Linux.

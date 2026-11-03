@@ -4,5 +4,5 @@
     "types": ["vitest/globals", "node"],
     "jsx": "react-jsx"
   },
-  "include": ["tests/**/*.test.ts", "tests/e2e/**/*.ts", "tests/e2e/**/*.tsx", "tests/**/*.d.ts", "scripts/**/*.d.ts"]
+  "include": ["tests/**/*.test.ts", "tests/e2e/**/*.ts", "tests/e2e/**/*.tsx", "tests/**/*.d.ts", "scripts/**/*.d.ts", "scripts/security-runner.ts"]
 }

@@ -1,6 +1,6 @@
 # ADR #14: grants revocables y gateway de preview privada
 
-Estado: aceptada para implementación; dominio wildcard, TLS y validación de navegador/host Linux pendientes.
+Estado: aceptada para validación en Docker Compose local; `ESTADO: PARCIAL` hasta completar perfiles y pruebas de navegador con `*.localhost`.
 
 ## Contexto
 
@@ -20,33 +20,33 @@ Cada preview ejecuta código no confiable. Conocer el UUID de un proyecto o copi
 - La dirección upstream se deriva del `sandboxId` recuperado de PostgreSQL: `mg-egress-<sandboxId>:8080`. El gateway no acepta URL, hostname ni puerto del cliente. El proxy confiable de ese proyecto valida la ruta y reenvía únicamente al contenedor `mg-sandbox-<sandboxId>:4173`, dentro de su red privada. El navegador nunca conecta al puerto del sandbox.
 - Redis publica cada cambio de epoch. Todas las instancias gateway suscritas cierran los WebSockets del proyecto con código 1008; además cada socket tiene un cierre al expirar su sesión. La eliminación de un proyecto incrementa el epoch antes de aplicar el borrado lógico; `DELETE` del endpoint de preview revoca las sesiones del proyecto.
 - El gateway elimina `Cookie`, `Authorization`, `Referer`, cabeceras autenticación propia y cabeceras `X-Forwarded-*` del salto al juego. Solo retransmite cabeceras de contenido necesarias; descarta `Set-Cookie` y CSP del upstream. Aplica `private, no-store`, `no-referrer`, `nosniff`, `frame-ancestors APP_ORIGIN`, CSP de preview, `Permissions-Policy` y límites de petición/rate.
-- Caddy termina TLS con un certificado wildcard para `*.<PREVIEW_BASE_DOMAIN>` y reenvía el `Host` original. El gateway no publica puertos en Compose; solo se conecta a las redes privadas `control` y `mg-sandbox-egress`.
+- Caddy dentro de Compose termina TLS local con su CA interna para `*.preview.localhost` y reenvía el `Host` original. El router publica `127.0.0.1:443`; el gateway no publica puertos y solo se conecta a las redes privadas `control` y `mg-sandbox-egress`.
 
 ## Operación
 
-`PREVIEW_GATEWAY_ENABLED=false` es el valor predeterminado. La app rechaza emitir grants y el gateway no inicia hasta que se habilite. Configure en el gestor de secretos la clave privada de la app, las claves públicas para app/gateway, `APP_ORIGIN`, el dominio y `PREVIEW_SESSION_TTL_SECONDS`. `PREVIEW_TOKEN_TTL_SECONDS` debe ser `60`. Para Compose local, `npm run infra:up -- --preview` requiere completar esos valores en `infra/.env`; el script prepara la red egress etiquetada. No registre los valores de claves ni el cuerpo de intercambio.
+`PREVIEW_GATEWAY_ENABLED=false` es el valor predeterminado. La app rechaza emitir grants y el gateway no inicia hasta que se habilite. En `infra/.env` se configuran las claves de desarrollo, `APP_ORIGIN`, `PREVIEW_BASE_DOMAIN=preview.localhost` y `PREVIEW_SESSION_TTL_SECONDS`. `PREVIEW_TOKEN_TTL_SECONDS` debe ser `60`. `npm run infra:up -- --preview` inicia el gateway y el perfil `local-domains`, y prepara la red egress etiquetada. No se configura DNS externo. No registre valores de claves ni el cuerpo de intercambio.
 
-Consulte [Caddyfile.example](../../infra/caddy/Caddyfile.example) para TLS wildcard. El nombre `preview.example.test` es solo un placeholder; no resuelve públicamente ni dispone de certificado. El editor solo recibe `PREVIEW_BASE_DOMAIN` cuando `PREVIEW_GATEWAY_ENABLED=true`; las claves de firma no se serializan al navegador.
+Consulte [Caddyfile.local](../../infra/caddy/Caddyfile.local) para el proxy HTTPS local. Caddy guarda su CA en el volumen `caddy-data`; la raíz pública se puede confiar en el almacén del usuario según [desarrollo local](../local-development.md). El editor solo recibe `PREVIEW_BASE_DOMAIN` cuando `PREVIEW_GATEWAY_ENABLED=true`; las claves de firma no se serializan al navegador.
 
 ## Consecuencias y validación pendiente
 
 Los tests offline cubren emisión, firmas inválidas y vencidas, replay, ownership cruzado, host/path hostiles, filtrado de credenciales, acceso HTTP, upgrade WebSocket y cierre por revocación. `tests/integration/preview-redis.test.ts` prueba los scripts Lua contra Redis real cuando se define `PREVIEW_TEST_REDIS_URL`.
 
-Antes de habilitar una preview externa, el operador debe contar con una cuenta verificada en la autenticación propia, dominio wildcard con DNS/TLS y un host Linux dedicado con Docker rootless ya validado por #12/#13. También debe probar `SameSite=None; Partitioned` en los navegadores objetivo; este entorno no acredita TLS público, cookies de terceros ni acceso al host Linux dedicado. Mantener el feature flag apagado hasta completar esos pasos.
+La aceptación exige habilitar el perfil local, probar `SameSite=None; Partitioned` en los navegadores objetivo con el certificado interno de Caddy y comprobar owner/revocación contra el runtime Compose. No se requiere dominio público ni despliegue remoto. Mantener el flag apagado mientras falte una prueba local.
 
 ### Continuación de verificación (2 de noviembre de 2026)
 
 En Node 24.22.1 pasaron `npm test` (124 tests; 22 omitidos), `npm run test:integration` (27 tests; 1 omitido), el test Redis ejecutado por separado contra el Redis local (1 test), `npm run lint`, `npm run typecheck`, `npm run build:gateway` y `npm run build`. La omisión del test Redis en la suite de integración se debe a que requiere `PREVIEW_TEST_REDIS_URL`; la ejecución separada confirmó consumo atómico y revocación con Redis real.
 
-No se completó la validación externa: `infra/.env` no define `PREVIEW_BASE_DOMAIN` ni `APP_ORIGIN`, el gateway permanece desactivado y no hay certificado wildcard instalado. El Docker disponible usa el contexto `desktop-linux`; aunque reporta Linux y cgroups v2, no es el host dedicado y sus opciones de seguridad no acreditan Docker rootless. No se ejecutaron pruebas de host en Docker Desktop. Tampoco se realizó una comprobación en navegador real; por tanto, el comportamiento de `SameSite=None; Partitioned` en navegadores objetivo sigue pendiente.
+Los unit tests, pruebas Redis y E2E de fixtures pasan; el Compose local ya declara Caddy para `*.localhost`. La validación live de cookies/runtime sigue pendiente porque el gateway y el controlador aún no están habilitados juntos en Compose. Docker Desktop es el entorno de aceptación establecido; no se debe trasladar esa comprobación a un host remoto.
 
-La integración de iframe de #15 cuenta con E2E de fixtures en Chromium, Firefox y WebKit; esto comprueba el contrato de navegador, no DNS/TLS ni las cookies de un dominio real. La issue continúa abierta. Mantener `PREVIEW_GATEWAY_ENABLED=false` hasta validar DNS/TLS público, cookies en los navegadores objetivo con el dominio real y el host Linux dedicado.
+La integración de iframe de #15 cuenta con E2E de fixtures en Chromium, Firefox y WebKit; esto comprueba el contrato de navegador, no las cookies reales con la CA local. Mantener `PREVIEW_GATEWAY_ENABLED=false` hasta pasar el recorrido de `*.localhost` en Compose.
 
 ### Validación local de #15 (2 de noviembre de 2026)
 
-En Node 24.22.1, `npm run typecheck`, `npm run lint`, `npm run build`, `npm run build:gateway` y `git diff --check` pasaron. `npm test` pasó 128 pruebas y omitió 22 pruebas que requieren servicios de integración. `npm run test:integration` pasó 28 pruebas con PostgreSQL, Redis y Silo locales y omitió una prueba que requiere `PREVIEW_TEST_REDIS_URL`; esas pruebas verifican además CSP y headers de seguridad del gateway. `npm run test:e2e` pasó 33 pruebas Playwright en Chromium, Firefox y WebKit; incluye iframe con canvas/assets/HMR, grants rechazados para anónimo/otro dueño, grant vencido, cookie particionada bloqueada, navegación con teclado e historial de rutas hostiles. Los grants y los sitios de preview E2E son fixtures, no sustituyen DNS/TLS, autenticación propia ni cookie real del dominio.
+En Node 24.22.1, `npm run typecheck`, `npm run lint`, `npm run build`, `npm run build:gateway` y `git diff --check` pasaron. `npm test` pasó 128 pruebas y omitió 22 pruebas que requieren servicios de integración. `npm run test:integration` pasó 28 pruebas con PostgreSQL, Redis y Silo locales y omitió una prueba que requiere `PREVIEW_TEST_REDIS_URL`; esas pruebas verifican además CSP y headers de seguridad del gateway. `npm run test:e2e` pasó 33 pruebas Playwright en Chromium, Firefox y WebKit; incluye iframe con canvas/assets/HMR, grants rechazados para anónimo/otro dueño, grant vencido, cookie particionada bloqueada, navegación con teclado e historial de rutas hostiles. Los grants y los sitios de preview E2E son fixtures, no sustituyen el recorrido de cookie real bajo el certificado local Caddy.
 
-La revalidación de esta continuación repitió los checks locales en Node 24.22.1. El gateway sigue desactivado: no hay dominio/origen públicos, claves de firma ni controlador Linux dedicados configurados. Docker usa el contexto `desktop-linux` (Docker Desktop), no el host Linux dedicado. No se habilitó la preview; la issue sigue abierta hasta validar DNS/TLS, cookies particionadas bajo el dominio real y el host dedicado.
+La revalidación de esta continuación repitió checks locales en Node 24.22.1. El gateway sigue desactivado mientras falta validar controlador, cookies particionadas y Caddy con `*.localhost` en Compose. La issue sigue `PARCIAL` hasta que pase ese recorrido local; no hay dependencia de DNS/TLS público.
 
 ## Reversión
 

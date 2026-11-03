@@ -1,6 +1,6 @@
 # ADR #19: assets generados con provenance y validación determinista
 
-Estado: aceptada para el worker; generación real y host Linux dedicado pendientes de validación operativa.
+Estado: aceptada para el worker; `ESTADO: PARCIAL` hasta pasar el recorrido real en el Compose local. No requiere host remoto.
 
 ## Contexto
 

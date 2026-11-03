@@ -1,6 +1,6 @@
 # Builds estáticas públicas
 
-Issue #22 implementa Publish/Share para proyectos privados con autenticación propia. Publicar genera un artefacto estático independiente de la preview privada; no expone el workspace, el servidor de desarrollo ni el bucket S3. El origen de publicaciones vive en un dominio registrable distinto al de la aplicación y la preview.
+Issue #22 implementa Publish/Share para proyectos privados con autenticación propia. Publicar genera un artefacto estático independiente de la preview privada; no expone el workspace, el servidor de desarrollo ni el bucket S3. En el entorno local, el origen se sirve bajo `*.games.localhost`, separado de la app y de `*.preview.localhost`.
 
 ## Flujo
 
@@ -13,28 +13,27 @@ Issue #22 implementa Publish/Share para proyectos privados con autenticación pr
 
 ## Configuración
 
-`PUBLISHING_ENABLED=false` se mantiene por defecto. La web, el worker y el origen validan la bandera; iniciar el worker con publicaciones activas exige `SANDBOX_DRIVER=rootless` y un controlador privado configurado. Para activar el perfil local:
+`PUBLISHING_ENABLED=false` se mantiene por defecto. La web, el worker y el origen validan la bandera; iniciar el worker con publicaciones activas exige `SANDBOX_DRIVER=rootless` y un controlador privado validado en Compose. Para activar el perfil local:
 
 ```sh
 npm run infra:config
 npm run infra:up -- --publishing
 ```
 
-El perfil incluye web, worker y origen. En el entorno local, `infra/env.example` usa Silo privado y credenciales compartidas únicamente para desarrollo; el script inicializa ambos buckets como privados. No reutilices esos permisos en producción.
+El perfil incluye web, worker, origen y Caddy local con CA interna. `infra/env.example` usa Silo privado y credenciales de desarrollo; el script inicializa ambos buckets como privados. El runtime del sandbox debe estar integrado y validado antes de habilitar publicaciones.
 
-En producción configura:
+La configuración local usa:
 
-- Un host Linux dedicado con Docker rootless validado, cuotas de disco, cgroups v2 y políticas de red del sandbox. Docker Desktop no acredita este aislamiento.
-- DNS wildcard y TLS para `*.<PUBLISH_BASE_DOMAIN>`, en un dominio registrable separado de la app y la preview. Configura el proxy Caddy con [publishing/Caddyfile.example](../infra/publishing/Caddyfile.example). No publiques directamente el endpoint ni permitas acceso anónimo al bucket.
-- Un bucket privado dedicado. La credencial del worker necesita PutObject, HeadObject, ListBucket y DeleteObject en el prefijo de publicaciones; la del origen solo necesita GetObject. No entregues credenciales administrativas a web, worker u origen. Usa `PUBLISH_READ_DATABASE_URL` con un rol PostgreSQL de solo lectura para el origen.
-- `PUBLISHING_ENABLED=true`, `PUBLISH_BASE_DOMAIN`, `PUBLISHING_ORIGIN_PORT`, credenciales de almacenamiento del worker/origen y la URL de lectura de PostgreSQL. Mantén tokens internos fuera de las respuestas del navegador.
+- `PUBLISH_BASE_DOMAIN=games.localhost`; `local-domains` termina TLS autofirmado para `*.games.localhost` en Caddy y solo publica el puerto 443 en loopback.
+- Un bucket Silo privado. El perfil local puede compartir credenciales de desarrollo entre roles; no es una separación de permisos productivos.
+- `PUBLISHING_ENABLED=true`, `PUBLISH_BASE_DOMAIN`, `PUBLISHING_ORIGIN_PORT`, credenciales S3 locales y URL PostgreSQL. Mantén tokens internos fuera de las respuestas del navegador.
 
 La compilación se ejecuta con el sandbox existente y sus límites de recursos. La detección de secretos es una barrera de defensa adicional basada en patrones, no una prueba de que el contenido sea secreto-cero. Las builds son código público ejecutable: no publiques una versión que contenga información privada.
 
-## Comprobación local y límites externos
+## Comprobación local y estado
 
 `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm run build:worker` y `npm run build:publishing-origin` comprueban el código y fixtures offline. Las pruebas de integración PostgreSQL/S3 dependen de servicios de prueba dedicados; no deben apuntarse a producción. El E2E comprueba la interacción del editor con endpoints fixture.
 
 Validación local del 2 de noviembre de 2026: `npm run test:integration` pasó con PostgreSQL, Redis y Silo locales. La suite crea bases y buckets temporales, comprueba la persistencia/ownership de publicaciones en PostgreSQL y escribe/lee/borra artefactos S3 mediante las rutas de worker y reader; el origen HTTP sirve GET/HEAD anónimos desde el manifiesto, niega `.env`, fuentes y mapas, y responde 404 después de revocar. Todos los recursos temporales se limpian. En esta comprobación ambos roles usaron la credencial root local, así que no valida permisos mínimos ni separación productiva.
 
-La implementación local no demuestra todavía rootless Docker en el host Linux dedicado, permisos productivos separados, DNS/TLS wildcard, comportamiento de cachés reales ni revocación entre navegadores. Hasta completar esa validación, deja `PUBLISHING_ENABLED=false`.
+`ESTADO: PARCIAL`: la integración PostgreSQL/Redis/Silo está validada, pero falta ejecutar el build sandbox y verificar la URL `*.games.localhost` mediante Caddy dentro de Compose. Mantén `PUBLISHING_ENABLED=false` hasta que pasen esas pruebas locales. El despliegue público posterior no es un requisito pendiente.

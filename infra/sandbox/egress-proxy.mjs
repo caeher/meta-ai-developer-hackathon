@@ -34,17 +34,28 @@ export function validPublicIpv4(address) {
 
 export function validPathname(pathname) {
   if (!pathname.startsWith("/") || pathname.startsWith("//") || pathname.length > 2048 || pathname.includes("\\") || /[\u0000-\u0020\u007f]/.test(pathname)) return false;
-  let decoded;
-  try { decoded = decodeURIComponent(pathname); } catch { return false; }
-  return !decoded.split("/").some((part) => part === "." || part === "..") && !decoded.includes("\\") &&
-    !/[\u0000-\u001f\u007f]/.test(decoded) && !decoded.includes("//");
+  let decoded = pathname;
+  for (let pass = 0; pass < 4; pass += 1) {
+    if (!safeDecodedPath(decoded)) return false;
+    let next;
+    try { next = decodeURIComponent(decoded); } catch { return false; }
+    if (next === decoded) return true;
+    decoded = next;
+  }
+  return false;
 }
 
-async function resolvePublicIpv4(hostname) {
+function safeDecodedPath(pathname) {
+  return pathname.startsWith("/") && !pathname.startsWith("//") && !pathname.includes("\\") &&
+    !/[\u0000-\u0020\u007f]/.test(pathname) && !pathname.includes("//") &&
+    !pathname.split("/").some((part) => part === "." || part === "..");
+}
+
+export async function resolvePublicIpv4(hostname, resolve = lookup) {
   if (!allowedHosts.has(hostname) || isIP(hostname) !== 0 || hostname.endsWith(".localhost") || hostname.endsWith(".local")) {
     throw new Error("egress_host_not_allowed");
   }
-  const addresses = await lookup(hostname, { all: true, family: 4, verbatim: true });
+  const addresses = await resolve(hostname, { all: true, family: 4, verbatim: true });
   if (addresses.length === 0 || addresses.some(({ address }) => !validPublicIpv4(address))) throw new Error("egress_destination_not_public");
   return addresses[0].address;
 }
