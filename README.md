@@ -74,6 +74,7 @@ npm run db:seed
 npm run test:integration
 npm run resources:reconcile
 npm run test:e2e
+npm run test:performance
 npm run lint
 npm run typecheck
 npm test
@@ -105,7 +106,7 @@ Con los servicios locales arriba, `npm run db:migrate` aplica las migraciones SQ
 
 El adaptador de storage usa solo `S3_BUCKET_PRIVATE`, genera claves en servidor, admite objetos de hasta 25 MiB y valida SHA-256 al escribir y leer. El bucket privado de Silo no permite lectura anónima. Las migraciones no se revierten automáticamente; consulta [desarrollo local](docs/local-development.md) antes de ejecutar una reversión destructiva.
 
-El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y verificación, y `packages/contracts/src/events.ts` define los eventos SSE públicos versionados. El editor reconstruye plan, pasos, archivos y verificaciones desde el stream durable; permite reconectar, detener y reintentar. `npm test` cubre contratos, proyección de eventos, ownership e interacciones principales sin servicios externos. `npm run test:e2e` comprueba los recorridos de editor con fixtures en Chromium, Firefox y WebKit; no acredita dominio/TLS ni el host Linux dedicado.
+El contrato `packages/contracts/src/editor.ts` define estados de run, pasos y verificación, y `packages/contracts/src/events.ts` define los eventos SSE públicos versionados. El editor reconstruye plan, pasos, archivos y verificaciones desde el stream durable; permite reconectar, detener y reintentar. `npm test` cubre contratos, proyección de eventos, ownership e interacciones principales sin servicios externos. `npm run test:e2e` comprueba el acceso, dashboard, generación, SSE, preview, versiones, publicación, revocación y fallos con componentes reales y APIs fixture deterministas en Chromium, Firefox y WebKit. Axe bloquea hallazgos graves; `npm run test:performance` registra las mediciones del fixture Chromium. Las suites no hacen llamadas facturables a Meta ni afirman validar el runtime de preview en Compose.
 
 ## Plantillas Phaser
 

@@ -162,6 +162,7 @@ npm test                       # unitarias/contratos sin red ni cobros
 npm run build
 npm run test:integration        # Postgres/Redis/S3 de pruebas
 npm run test:e2e                # Playwright Chromium/Firefox/WebKit con fixtures; el proveedor de correo productivo sigue pendiente
+npm run test:performance        # presupuestos de interacción, evento SSE, preview y FPS en Chromium
 npm run test:security:offline   # regresiones de ownership, preview, storage, filesystem y egress
 npm run test:security           # suite offline y runtime Docker local desechable
 npm run meta:smoke              # clave configurada por operador; coste explícito
@@ -171,6 +172,8 @@ npm run skills:verify
 La issue #2 implementa Compose para Postgres, Redis y Silo; los perfiles `web` y `worker` forman el monolito local. Las imágenes se fijan por digest en `infra/compose.yml` y `infra/images.lock.json`. El mismo Compose es el staging y la aceptación internos; `infra:down` conserva datos. El borrado de volúmenes requiere el comando de reset explícito de `docs/local-development.md`.
 
 Ejecutar las pruebas hostiles únicamente contra recursos desechables del Compose local, nunca contra el equipo fuera del proyecto ni contra producción. CI normal usa fixtures y servicios efímeros; la evidencia del entorno de aceptación proviene del runtime Compose de esta máquina. Las llamadas reales a Meta son opt-in y con presupuesto acotado. Crear tests de comportamiento para autorización, contratos, estado, idempotencia y seguridad; no tests que solo copien la implementación.
+
+Las suites Playwright no guardan screenshot, video ni trace, para no publicar chats o contenido privado. Axe bloquea hallazgos críticos/graves. `docs/quality-report.md` registra la matriz E2E y sus límites; `docs/performance.md` fija los presupuestos y el perfil medido. El rendimiento E2E usa fixtures para mantener la ejecución determinista y no sustituye pruebas de runtime Docker.
 
 ## Cómo tomar issues y definición de terminado
 

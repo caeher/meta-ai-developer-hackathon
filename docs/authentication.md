@@ -22,13 +22,13 @@ Forja autentica cuentas con correo y contraseña sin un servicio de identidad ex
 
 ## Correo
 
-`Mailer` separa el envío del flujo de autenticación. `ConsoleMailer` está habilitado en `NODE_ENV=development` y muestra el enlace de un solo uso como cuerpo del correo local. En producción, registro y recuperación responden `503 email_delivery_unavailable` hasta configurar una implementación de entrega; no se marca una cuenta como verificada ni se simula un envío.
+`Mailer` separa el envío del flujo de autenticación. `SmtpMailer` usa Nodemailer y acepta `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` y `SMTP_FROM`. Compose conecta web a Mailpit (`mailpit:1025`) sin TLS ni autenticación; el buzón web queda en `http://127.0.0.1:8025`. Para SMTP productivo configura un host TLS y credenciales en el entorno del servicio. Sin `SMTP_HOST`, desarrollo mantiene el fallback de consola; producción responde `503 email_delivery_unavailable`.
 
 ## Entorno local
 
-`APP_ORIGIN`, `AUTH_ALLOWED_ORIGINS`, `AUTH_SECRET`, `SESSION_TTL_SECONDS` y `SESSION_ABSOLUTE_TTL_SECONDS` se documentan en `.env.example`. `AUTH_SECRET` solo protege los buckets de rate limit; las sesiones no son JWT, sino tokens aleatorios opacos validados por su hash en la base de datos. En desarrollo el valor placeholder activa una clave local fija para que los flujos funcionen sin configuración adicional.
+`APP_ORIGIN`, `AUTH_ALLOWED_ORIGINS`, SMTP y los TTL de sesión se documentan en `.env.example` e `infra/env.example`. En local se aceptan tanto `http://localhost:3000` como `http://127.0.0.1:3000`, porque son orígenes distintos. `AUTH_SECRET` solo protege los buckets de rate limit; las sesiones no son JWT, sino tokens aleatorios opacos validados por su hash en la base de datos. En desarrollo el valor placeholder activa una clave local fija para que los flujos funcionen sin configuración adicional.
 
-Inicia los servicios locales, aplica `npm run db:migrate` y ejecuta `npm run dev`. Regístrate, copia del log local el enlace de verificación, verifica el correo e inicia sesión. La recuperación sigue el mismo flujo con el enlace que emite el mailer local.
+Inicia los servicios locales con `npm run infra:up -- --web`, aplica `npm run db:migrate` y registra una cuenta desde `http://127.0.0.1:3000/sign-up` o `http://localhost:3000/sign-up`. Abre Mailpit en `http://127.0.0.1:8025`, usa el enlace de verificación del mensaje e inicia sesión. La recuperación sigue el mismo flujo con el enlace enviado a Mailpit. `npm run dev` desde el host puede usar `SMTP_HOST=127.0.0.1`.
 
 ## Verificación
 
