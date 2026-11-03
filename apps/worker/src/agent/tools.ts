@@ -4,6 +4,8 @@ import {
   EditSpriteInputSchema,
   CreateTilesetInputSchema,
   CreateTilesetInputJsonSchema,
+  CreateTilemapInputSchema,
+  CreateTilemapInputJsonSchema,
   ImageGenerationBriefSchema,
   InspectAssetInputSchema,
   InspectAssetInputJsonSchema,
@@ -89,6 +91,13 @@ const definitions: ToolDefinition[] = [
     inputSchema: CreateTilesetInputSchema,
     inputJsonSchema: CreateTilesetInputJsonSchema as unknown as Record<string, unknown>,
     summary: (args) => `Empaquetar ${Array.isArray(args.tiles) ? args.tiles.length : 0} tiles en ${String(args.name)}`,
+  },
+  {
+    name: "create_tilemap",
+    description: "Create a Phaser 3.90 Tiled JSON level from sparse named cells and layers. Uses a validated same-project generated tileset, preserves layer order and visibility, and applies collision only to selected layers and tiles marked collides.",
+    inputSchema: CreateTilemapInputSchema,
+    inputJsonSchema: CreateTilemapInputJsonSchema as unknown as Record<string, unknown>,
+    summary: (args) => `Crear mapa ${String(args.name)} (${String(args.width)}×${String(args.height)})`,
   },
   {
     name: "inspect_asset",

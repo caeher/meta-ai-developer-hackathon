@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { addGeneratedTileset, applyGeneratedTilesetCollisions, parseGeneratedTilesetMetadata } from "../../../packages/game-templates/phaser/src/game/tilesets";
+import { createGeneratedTilemap } from "../../../packages/game-templates/phaser/src/game/tilemaps";
 
 type Sample = Readonly<{ name: string; at: number }>;
 type PreviewState = Readonly<{
@@ -21,6 +22,21 @@ type PreviewState = Readonly<{
     terrainByLocalIndex: Record<number, string>;
   };
   tileProperties?: { collides: boolean; terrain: string; name: string };
+  tilemap?: {
+    width: number;
+    height: number;
+    tileSize: number;
+    firstgid: number;
+    layerNames: string[];
+    layerVisibility: boolean[];
+    layerCollision: boolean[];
+    backgroundIndices: Array<number | null>;
+    floorTileIndex: number;
+    emptyTileIndex: number;
+    unselectedSolidTileCollides: boolean;
+    playerBottom: number;
+    freePlayerBottom: number;
+  };
   error?: string;
 }>;
 
@@ -40,6 +56,7 @@ const TILEMAP_URL = "/fixtures/level.json";
 class AssetPreviewScene extends Phaser.Scene {
   private actor?: Phaser.Physics.Arcade.Sprite;
   private testActorBody?: Phaser.Physics.Arcade.Body;
+  private freeActorBody?: Phaser.Physics.Arcade.Body;
   private observedFrames: Sample[] = [];
   private lastFrame = "";
   private state: PreviewState = {
@@ -57,7 +74,17 @@ class AssetPreviewScene extends Phaser.Scene {
   constructor() { super("AssetPreviewScene"); }
 
   preload(): void {
-    if (new URLSearchParams(window.location.search).get("mode") === "generated-tileset") {
+    const mode = new URLSearchParams(window.location.search).get("mode");
+    if (mode === "generated-tilemap") {
+      this.load.tilemapTiledJSON("generated-map", "/fixtures/generated-tilemap.json");
+      this.load.image("generated-map-image", "/fixtures/generated-map-tileset.png");
+      this.load.json("generated-map-tileset-metadata", "/fixtures/generated-map-tileset.json");
+      this.load.once("loaderror", (file: Phaser.Loader.File) => {
+        this.state = { ...this.state, error: `load_error:${file.key}` };
+      });
+      return;
+    }
+    if (mode === "generated-tileset") {
       this.load.image("generated-tileset", "/fixtures/generated-tileset.png");
       this.load.json("generated-tileset-metadata", "/fixtures/generated-tileset.json");
       this.load.once("loaderror", (file: Phaser.Loader.File) => {
@@ -76,7 +103,12 @@ class AssetPreviewScene extends Phaser.Scene {
   }
 
   create(): void {
-    if (new URLSearchParams(window.location.search).get("mode") === "generated-tileset") {
+    const mode = new URLSearchParams(window.location.search).get("mode");
+    if (mode === "generated-tilemap") {
+      this.createGeneratedTilemapPreview();
+      return;
+    }
+    if (mode === "generated-tileset") {
       this.createGeneratedTilesetPreview();
       return;
     }
@@ -130,7 +162,11 @@ class AssetPreviewScene extends Phaser.Scene {
   update(): void {
     const actor = this.actor;
     if (!actor) {
-      this.state = { ...this.state, playerBottom: this.testActorBody?.bottom ?? 0 };
+      const playerBottom = this.testActorBody?.bottom ?? 0;
+      const tilemap = this.state.tilemap
+        ? { ...this.state.tilemap, playerBottom, freePlayerBottom: this.freeActorBody?.bottom ?? 0 }
+        : undefined;
+      this.state = { ...this.state, playerBottom, ...(tilemap ? { tilemap } : {}) };
       return;
     }
     const name = actor.frame.name;
@@ -197,6 +233,59 @@ class AssetPreviewScene extends Phaser.Scene {
         collides: groundProperties?.collides === true,
         terrain: String(groundProperties?.terrain ?? ""),
         name: String(groundProperties?.name ?? ""),
+      },
+    };
+    window.__ASSET_PREVIEW_TEST__ = () => this.readState();
+  }
+
+  private createGeneratedTilemapPreview(): void {
+    const metadata = parseGeneratedTilesetMetadata(this.cache.json.get("generated-map-tileset-metadata"));
+    if (!metadata) throw new Error("generated_tilemap_tileset_metadata_invalid");
+    const generated = createGeneratedTilemap(this, "generated-map", metadata, "generated-map-image");
+    const background = generated.layers.find(({ name }) => name === "background");
+    const hidden = generated.layers.find(({ name }) => name === "hidden");
+    const ground = generated.layers.find(({ name }) => name === "ground");
+    const props = generated.layers.find(({ name }) => name === "props");
+    if (!background || !hidden || !ground || !props) throw new Error("generated_tilemap_required_layer_missing");
+    const floorTile = ground.layer.getTileAt(1, 4);
+    const emptyTile = ground.layer.getTileAt(7, 4);
+    const unselectedSolidTile = props.layer.getTileAt(7, 4);
+    this.physics.world.setBounds(0, 0, generated.map.widthInPixels, generated.map.heightInPixels);
+    const player = this.add.rectangle(24, 34, 10, 12, 0xffffff);
+    this.physics.add.existing(player);
+    this.testActorBody = player.body as Phaser.Physics.Arcade.Body;
+    this.testActorBody.setSize(10, 12).setOffset(0, 0);
+    this.physics.add.collider(player, ground.layer);
+    const freePlayer = this.add.rectangle(120, 34, 10, 12, 0xf7768e);
+    this.physics.add.existing(freePlayer);
+    this.freeActorBody = freePlayer.body as Phaser.Physics.Arcade.Body;
+    this.freeActorBody.setSize(10, 12).setOffset(0, 0);
+    this.physics.add.collider(freePlayer, props.layer);
+
+    this.state = {
+      loaded: true,
+      atlasFrames: [],
+      pivots: {},
+      animationFrames: [],
+      animationFps: 0,
+      observedFrames: [],
+      playerBottom: this.testActorBody.bottom,
+      floorTop: floorTile?.pixelY ?? 0,
+      collisionEnabled: floorTile?.collides === true,
+      tilemap: {
+        width: generated.map.width,
+        height: generated.map.height,
+        tileSize: generated.map.tileWidth,
+        firstgid: generated.tileset.firstgid,
+        layerNames: generated.layers.map(({ name }) => name),
+        layerVisibility: generated.layers.map(({ visible }) => visible),
+        layerCollision: generated.layers.map(({ collides }) => collides),
+        backgroundIndices: [0, 1, 2, 3].map((x) => background.layer.getTileAt(x, 0)?.index ?? null),
+        floorTileIndex: floorTile?.index ?? -999,
+        emptyTileIndex: emptyTile?.index ?? -1,
+        unselectedSolidTileCollides: unselectedSolidTile?.collides === true,
+        playerBottom: this.testActorBody.bottom,
+        freePlayerBottom: this.freeActorBody.bottom,
       },
     };
     window.__ASSET_PREVIEW_TEST__ = () => this.readState();

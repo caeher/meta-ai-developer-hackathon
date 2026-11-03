@@ -37,6 +37,8 @@ import type { SpriteEditToolContext } from "../assets/edit-sprite";
 import type { InspectAssetToolContext } from "../assets/inspect-asset";
 import type { CreateTilesetToolContext } from "../assets/create-tileset";
 import { TilesetToolError } from "../assets/create-tileset";
+import type { CreateTilemapToolContext } from "../assets/create-tilemap";
+import { TilemapToolError } from "../assets/create-tilemap";
 import { imageResponseTokenUsage } from "../assets/image-generator";
 import { ImagePipelineError } from "../assets/image-pipeline";
 import { captureGameCheckpoint, createGameSpec, decodeGameCheckpoint, gameSpecFile, gameSpecInstructions, restoreGameCheckpoint, type GameCheckpoint, GAME_SPEC_PATH } from "../pipelines/generate-game";
@@ -64,6 +66,7 @@ export interface AgentOrchestratorOptions {
   spriteEditor?: AgentSpriteEditor;
   assetInspector?: (args: Record<string, unknown>, context: InspectAssetToolContext) => Promise<unknown>;
   tilesetCreator?: (args: Record<string, unknown>, context: CreateTilesetToolContext) => Promise<unknown>;
+  tilemapCreator?: (args: Record<string, unknown>, context: CreateTilemapToolContext) => Promise<unknown>;
   versions?: {
     captureVerifiedRun(input: {
       identity: VerifiedIdentityContext;
@@ -548,6 +551,9 @@ async function executeCachedTool(
     } else if (call.name === "create_tileset") {
       if (!options.tilesetCreator) throw new RunProcessingError("tileset_creation_unavailable", false, state.usage);
       result = await options.tilesetCreator(call.args, { claim, callId: call.callId, projectId, signal: state.signal });
+    } else if (call.name === "create_tilemap") {
+      if (!options.tilemapCreator) throw new RunProcessingError("tilemap_creation_unavailable", false, state.usage);
+      result = await options.tilemapCreator(call.args, { claim, callId: call.callId, projectId, signal: state.signal });
     } else if (call.name === "inspect_asset") {
       if (!options.assetInspector) throw new RunProcessingError("asset_inspection_unavailable", false, state.usage);
       result = await options.assetInspector(call.args, { claim, projectId, signal: state.signal });
@@ -557,10 +563,13 @@ async function executeCachedTool(
   } catch (error) {
     if (state.signal.aborted) throw error;
     if (error instanceof RunProcessingError) throw error;
-    if ((call.name === "inspect_asset" || call.name === "edit_sprite" || call.name === "create_tileset") && error instanceof OwnedResourceNotFoundError) {
+    if ((call.name === "inspect_asset" || call.name === "edit_sprite" || call.name === "create_tileset" || call.name === "create_tilemap") && error instanceof OwnedResourceNotFoundError) {
       throw new RunProcessingError("asset_not_found", false, state.usage);
     }
     if (call.name === "create_tileset" && error instanceof TilesetToolError) {
+      throw new RunProcessingError(error.code, false, state.usage);
+    }
+    if (call.name === "create_tilemap" && error instanceof TilemapToolError) {
       throw new RunProcessingError(error.code, false, state.usage);
     }
     if ((call.name === "generate_image" || call.name === "edit_sprite") && error instanceof ImagePipelineError) {

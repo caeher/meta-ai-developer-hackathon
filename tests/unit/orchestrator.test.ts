@@ -337,6 +337,40 @@ describe("orquestador de runs", () => {
     expect(result.usage?.images).toBe(0);
   });
 
+  it("ejecuta create_tilemap sin reserva de Meta y reutiliza el resultado por callId durable", async () => {
+    const tilemapCall = codeCall("call-create-tilemap", "create_tilemap", {
+      name: "forest_level",
+      tilesetAssetId: "10000000-0000-4000-8000-000000000161",
+      width: 2,
+      height: 2,
+      layers: [{ name: "ground", visible: true, cells: [{ x: 0, y: 1, tileName: "grass" }] }],
+      collisionLayerNames: ["ground"],
+    });
+    const output = { tilemapAssetId: "10000000-0000-4000-8000-000000000162", sha256: "a".repeat(64) };
+    const creator = vi.fn(async (_args: Record<string, unknown>, context: { callId: string; projectId: string }) => {
+      expect(context).toMatchObject({ callId: tilemapCall.callId, projectId: run.projectId });
+      return output;
+    });
+    const response = (id: string) => completion([
+      { kind: "tool_call", callId: tilemapCall.callId, name: tilemapCall.name, arguments: tilemapCall.arguments },
+      { kind: "message", role: "assistant", text: "El mapa quedó listo." },
+    ], id, 10);
+    const { options, store } = makeOptions({
+      streams: [[tilemapCall, response("response-tilemap-first")], [tilemapCall, response("response-tilemap-repeat")], [completion([], "response-tilemap-final", 10)]],
+    });
+    options.tilemapCreator = creator;
+
+    const result = await createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    });
+
+    expect(creator).toHaveBeenCalledOnce();
+    expect(store.events.filter((event) => event.type === "agent.tool_completed" && event.payload.callId === tilemapCall.callId)).toHaveLength(1);
+    expect(result.usage?.images).toBe(0);
+  });
+
   it("no reintenta una edición con reserva durable sin respuesta de Meta", async () => {
     const editCall = codeCall("call-edit-ambiguous", "edit_sprite", {
       sourceAssetId: "10000000-0000-4000-8000-000000000141",

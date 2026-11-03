@@ -184,6 +184,30 @@ describe("MetaClient streaming and tool replay", () => {
     expect((tileSchema.properties as Record<string, Record<string, unknown>>).sourceFrameIndex).toMatchObject({ minimum: 0, maximum: 63, default: 0 });
   });
 
+  it("expone create_tilemap con capas acotadas y celdas dispersas como esquema Draft-7", async () => {
+    const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tilemap_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));
+    const tilemapTool = agentToolDefinitions.find(({ name }) => name === "create_tilemap");
+    expect(tilemapTool?.inputJsonSchema).toBeDefined();
+    const client = new MetaClient(config(), fetchMock);
+    for await (const event of client.streamCode({ prompt: "Build a small level with two layers.", tools: tilemapTool ? [tilemapTool] : [] })) {
+      expect(event.type).toBe("completed");
+    }
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { tools: Array<{ name: string; parameters: Record<string, unknown> }> };
+    const schema = body.tools[0]?.parameters;
+    expect(body.tools[0]?.name).toBe("create_tilemap");
+    expect(schema?.additionalProperties).toBe(false);
+    expect(schema?.required).toEqual(expect.arrayContaining(["name", "tilesetAssetId", "width", "height", "layers"]));
+    expect((schema?.properties as Record<string, Record<string, unknown>>).width).toMatchObject({ minimum: 1, maximum: 128 });
+    expect((schema?.properties as Record<string, Record<string, unknown>>).collisionLayerNames).toMatchObject({ uniqueItems: true, maxItems: 8 });
+    const layer = (schema?.properties as Record<string, Record<string, unknown>>).layers?.items as Record<string, unknown>;
+    expect(layer?.additionalProperties).toBe(false);
+    expect((layer?.properties as Record<string, Record<string, unknown>>).visible).toMatchObject({ default: true });
+    const cell = (layer?.properties as Record<string, Record<string, unknown>>).cells?.items as Record<string, unknown>;
+    expect(cell?.required).toEqual(["x", "y", "tileName"]);
+    expect(cell?.additionalProperties).toBe(false);
+  });
+
   it("sends the inspect_asset Draft-7 source exclusivity schema to the provider", async () => {
     const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));

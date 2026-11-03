@@ -212,6 +212,142 @@ export type CreateTilesetResult = z.infer<typeof CreateTilesetResultSchema>;
 export type CreateTilesetMetadata = z.infer<typeof CreateTilesetMetadataSchema>;
 export type CreateTilesetManifest = z.infer<typeof CreateTilesetManifestSchema>;
 
+const CreateTilemapCellInputSchema = z.object({
+  x: z.number().int().min(0).max(127),
+  y: z.number().int().min(0).max(127),
+  tileName: z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/),
+}).strict();
+
+const CreateTilemapLayerInputSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/),
+  visible: z.boolean().default(true),
+  cells: z.array(CreateTilemapCellInputSchema).max(16_384),
+}).strict();
+
+const CreateTilemapInputBaseSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_-]{1,47}$/),
+  tilesetAssetId: z.string().uuid(),
+  width: z.number().int().min(1).max(128),
+  height: z.number().int().min(1).max(128),
+  layers: z.array(CreateTilemapLayerInputSchema).min(1).max(8),
+  collisionLayerNames: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/)).max(8).optional(),
+}).strict();
+
+export const CreateTilemapInputSchema = CreateTilemapInputBaseSchema.superRefine((input, context) => {
+  const layerNames = new Set<string>();
+  for (const [layerIndex, layer] of input.layers.entries()) {
+    if (layerNames.has(layer.name)) {
+      context.addIssue({ code: "custom", path: ["layers", layerIndex, "name"], message: "Layer names must be unique." });
+    }
+    layerNames.add(layer.name);
+    const coordinates = new Set<string>();
+    for (const [cellIndex, cell] of layer.cells.entries()) {
+      const coordinate = `${cell.x},${cell.y}`;
+      if (cell.x >= input.width || cell.y >= input.height) {
+        context.addIssue({ code: "custom", path: ["layers", layerIndex, "cells", cellIndex], message: "Cell coordinates must fit inside the tilemap." });
+      }
+      if (coordinates.has(coordinate)) {
+        context.addIssue({ code: "custom", path: ["layers", layerIndex, "cells", cellIndex], message: "A layer cannot contain duplicate coordinates." });
+      }
+      coordinates.add(coordinate);
+    }
+  }
+  if (input.collisionLayerNames && new Set(input.collisionLayerNames).size !== input.collisionLayerNames.length) {
+    context.addIssue({ code: "custom", path: ["collisionLayerNames"], message: "Collision layer names must be unique." });
+  }
+  if (input.collisionLayerNames?.some((name) => !layerNames.has(name))) {
+    context.addIssue({ code: "custom", path: ["collisionLayerNames"], message: "Collision layers must reference a declared layer." });
+  }
+});
+
+const createTilemapInputJson = z.toJSONSchema(CreateTilemapInputBaseSchema, { target: "draft-7" });
+const createTilemapInputProperties = createTilemapInputJson.properties as Record<string, Record<string, unknown>>;
+const createTilemapLayerItems = createTilemapInputProperties.layers?.items as Record<string, unknown>;
+const createTilemapLayerProperties = createTilemapLayerItems.properties as Record<string, Record<string, unknown>>;
+const createTilemapCellItems = createTilemapLayerProperties.cells?.items as Record<string, unknown>;
+const createTilemapCellProperties = createTilemapCellItems.properties as Record<string, Record<string, unknown>>;
+export const CreateTilemapInputJsonSchema = {
+  ...createTilemapInputJson,
+  properties: {
+    ...createTilemapInputProperties,
+    layers: {
+      ...createTilemapInputProperties.layers,
+      items: {
+        ...createTilemapLayerItems,
+        properties: {
+          ...createTilemapLayerProperties,
+          visible: { ...createTilemapLayerProperties.visible, default: true },
+          cells: {
+            ...createTilemapLayerProperties.cells,
+            items: {
+              ...createTilemapCellItems,
+              properties: createTilemapCellProperties,
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+    },
+    collisionLayerNames: {
+      ...createTilemapInputProperties.collisionLayerNames,
+      uniqueItems: true,
+    },
+  },
+} as const;
+
+export const CreateTilemapResultSchema = z.object({
+  tilemapAssetId: z.string().uuid(),
+  tilesetAssetId: z.string().uuid(),
+  path: z.string().regex(/^assets\/generated\/tilemaps\/[0-9a-f-]{36}\.json$/),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  width: z.number().int().min(1).max(128),
+  height: z.number().int().min(1).max(128),
+  tileSize: z.number().int().min(8).max(128),
+  layerNames: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/)).min(1).max(8),
+  cellCount: z.number().int().min(0).max(131_072),
+  collisionTileNames: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/)).max(256),
+  phaserFormat: z.literal("phaser-3-tilemap-json"),
+}).strict().superRefine((result, context) => {
+  if (result.path !== `assets/generated/tilemaps/${result.tilemapAssetId}.json` ||
+      new Set(result.layerNames).size !== result.layerNames.length ||
+      new Set(result.collisionTileNames).size !== result.collisionTileNames.length) {
+    context.addIssue({ code: "custom", path: ["path"], message: "Tilemap paths and names must be stable and unique." });
+  }
+});
+
+export const CreateTilemapResultJsonSchema = z.toJSONSchema(CreateTilemapResultSchema, { target: "draft-7" });
+
+export const CreateTilemapManifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  tilemaps: z.array(z.object({
+    tilemapAssetId: z.string().uuid(),
+    name: z.string().regex(/^[a-z][a-z0-9_-]{1,47}$/),
+    tilesetAssetId: z.string().uuid(),
+    path: z.string().regex(/^assets\/generated\/tilemaps\/[0-9a-f-]{36}\.json$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    width: z.number().int().min(1).max(128),
+    height: z.number().int().min(1).max(128),
+    tileSize: z.number().int().min(8).max(128),
+    layerNames: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/)).min(1).max(8),
+    cellCount: z.number().int().min(0).max(131_072),
+    collisionTileNames: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/)).max(256),
+  }).strict()).max(128),
+}).strict().superRefine((manifest, context) => {
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  for (const [index, entry] of manifest.tilemaps.entries()) {
+    if (ids.has(entry.tilemapAssetId) || names.has(entry.name) || entry.path !== `assets/generated/tilemaps/${entry.tilemapAssetId}.json`) {
+      context.addIssue({ code: "custom", path: ["tilemaps", index], message: "Tilemap manifest entries must have unique names and ID-derived paths." });
+    }
+    ids.add(entry.tilemapAssetId);
+    names.add(entry.name);
+  }
+});
+
+export type CreateTilemapInput = z.infer<typeof CreateTilemapInputSchema>;
+export type CreateTilemapResult = z.infer<typeof CreateTilemapResultSchema>;
+export type CreateTilemapManifest = z.infer<typeof CreateTilemapManifestSchema>;
+
 export const ASSET_INSPECTION_MAX_REPORT_BYTES = 24_000;
 export const ASSET_INSPECTION_MAX_FINDINGS = 64;
 export const ASSET_INSPECTION_MAX_JSON_BYTES = 1_048_576;

@@ -8,10 +8,12 @@ const repositoryRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const temporaryDirectory = mkdtempSync(join(tmpdir(), "meta-game-issue31-"));
 const artifactPath = join(temporaryDirectory, "sprite-edit.json");
 const tilesetArtifactPath = join(temporaryDirectory, "tileset.json");
+const tilemapArtifactPath = join(temporaryDirectory, "tilemap.json");
 const environment = {
   ...process.env,
   ISSUE_31_ASSET_PREVIEW_ARTIFACT: artifactPath,
   ISSUE_32_TILESET_PREVIEW_ARTIFACT: tilesetArtifactPath,
+  ISSUE_33_TILEMAP_PREVIEW_ARTIFACT: tilemapArtifactPath,
 };
 
 function run(args) {
