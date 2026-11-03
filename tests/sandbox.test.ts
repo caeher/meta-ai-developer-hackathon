@@ -299,6 +299,8 @@ describe("sandbox rootless contract", () => {
     const binaryAsset = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255]);
     await expect(f.service.writeBinaryFile(PROJECT_ID, "public/assets/generated/00000000-0000-4000-8000-000000000001.png", binaryAsset))
       .resolves.toEqual({ path: "public/assets/generated/00000000-0000-4000-8000-000000000001.png", bytesWritten: binaryAsset.byteLength });
+    await expect(f.service.writeBinaryFile(PROJECT_ID, "public/assets/generated/tilesets/00000000-0000-4000-8000-000000000001.png", binaryAsset))
+      .resolves.toEqual({ path: "public/assets/generated/tilesets/00000000-0000-4000-8000-000000000001.png", bytesWritten: binaryAsset.byteLength });
     await expect(f.service.writeBinaryFile(PROJECT_ID, "src/other.png", binaryAsset)).rejects.toThrow("invalid_tool_input");
     await expect(f.service.readFile(PROJECT_ID, "src/main.ts"))
       .resolves.toEqual({ path: "src/main.ts", content: "export {};" });
@@ -394,6 +396,8 @@ describe("sandbox rootless contract", () => {
     await expect(client.exec(PROJECT_ID, ["npm", "run", "build"])).resolves.toMatchObject({ stdout: "ok", exitCode: 0, truncated: false });
     await expect(client.writeBinaryFile(PROJECT_ID, "public/assets/generated/00000000-0000-4000-8000-000000000002.png", new Uint8Array([137, 80, 78, 71])))
       .resolves.toMatchObject({ path: "public/assets/generated/00000000-0000-4000-8000-000000000002.png", bytesWritten: 4 });
+    await expect(client.writeBinaryFile(PROJECT_ID, "public/assets/generated/tilesets/00000000-0000-4000-8000-000000000002.png", new Uint8Array([137, 80, 78, 71])))
+      .resolves.toMatchObject({ path: "public/assets/generated/tilesets/00000000-0000-4000-8000-000000000002.png", bytesWritten: 4 });
     await client.startDevServer(PROJECT_ID);
     await expect(client.verifyGameInteraction(PROJECT_ID, {
       genre: "puzzle",

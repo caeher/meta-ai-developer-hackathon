@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { addGeneratedTileset, applyGeneratedTilesetCollisions, parseGeneratedTilesetMetadata } from "../../../packages/game-templates/phaser/src/game/tilesets";
 
 type Sample = Readonly<{ name: string; at: number }>;
 type PreviewState = Readonly<{
@@ -11,6 +12,15 @@ type PreviewState = Readonly<{
   playerBottom: number;
   floorTop: number;
   collisionEnabled: boolean;
+  tileset?: {
+    name: string;
+    firstgid: number;
+    localIndexByName: Record<string, number>;
+    globalIndexByName: Record<string, number>;
+    collisionLocalIndices: number[];
+    terrainByLocalIndex: Record<number, string>;
+  };
+  tileProperties?: { collides: boolean; terrain: string; name: string };
   error?: string;
 }>;
 
@@ -29,6 +39,7 @@ const TILEMAP_URL = "/fixtures/level.json";
 
 class AssetPreviewScene extends Phaser.Scene {
   private actor?: Phaser.Physics.Arcade.Sprite;
+  private testActorBody?: Phaser.Physics.Arcade.Body;
   private observedFrames: Sample[] = [];
   private lastFrame = "";
   private state: PreviewState = {
@@ -46,6 +57,14 @@ class AssetPreviewScene extends Phaser.Scene {
   constructor() { super("AssetPreviewScene"); }
 
   preload(): void {
+    if (new URLSearchParams(window.location.search).get("mode") === "generated-tileset") {
+      this.load.image("generated-tileset", "/fixtures/generated-tileset.png");
+      this.load.json("generated-tileset-metadata", "/fixtures/generated-tileset.json");
+      this.load.once("loaderror", (file: Phaser.Loader.File) => {
+        this.state = { ...this.state, error: `load_error:${file.key}` };
+      });
+      return;
+    }
     this.load.atlas("hero", HERO_URL, ATLAS_URL);
     this.load.image("terrain", TILES_URL);
     this.load.json("run", ANIMATION_URL);
@@ -57,6 +76,10 @@ class AssetPreviewScene extends Phaser.Scene {
   }
 
   create(): void {
+    if (new URLSearchParams(window.location.search).get("mode") === "generated-tileset") {
+      this.createGeneratedTilesetPreview();
+      return;
+    }
     const texture = this.textures.get("hero");
     const atlasFrames = texture.getFrameNames();
     const pivots = Object.fromEntries(atlasFrames.map((name) => {
@@ -106,7 +129,10 @@ class AssetPreviewScene extends Phaser.Scene {
 
   update(): void {
     const actor = this.actor;
-    if (!actor) return;
+    if (!actor) {
+      this.state = { ...this.state, playerBottom: this.testActorBody?.bottom ?? 0 };
+      return;
+    }
     const name = actor.frame.name;
     if (name !== this.lastFrame) {
       this.lastFrame = name;
@@ -117,7 +143,63 @@ class AssetPreviewScene extends Phaser.Scene {
   }
 
   private readState(): PreviewState {
-    return { ...this.state, observedFrames: [...this.observedFrames], playerBottom: this.actor?.body?.bottom ?? 0 };
+    return { ...this.state, observedFrames: [...this.observedFrames], playerBottom: this.actor?.body?.bottom ?? this.testActorBody?.bottom ?? 0 };
+  }
+
+  private createGeneratedTilesetPreview(): void {
+    const metadata = parseGeneratedTilesetMetadata(this.cache.json.get("generated-tileset-metadata"));
+    if (!metadata) throw new Error("generated_tileset_metadata_invalid");
+    const firstgid = 1;
+    const data = Array.from({ length: 6 }, () => Array.from({ length: 8 }, () => -1));
+    data[0]![0] = firstgid;
+    data[0]![1] = firstgid + 1;
+    data[0]![2] = firstgid + 2;
+    data[0]![3] = firstgid + 3;
+    data[1]![0] = firstgid + 3;
+    data[1]![1] = firstgid + 2;
+    for (let x = 0; x < 8; x += 1) data[4]![x] = firstgid + 1;
+
+    const map = this.make.tilemap({ data, tileWidth: metadata.tileSize, tileHeight: metadata.tileSize });
+    const binding = addGeneratedTileset(map, metadata, "generated-tileset", firstgid);
+    const layer = map.createLayer(0, binding.tileset, 0, 0);
+    if (!layer) throw new Error("generated_tileset_layer_missing");
+    applyGeneratedTilesetCollisions(layer, binding);
+    const ground = layer.getTileAt(0, 4);
+
+    this.physics.world.setBounds(0, 0, 128, 96);
+    const actor = this.add.rectangle(24, 38, 10, 12, 0xffffff);
+    this.physics.add.existing(actor);
+    this.testActorBody = actor.body as Phaser.Physics.Arcade.Body;
+    this.testActorBody.setSize(10, 12).setOffset(0, 0);
+    this.physics.add.collider(actor, layer);
+    const localIndex = binding.localIndexByName.ground;
+    const tileProperties = binding.tileset.tileProperties as Record<string, { collides?: unknown; terrain?: unknown; name?: unknown }>;
+    const groundProperties = localIndex === undefined ? undefined : tileProperties[String(localIndex)];
+    this.state = {
+      loaded: true,
+      atlasFrames: [],
+      pivots: {},
+      animationFrames: [],
+      animationFps: 0,
+      observedFrames: [],
+      playerBottom: this.testActorBody.bottom,
+      floorTop: ground?.pixelY ?? 64,
+      collisionEnabled: ground?.collides === true,
+      tileset: {
+        name: binding.name,
+        firstgid: binding.firstgid,
+        localIndexByName: { ...binding.localIndexByName },
+        globalIndexByName: { ...binding.globalIndexByName },
+        collisionLocalIndices: [...binding.collisionLocalIndices],
+        terrainByLocalIndex: { ...binding.terrainByLocalIndex },
+      },
+      tileProperties: {
+        collides: groundProperties?.collides === true,
+        terrain: String(groundProperties?.terrain ?? ""),
+        name: String(groundProperties?.name ?? ""),
+      },
+    };
+    window.__ASSET_PREVIEW_TEST__ = () => this.readState();
   }
 }
 

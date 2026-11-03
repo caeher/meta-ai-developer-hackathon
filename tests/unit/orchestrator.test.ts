@@ -302,6 +302,41 @@ describe("orquestador de runs", () => {
     expect(result.usage).toEqual({ tokens: 55, images: 1 });
   });
 
+  it("ejecuta create_tileset sin reserva de Meta y reutiliza el resultado por callId durable", async () => {
+    const tilesetCall = codeCall("call-create-tileset", "create_tileset", {
+      name: "forest_tiles",
+      tileSize: 16,
+      columns: 2,
+      tiles: [
+        { sourceAssetId: "10000000-0000-4000-8000-000000000151", tileName: "water", terrain: "water" },
+        { sourceAssetId: "10000000-0000-4000-8000-000000000152", tileName: "ground", collides: true, terrain: "ground" },
+      ],
+    });
+    const output = { tilesetAssetId: "10000000-0000-4000-8000-000000000153", sha256: "a".repeat(64) };
+    const creator = vi.fn(async (_args: Record<string, unknown>, context: { callId: string; projectId: string }) => {
+      expect(context).toMatchObject({ callId: tilesetCall.callId, projectId: run.projectId });
+      return output;
+    });
+    const response = (id: string) => completion([
+      { kind: "tool_call", callId: tilesetCall.callId, name: tilesetCall.name, arguments: tilesetCall.arguments },
+      { kind: "message", role: "assistant", text: "El tileset quedó listo." },
+    ], id, 10);
+    const { options, store } = makeOptions({
+      streams: [[tilesetCall, response("response-tileset-first")], [tilesetCall, response("response-tileset-repeat")], [completion([], "response-tileset-final", 10)]],
+    });
+    options.tilesetCreator = creator;
+
+    const result = await createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    });
+
+    expect(creator).toHaveBeenCalledOnce();
+    expect(store.events.filter((event) => event.type === "agent.tool_completed" && event.payload.callId === tilesetCall.callId)).toHaveLength(1);
+    expect(result.usage?.images).toBe(0);
+  });
+
   it("no reintenta una edición con reserva durable sin respuesta de Meta", async () => {
     const editCall = codeCall("call-edit-ambiguous", "edit_sprite", {
       sourceAssetId: "10000000-0000-4000-8000-000000000141",

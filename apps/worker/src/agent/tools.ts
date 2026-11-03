@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import {
   EditSpriteInputJsonSchema,
   EditSpriteInputSchema,
+  CreateTilesetInputSchema,
+  CreateTilesetInputJsonSchema,
   ImageGenerationBriefSchema,
   InspectAssetInputSchema,
   InspectAssetInputJsonSchema,
@@ -80,6 +82,13 @@ const definitions: ToolDefinition[] = [
     inputSchema: EditSpriteInputSchema,
     inputJsonSchema: EditSpriteInputJsonSchema as unknown as Record<string, unknown>,
     summary: () => "Editar el sprite indicado y registrar su procedencia",
+  },
+  {
+    name: "create_tileset",
+    description: "Pack validated same-project square PNG frames into a deterministic Phaser 3.90 row-major tileset with private metadata, stable local indices, collision flags, and terrain tags. This tool does not generate or modify artwork.",
+    inputSchema: CreateTilesetInputSchema,
+    inputJsonSchema: CreateTilesetInputJsonSchema as unknown as Record<string, unknown>,
+    summary: (args) => `Empaquetar ${Array.isArray(args.tiles) ? args.tiles.length : 0} tiles en ${String(args.name)}`,
   },
   {
     name: "inspect_asset",

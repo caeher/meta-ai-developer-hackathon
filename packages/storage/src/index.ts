@@ -8,12 +8,14 @@ import {
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
+  IdempotencyConflictError,
   OwnedResourceNotFoundError,
   type VerifiedIdentityContext,
 } from "@meta-game/db";
 
 const MAX_OBJECT_BYTES = 25 * 1024 * 1024;
 const allowedContentTypes = new Set([
+  "application/json",
   "application/octet-stream",
   "audio/mpeg",
   "audio/ogg",
@@ -51,7 +53,7 @@ export type StorageAsset = {
 export interface AssetRepository {
   createPending(
     identity: VerifiedIdentityContext,
-    input: { projectId: string; contentType: string; sizeBytes: number; sha256: string; metadata?: Record<string, unknown> },
+    input: { assetId?: string; projectId: string; contentType: string; sizeBytes: number; sha256: string; metadata?: Record<string, unknown> },
   ): Promise<StorageAsset>;
   getReady(identity: VerifiedIdentityContext, assetId: string): Promise<StorageAsset | undefined>;
   completeUpload(
@@ -167,6 +169,15 @@ function sha256Hex(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 async function collectBounded(
   source: AsyncIterable<Uint8Array>,
   maxBytes: number,
@@ -212,7 +223,7 @@ export function createPrivateStorage(input: {
   return {
     async upload(
       identity: VerifiedIdentityContext,
-      request: { projectId: string; contentType: string; body: Uint8Array; metadata?: Record<string, unknown> },
+      request: { assetId?: string; projectId: string; contentType: string; body: Uint8Array; metadata?: Record<string, unknown> },
     ) {
       if (!(request.body instanceof Uint8Array) || request.body.byteLength < 1) {
         throw new TypeError("El objeto debe contener bytes");
@@ -225,9 +236,25 @@ export function createPrivateStorage(input: {
       }
       const body = Buffer.from(request.body);
       const sha256 = sha256Hex(body);
+      const contentType = request.contentType.trim().toLowerCase();
+      if (request.assetId) {
+        const existing = await input.assets.getReady(identity, request.assetId);
+        if (existing) {
+          if (existing.projectId !== request.projectId || existing.contentType !== contentType || existing.sizeBytes !== body.byteLength ||
+              existing.sha256 !== sha256 || canonicalJson(existing.metadata ?? {}) !== canonicalJson(request.metadata ?? {})) {
+            throw new IdempotencyConflictError();
+          }
+          const stored = await input.client.head(existing.objectKey);
+          if (stored.sizeBytes !== existing.sizeBytes || stored.sha256 !== existing.sha256) {
+            throw new PrivateStorageError("El objeto privado existente no coincide con su registro");
+          }
+          return { ...publicAsset(existing), created: false };
+        }
+      }
       const asset = await input.assets.createPending(identity, {
+        ...(request.assetId ? { assetId: request.assetId } : {}),
         projectId: request.projectId,
-        contentType: request.contentType.trim().toLowerCase(),
+        contentType,
         sizeBytes: body.byteLength,
         sha256,
         ...(request.metadata ? { metadata: request.metadata } : {}),
@@ -259,7 +286,7 @@ export function createPrivateStorage(input: {
       }
       try {
         const completed = await input.assets.completeUpload(identity, asset.id, sha256, body.byteLength);
-        return publicAsset(completed);
+        return { ...publicAsset(completed), created: true };
       } catch {
         // No borrar un objeto verificado si el commit pudo haberse confirmado sin respuesta.
         // La fila pending permite reconciliar ambos sistemas sin perder datos.

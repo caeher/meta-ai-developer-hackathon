@@ -163,6 +163,27 @@ describe("MetaClient streaming and tool replay", () => {
     expect((schema?.properties as Record<string, Record<string, unknown>>).preserve).toMatchObject({ required: ["canvas", "style", "palette", "characterIdentity"] });
   });
 
+  it("expone create_tileset como composición determinista acotada y sin destinos editables", async () => {
+    const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tileset_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));
+    const createTilesetTool = agentToolDefinitions.find(({ name }) => name === "create_tileset");
+    expect(createTilesetTool?.inputJsonSchema).toBeDefined();
+    const client = new MetaClient(config(), fetchMock);
+    for await (const event of client.streamCode({ prompt: "Pack the validated terrain tiles.", tools: createTilesetTool ? [createTilesetTool] : [] })) {
+      expect(event.type).toBe("completed");
+    }
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { tools: Array<{ name: string; parameters: Record<string, unknown> }> };
+    const schema = body.tools[0]?.parameters;
+    expect(body.tools[0]?.name).toBe("create_tileset");
+    expect(schema?.additionalProperties).toBe(false);
+    expect(schema?.required).toEqual(expect.arrayContaining(["name", "tileSize", "tiles"]));
+    expect((schema?.properties as Record<string, Record<string, unknown>>).columns).toMatchObject({ minimum: 1, maximum: 16 });
+    const tileSchema = (schema?.properties as Record<string, Record<string, unknown>>).tiles?.items as Record<string, unknown>;
+    expect(tileSchema.required).toEqual(expect.arrayContaining(["sourceAssetId", "tileName"]));
+    expect(tileSchema.additionalProperties).toBe(false);
+    expect((tileSchema.properties as Record<string, Record<string, unknown>>).sourceFrameIndex).toMatchObject({ minimum: 0, maximum: 63, default: 0 });
+  });
+
   it("sends the inspect_asset Draft-7 source exclusivity schema to the provider", async () => {
     const completed = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_schema_fixture\",\"model\":\"muse-spark-1.3-contributor\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\ndata: [DONE]\n\n";
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(streamResponse(completed));

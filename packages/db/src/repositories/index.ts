@@ -45,6 +45,7 @@ const listEventInputSchema = z.object({
   limit: z.number().int().min(1).max(500).default(100),
 });
 const assetInputSchema = z.object({
+  assetId: uuidSchema.optional(),
   projectId: uuidSchema,
   contentType: z.string().trim().min(1).max(150),
   sizeBytes: z.number().int().positive().max(25 * 1024 * 1024),
@@ -865,7 +866,14 @@ export function createRepositories(db: GameDatabase, policyInput: Partial<z.inpu
       ) {
         const parsed = assetInputSchema.parse(input);
         const ownerUserId = await resolveOwnerId(db, identity);
-        const id = randomUUID();
+        const id = parsed.assetId ?? randomUUID();
+        const assetData = {
+          projectId: parsed.projectId,
+          contentType: parsed.contentType,
+          sizeBytes: parsed.sizeBytes,
+          sha256: parsed.sha256,
+          metadata: parsed.metadata,
+        };
         const objectKey = `private/${ownerUserId}/projects/${parsed.projectId}/assets/${id}`;
         return db.transaction(async (tx) => {
           await tx.select({ id: users.id }).from(users).where(eq(users.id, ownerUserId)).for("update").limit(1);
@@ -875,7 +883,7 @@ export function createRepositories(db: GameDatabase, policyInput: Partial<z.inpu
           if (!project) throw new OwnedResourceNotFoundError();
           await assertStorageCapacity(tx, ownerUserId, parsed.sizeBytes);
           const [asset] = await tx.insert(assets)
-            .values({ id, ownerUserId, objectKey, status: "pending", ...parsed })
+            .values({ id, ownerUserId, objectKey, status: "pending", ...assetData })
             .returning();
           if (!asset) throw new Error("No se pudo reservar el asset");
           return asset;

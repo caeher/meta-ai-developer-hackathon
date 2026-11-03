@@ -30,6 +30,8 @@ const TEMPLATE_FILES = [
   "src/game/assets.test.ts",
   "src/game/generated-assets.test.ts",
   "src/game/generated-assets.ts",
+  "src/game/tilesets.test.ts",
+  "src/game/tilesets.ts",
   "src/game/audio.ts",
   "src/game/logic.test.ts",
   "src/game/logic.ts",

@@ -23,7 +23,7 @@ function createHarness(options: { corruptHead?: boolean; failComplete?: boolean;
   const assets: AssetRepository = {
     async createPending(_identity, input) {
       calls.create += 1;
-      const id = randomUUID();
+      const id = input.assetId ?? randomUUID();
       const asset: StorageAsset = {
         id,
         ownerUserId: "00000000-0000-4000-8000-000000000101",
@@ -32,6 +32,7 @@ function createHarness(options: { corruptHead?: boolean; failComplete?: boolean;
         contentType: input.contentType,
         sizeBytes: input.sizeBytes,
         sha256: input.sha256,
+        metadata: input.metadata ?? {},
         status: "pending",
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -180,6 +181,26 @@ describe("almacenamiento privado", () => {
     expect(result.sha256).toBe(createHash("sha256").update(body).digest("hex"));
     expect(result.status).toBe("ready");
     expect(Buffer.from((await harness.storage.read(identity, result.id)).body)).toEqual(body);
+  });
+
+  it("reutiliza un ID determinista solo cuando el objeto y metadata coinciden exactamente", async () => {
+    const harness = createHarness();
+    const assetId = randomUUID();
+    const request = {
+      assetId,
+      projectId,
+      contentType: "application/json",
+      body: Buffer.from("{\"schemaVersion\":1}"),
+      metadata: { assetType: "tileset-metadata", schemaVersion: 1 },
+    };
+    const created = await harness.storage.upload(identity, request);
+    const replay = await harness.storage.upload(identity, request);
+
+    expect(created).toMatchObject({ id: assetId, created: true, status: "ready" });
+    expect(replay).toMatchObject({ id: assetId, created: false, status: "ready" });
+    expect(harness.calls.create).toBe(1);
+    expect(harness.objects.size).toBe(1);
+    await expect(harness.storage.upload(identity, { ...request, body: Buffer.from("different") })).rejects.toThrow("idempotencia");
   });
 
   it("rechaza MIME no permitido y bytes sobre el límite antes de reservar metadata", async () => {

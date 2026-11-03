@@ -96,7 +96,7 @@ export const SandboxWriteBinaryFileInputSchema = z.object({
   if (decodedBytes < 1 || decodedBytes > SANDBOX_BINARY_FILE_MAX_BYTES) {
     context.addIssue({ code: "custom", path: ["contentBase64"], message: "Binary asset exceeds the file size limit." });
   }
-  if (!/^public\/assets\/generated\/[a-z0-9-]+\.png$/.test(input.path)) {
+  if (!/^public\/assets\/generated\/(?:[a-z0-9-]+|tilesets\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.png$/.test(input.path)) {
     context.addIssue({ code: "custom", path: ["path"], message: "Binary writes are restricted to generated PNG assets." });
   }
 });

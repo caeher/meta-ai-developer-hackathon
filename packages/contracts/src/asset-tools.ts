@@ -57,6 +57,161 @@ export const EditSpriteResultJsonSchema = z.toJSONSchema(EditSpriteResultSchema,
 export type EditSpriteInput = z.infer<typeof EditSpriteInputSchema>;
 export type EditSpriteResult = z.infer<typeof EditSpriteResultSchema>;
 
+export const TilesetTerrainSchema = z.enum(["ground", "wall", "water", "hazard", "decoration", "unknown"]);
+
+const CreateTilesetTileInputSchema = z.object({
+  sourceAssetId: z.string().uuid(),
+  sourceFrameIndex: z.number().int().min(0).max(63).default(0),
+  tileName: z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/),
+  collides: z.boolean().default(false),
+  terrain: TilesetTerrainSchema.optional(),
+}).strict();
+
+const CreateTilesetInputBaseSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_-]{1,47}$/),
+  tileSize: z.number().int().min(8).max(128),
+  tiles: z.array(CreateTilesetTileInputSchema).min(1).max(256),
+  columns: z.number().int().min(1).max(16).optional(),
+  layout: z.literal("input-order-row-major").default("input-order-row-major"),
+}).strict();
+
+export const CreateTilesetInputSchema = CreateTilesetInputBaseSchema.superRefine((input, context) => {
+  const names = new Set<string>();
+  for (const [index, tile] of input.tiles.entries()) {
+    if (names.has(tile.tileName)) {
+      context.addIssue({ code: "custom", path: ["tiles", index, "tileName"], message: "Tile names must be unique." });
+    }
+    names.add(tile.tileName);
+  }
+  if (input.columns && Math.ceil(input.tiles.length / input.columns) > 16) {
+    context.addIssue({ code: "custom", path: ["columns"], message: "The tile grid may contain at most 16 rows." });
+  }
+});
+
+const createTilesetInputJson = z.toJSONSchema(CreateTilesetInputBaseSchema, { target: "draft-7" });
+const createTilesetInputProperties = createTilesetInputJson.properties as Record<string, Record<string, unknown>>;
+const createTilesetTileInputProperties = createTilesetInputProperties.tiles?.items as Record<string, unknown>;
+const createTilesetTileProperties = createTilesetTileInputProperties.properties as Record<string, Record<string, unknown>>;
+export const CreateTilesetInputJsonSchema = {
+  ...createTilesetInputJson,
+  properties: {
+    ...createTilesetInputProperties,
+    tiles: {
+      ...createTilesetInputProperties.tiles,
+      items: {
+        ...createTilesetTileInputProperties,
+        properties: {
+          ...createTilesetTileProperties,
+          sourceFrameIndex: { ...createTilesetTileProperties.sourceFrameIndex, default: 0 },
+          collides: { ...createTilesetTileProperties.collides, default: false },
+        },
+      },
+    },
+    layout: { ...createTilesetInputProperties.layout, default: "input-order-row-major" },
+  },
+} as const;
+
+const CreateTilesetResultTileSchema = z.object({
+  tileIndex: z.number().int().min(0).max(255),
+  tileName: z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/),
+  collides: z.boolean(),
+  terrain: TilesetTerrainSchema,
+}).strict();
+
+export const CreateTilesetResultSchema = z.object({
+  tilesetAssetId: z.string().uuid(),
+  name: z.string().regex(/^[a-z][a-z0-9_-]{1,47}$/),
+  imagePath: z.string().regex(/^assets\/generated\/tilesets\/[0-9a-f-]{36}\.png$/),
+  metadataPath: z.string().regex(/^assets\/generated\/tilesets\/[0-9a-f-]{36}\.json$/),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  tileSize: z.number().int().min(8).max(128),
+  columns: z.number().int().min(1).max(16),
+  rows: z.number().int().min(1).max(16),
+  tiles: z.array(CreateTilesetResultTileSchema).min(1).max(256),
+}).strict().superRefine((result, context) => {
+  if (result.imagePath !== `assets/generated/tilesets/${result.tilesetAssetId}.png` ||
+      result.metadataPath !== `assets/generated/tilesets/${result.tilesetAssetId}.json`) {
+    context.addIssue({ code: "custom", path: ["imagePath"], message: "Tileset paths must be derived from the asset ID." });
+  }
+  if (result.rows !== Math.ceil(result.tiles.length / result.columns) || result.tiles.some((tile, index) => tile.tileIndex !== index)) {
+    context.addIssue({ code: "custom", path: ["tiles"], message: "Tiles must use contiguous input-order row-major indices." });
+  }
+});
+
+export const CreateTilesetMetadataSchema = z.object({
+  schemaVersion: z.literal(1),
+  engine: z.literal("phaser-3.90.0"),
+  tilesetAssetId: z.string().uuid(),
+  name: z.string().regex(/^[a-z][a-z0-9_-]{1,47}$/),
+  image: z.string().regex(/^[0-9a-f-]{36}\.png$/),
+  imagePath: z.string().regex(/^assets\/generated\/tilesets\/[0-9a-f-]{36}\.png$/),
+  metadataPath: z.string().regex(/^assets\/generated\/tilesets\/[0-9a-f-]{36}\.json$/),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  tileSize: z.number().int().min(8).max(128),
+  tilewidth: z.number().int().min(8).max(128),
+  tileheight: z.number().int().min(8).max(128),
+  columns: z.number().int().min(1).max(16),
+  rows: z.number().int().min(1).max(16),
+  tilecount: z.number().int().min(1).max(256),
+  margin: z.literal(0),
+  spacing: z.literal(0),
+  width: z.number().int().min(8).max(2_048),
+  height: z.number().int().min(8).max(2_048),
+  layout: z.literal("input-order-row-major"),
+  tiles: z.array(z.object({
+    id: z.number().int().min(0).max(255),
+    type: z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/),
+    tileIndex: z.number().int().min(0).max(255),
+    tileName: z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/),
+    collides: z.boolean(),
+    terrain: TilesetTerrainSchema,
+  }).strict()).min(1).max(256),
+}).strict().superRefine((metadata, context) => {
+  if (metadata.width !== metadata.columns * metadata.tileSize || metadata.height !== metadata.rows * metadata.tileSize ||
+      metadata.rows !== Math.ceil(metadata.tiles.length / metadata.columns) ||
+      metadata.image !== `${metadata.tilesetAssetId}.png` ||
+      metadata.tilewidth !== metadata.tileSize || metadata.tileheight !== metadata.tileSize ||
+      metadata.tilecount !== metadata.tiles.length || metadata.imagePath !== `assets/generated/tilesets/${metadata.tilesetAssetId}.png` ||
+      metadata.metadataPath !== `assets/generated/tilesets/${metadata.tilesetAssetId}.json` ||
+      metadata.tiles.some((tile, index) => tile.tileIndex !== index || tile.id !== index || tile.type !== tile.tileName)) {
+    context.addIssue({ code: "custom", path: ["tiles"], message: "Tileset metadata dimensions or IDs are inconsistent." });
+  }
+});
+
+export const CreateTilesetManifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  tilesets: z.array(z.object({
+    tilesetAssetId: z.string().uuid(),
+    name: z.string().regex(/^[a-z][a-z0-9_-]{1,47}$/),
+    imagePath: z.string().regex(/^assets\/generated\/tilesets\/[0-9a-f-]{36}\.png$/),
+    metadataPath: z.string().regex(/^assets\/generated\/tilesets\/[0-9a-f-]{36}\.json$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    tileSize: z.number().int().min(8).max(128),
+    columns: z.number().int().min(1).max(16),
+    rows: z.number().int().min(1).max(16),
+    tileCount: z.number().int().min(1).max(256),
+  }).strict()).max(128),
+}).strict().superRefine((manifest, context) => {
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  for (const [index, entry] of manifest.tilesets.entries()) {
+    if (ids.has(entry.tilesetAssetId) || names.has(entry.name) ||
+        entry.imagePath !== `assets/generated/tilesets/${entry.tilesetAssetId}.png` ||
+        entry.metadataPath !== `assets/generated/tilesets/${entry.tilesetAssetId}.json`) {
+      context.addIssue({ code: "custom", path: ["tilesets", index], message: "Tileset manifest entries must have unique names and ID-derived paths." });
+    }
+    ids.add(entry.tilesetAssetId);
+    names.add(entry.name);
+  }
+});
+
+export const CreateTilesetResultJsonSchema = z.toJSONSchema(CreateTilesetResultSchema, { target: "draft-7" });
+
+export type CreateTilesetInput = z.infer<typeof CreateTilesetInputSchema>;
+export type CreateTilesetResult = z.infer<typeof CreateTilesetResultSchema>;
+export type CreateTilesetMetadata = z.infer<typeof CreateTilesetMetadataSchema>;
+export type CreateTilesetManifest = z.infer<typeof CreateTilesetManifestSchema>;
+
 export const ASSET_INSPECTION_MAX_REPORT_BYTES = 24_000;
 export const ASSET_INSPECTION_MAX_FINDINGS = 64;
 export const ASSET_INSPECTION_MAX_JSON_BYTES = 1_048_576;
