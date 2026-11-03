@@ -234,14 +234,13 @@ describe("sandbox rootless contract", () => {
     expect(config.labels).toMatchObject({
       "com.meta-game.sandbox-id": SANDBOX_ID,
       "com.meta-game.workspace-limit-mb": "2048",
+      "com.meta-game.workspace-mode": "user-quota",
     });
     expect(host).toMatchObject({
       Privileged: false,
       ReadonlyRootfs: true,
       Dns: ["127.0.0.1"],
       NetworkMode: `mg-sandbox-net-${SANDBOX_ID}`,
-      PidMode: "private",
-      IpcMode: "private",
       CgroupnsMode: "private",
       Memory: 1024 * 1024 * 1024,
       MemorySwap: 1024 * 1024 * 1024,
@@ -252,7 +251,9 @@ describe("sandbox rootless contract", () => {
       Devices: [],
       PortBindings: {},
     });
-    expect(config.body.ExtraHosts).toEqual(["npm-proxy:172.16.0.2"]);
+    expect(host.PidMode).toBeUndefined();
+    expect(host.IpcMode).toBeUndefined();
+    expect(host.ExtraHosts).toEqual(["npm-proxy:172.16.0.2"]);
     expect(host.Mounts).toEqual([{
       Type: "volume",
       Source: `mg-workspace-${SANDBOX_ID}`,

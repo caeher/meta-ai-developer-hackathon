@@ -24,7 +24,7 @@ const sharedEgressNetwork = "mg-sandbox-egress";
 const proxyPort = 8080;
 const registryUrl = `http://npm-proxy:${proxyPort}/registry/registry.npmjs.org/`;
 
-type DockerInfo = { SecurityOptions?: string[]; CgroupVersion?: string; CgroupDriver?: string; Driver?: string; ServerVersion?: string };
+type DockerInfo = { SecurityOptions?: string[]; CgroupVersion?: string; CgroupDriver?: string; Driver?: string; ServerVersion?: string; OperatingSystem?: string };
 type DockerVolume = { Driver: string; Labels?: Record<string, string>; Options?: Record<string, string> | null };
 type DockerNetwork = {
   Id: string;
@@ -35,10 +35,20 @@ type DockerNetwork = {
   Options?: Record<string, string>;
   Labels?: Record<string, string>;
   Containers?: Record<string, { Name?: string }>;
+  IPAM?: { Config?: Array<{ Subnet?: string }> };
 };
 
 const hostCheckUid = 60_000;
 const hostCheckDiskMb = 16;
+const hostCheckMemoryMb = 512;
+const hostCheckPids = 64;
+const hostCheckCpu = 0.5;
+type WorkspaceVolumeMode = "user-quota" | "tmpfs";
+type HostRuntimeMode = "rootless" | "docker-desktop-security";
+
+function workspaceTmpfsOptions(spec: SandboxCreateSpec): string {
+  return `rw,nosuid,nodev,size=${spec.limits.diskMb}m,uid=${spec.uid},gid=${spec.uid},mode=0770`;
+}
 
 function assertHostCheckUid(uid: number): number {
   if (uid !== hostCheckUid) throw new SandboxRuntimeError("invalid_sandbox_uid");
@@ -54,10 +64,34 @@ function isPrivateNetworkIpv4(value: string | undefined): value is string {
   return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
+function privateProxyIpv4For(network: DockerNetwork): string | undefined {
+  const subnet = network.IPAM?.Config?.map((config) => config.Subnet).find((value) => value && /^\d{1,3}(?:\.\d{1,3}){3}\/\d+$/.test(value));
+  if (!subnet) return undefined;
+  const [address, prefixText] = subnet.split("/");
+  const prefix = Number(prefixText);
+  const addressParts = address?.split(".").map(Number) ?? [];
+  if (addressParts.length !== 4 || addressParts.some((part) => !Number.isInteger(part) || part < 0 || part > 255) ||
+    !Number.isInteger(prefix) || prefix < 8 || prefix > 30) return undefined;
+  const addressNumber = addressParts.reduce((total, part) => total * 256 + part, 0);
+  const blockSize = 2 ** (32 - prefix);
+  const networkNumber = Math.floor(addressNumber / blockSize) * blockSize;
+  const proxyNumber = networkNumber + 2;
+  if (proxyNumber >= networkNumber + blockSize - 1) return undefined;
+  const proxyIp = [
+    Math.floor(proxyNumber / 2 ** 24) % 256,
+    Math.floor(proxyNumber / 2 ** 16) % 256,
+    Math.floor(proxyNumber / 2 ** 8) % 256,
+    proxyNumber % 256,
+  ].join(".");
+  return isPrivateNetworkIpv4(proxyIp) ? proxyIp : undefined;
+}
+
+type DockerNetworkEndpoint = { IPAddress?: string; IPAMConfig?: { IPv4Address?: string }; Aliases?: string[] };
+
 type DockerInspect = {
   Id: string;
   State: { Status: string; Running: boolean };
-  Config: { Labels?: Record<string, string>; User?: string; Image?: string; WorkingDir?: string; Cmd?: string[]; Env?: string[]; ExtraHosts?: string[] };
+  Config: { Labels?: Record<string, string>; User?: string; Image?: string; WorkingDir?: string; Cmd?: string[]; Env?: string[] };
   HostConfig: {
     Privileged: boolean;
     ReadonlyRootfs: boolean;
@@ -78,9 +112,10 @@ type DockerInspect = {
     Tmpfs?: Record<string, string>;
     RestartPolicy?: { Name?: string };
     Dns?: string[];
+    ExtraHosts?: string[];
   };
   Mounts: Array<{ Type: string; Name?: string; Source?: string; Destination: string; RW: boolean }>;
-  NetworkSettings?: { Networks?: Record<string, { IPAddress?: string; Aliases?: string[] }> };
+  NetworkSettings?: { Networks?: Record<string, DockerNetworkEndpoint> };
 };
 
 class DockerEngineClient {
@@ -138,9 +173,11 @@ class DockerEngineClient {
       const chunks: Buffer[] = [];
       let size = 0;
       let truncated = false;
+      let detachAbort = () => {};
       const finish = (status: number) => {
         if (settled) return;
         settled = true;
+        detachAbort();
         resolve({ status, body: Buffer.concat(chunks, size), truncated });
       };
       const req = httpRequest({
@@ -166,6 +203,18 @@ class DockerEngineClient {
         });
       });
       req.once("upgrade", (response, socket, head) => {
+        const abort = () => {
+          if (settled) return;
+          settled = true;
+          detachAbort();
+          socket.destroy();
+          reject(new SandboxRuntimeError("execution_timeout"));
+        };
+        if (signal?.aborted) { abort(); return; }
+        if (signal) {
+          signal.addEventListener("abort", abort, { once: true });
+          detachAbort = () => signal.removeEventListener("abort", abort);
+        }
         const append = (chunk: Buffer) => {
           if (size >= maxBytes) { truncated = true; return; }
           const available = maxBytes - size;
@@ -181,6 +230,7 @@ class DockerEngineClient {
         socket.once("error", (error) => {
           if (settled) return;
           settled = true;
+          detachAbort();
           reject(error);
         });
         if (input.length) socket.write(typeof input === "string" ? Buffer.from(input, "utf8") : Buffer.from(input));
@@ -189,6 +239,7 @@ class DockerEngineClient {
       req.once("error", (error) => {
         if (settled) return;
         settled = true;
+        detachAbort();
         reject(signal?.aborted ? new SandboxRuntimeError("execution_timeout") : error);
       });
       req.write(payload);
@@ -220,13 +271,23 @@ async function collectResponse(stream: IncomingMessage, maxBytes: number, trunca
   return { bytes: Buffer.concat(chunks, size), truncated };
 }
 
-function assertContainerSecurity(inspect: DockerInspect, spec: SandboxCreateSpec, proxyIp: string, hostCheck = false): number {
+function assertContainerSecurity(
+  inspect: DockerInspect,
+  spec: SandboxCreateSpec,
+  proxyIp: string,
+  hostCheck = false,
+  workspaceMode: WorkspaceVolumeMode = "user-quota",
+): number {
   const uid = hostCheck ? assertHostCheckUid(spec.uid) : assertSandboxUid(spec.uid);
   const expectedCpu = Math.round(spec.limits.cpu * 1_000_000_000);
   const workspace = inspect.Mounts.filter((mount) => mount.Destination === "/workspace");
+  const workspaceMountSafe = workspaceMode === "tmpfs"
+    ? workspace.length === 0 && inspect.HostConfig.Tmpfs?.["/workspace"] === workspaceTmpfsOptions(spec)
+    : workspace.length === 1 && workspace[0]?.Type === "volume" &&
+      workspace[0]?.Name === sandboxVolumeName(spec.sandboxId) && workspace[0]?.RW === true;
   const allowedEnvironment = new Set([
     "PATH", "NODE_VERSION", "YARN_VERSION", "HOME", "TMPDIR", "NODE_ENV", "npm_config_cache",
-    "NPM_CONFIG_REGISTRY", "NPM_CONFIG_UPDATE_NOTIFIER",
+    "NPM_CONFIG_REGISTRY", "NPM_CONFIG_UPDATE_NOTIFIER", "PLAYWRIGHT_BROWSERS_PATH",
   ]);
   const environmentSafe = (inspect.Config.Env ?? []).every((entry) => {
     const separator = entry.indexOf("=");
@@ -238,22 +299,25 @@ function assertContainerSecurity(inspect: DockerInspect, spec: SandboxCreateSpec
   }));
   const sandboxSettingsSafe = environmentValues.get("NPM_CONFIG_REGISTRY") === registryUrl &&
     environmentValues.get("NPM_CONFIG_UPDATE_NOTIFIER") === "false" &&
-    environmentValues.get("npm_config_cache") === "/tmp/npm-cache";
+    environmentValues.get("npm_config_cache") === "/tmp/npm-cache" &&
+    environmentValues.get("PLAYWRIGHT_BROWSERS_PATH") === "/opt/meta-game/browsers";
+  const privateNamespace = (value: string | undefined) => value === undefined || value === "" || value === "private";
   const safe = inspect.Config.Labels?.["com.meta-game.sandbox-id"] === spec.sandboxId &&
     inspect.Config.Labels?.["com.meta-game.managed"] === "true" &&
     inspect.Config.Labels?.["com.meta-game.project-id"] === spec.projectId &&
     inspect.Config.Labels?.["com.meta-game.workspace-limit-mb"] === String(spec.limits.diskMb) &&
+    inspect.Config.Labels?.["com.meta-game.workspace-mode"] === workspaceMode &&
     inspect.Config.Image === spec.image &&
     inspect.Config.User === `${uid}:${uid}` &&
     inspect.Config.WorkingDir === "/workspace" &&
-    JSON.stringify(inspect.Config.ExtraHosts) === JSON.stringify([`npm-proxy:${proxyIp}`]) &&
+    JSON.stringify(inspect.HostConfig.ExtraHosts) === JSON.stringify([`npm-proxy:${proxyIp}`]) &&
     environmentSafe && sandboxSettingsSafe &&
     inspect.HostConfig.Privileged === false &&
     inspect.HostConfig.ReadonlyRootfs === true &&
     inspect.HostConfig.NetworkMode === sandboxNetworkName(spec.sandboxId) &&
     JSON.stringify(inspect.HostConfig.Dns) === JSON.stringify(["127.0.0.1"]) &&
-    inspect.HostConfig.PidMode === "private" &&
-    inspect.HostConfig.IpcMode === "private" &&
+    privateNamespace(inspect.HostConfig.PidMode) &&
+    privateNamespace(inspect.HostConfig.IpcMode) &&
     inspect.HostConfig.CgroupnsMode === "private" &&
     inspect.HostConfig.Memory === spec.limits.memoryMb * 1024 * 1024 &&
     inspect.HostConfig.MemorySwap === spec.limits.memoryMb * 1024 * 1024 &&
@@ -265,18 +329,24 @@ function assertContainerSecurity(inspect: DockerInspect, spec: SandboxCreateSpec
     !inspect.HostConfig.SecurityOpt?.some((option) => option.toLowerCase().includes("seccomp=unconfined")) &&
     inspect.HostConfig.Tmpfs?.["/tmp"] === "rw,noexec,nosuid,nodev,size=64m,mode=1777" &&
     inspect.HostConfig.Tmpfs?.["/run"] === "rw,noexec,nosuid,nodev,size=8m,mode=1777" &&
+    (workspaceMode !== "tmpfs" || inspect.HostConfig.Tmpfs?.["/workspace"] === workspaceTmpfsOptions(spec)) &&
     inspect.HostConfig.RestartPolicy?.Name === "no" &&
     (inspect.HostConfig.Binds?.length ?? 0) === 0 &&
     Object.keys(inspect.HostConfig.PortBindings ?? {}).length === 0 &&
     (inspect.HostConfig.Devices?.length ?? 0) === 0 &&
     inspect.Mounts.every((mount) => ["/workspace", "/tmp", "/run"].includes(mount.Destination)) &&
-    workspace.length === 1 && workspace[0]?.Type === "volume" &&
-    workspace[0]?.Name === sandboxVolumeName(spec.sandboxId) && workspace[0]?.RW === true;
+    workspaceMountSafe;
   if (!safe) throw new SandboxRuntimeError("sandbox_security_invariant_failed");
   return uid;
 }
 
-function buildContainerConfig(spec: SandboxCreateSpec, hostCheck: boolean, proxyIp: string): {
+function buildContainerConfig(
+  spec: SandboxCreateSpec,
+  hostCheck: boolean,
+  proxyIp: string,
+  workspaceMode: WorkspaceVolumeMode = "user-quota",
+  allowLocalImageTag = false,
+): {
   containerName: string;
   volumeName: string;
   labels: Record<string, string>;
@@ -286,13 +356,19 @@ function buildContainerConfig(spec: SandboxCreateSpec, hostCheck: boolean, proxy
   const containerName = sandboxContainerName(spec.sandboxId);
   const volumeName = sandboxVolumeName(spec.sandboxId);
   if (!isPrivateNetworkIpv4(proxyIp)) throw new SandboxRuntimeError("egress_proxy_address_invalid");
-  if (!spec.image.includes("@sha256:")) throw new SandboxRuntimeError("sandbox_image_must_be_digest_pinned");
+  if (!allowLocalImageTag && !spec.image.includes("@sha256:")) throw new SandboxRuntimeError("sandbox_image_must_be_digest_pinned");
   const labels = {
     "com.meta-game.managed": "true",
     "com.meta-game.sandbox-id": spec.sandboxId,
     "com.meta-game.project-id": spec.projectId,
     "com.meta-game.workspace-limit-mb": String(spec.limits.diskMb),
+    "com.meta-game.workspace-mode": workspaceMode,
   };
+  const tmpfs: Record<string, string> = {
+    "/tmp": "rw,noexec,nosuid,nodev,size=64m,mode=1777",
+    "/run": "rw,noexec,nosuid,nodev,size=8m,mode=1777",
+  };
+  if (workspaceMode === "tmpfs") tmpfs["/workspace"] = workspaceTmpfsOptions(spec);
   return {
     containerName,
     volumeName,
@@ -302,15 +378,13 @@ function buildContainerConfig(spec: SandboxCreateSpec, hostCheck: boolean, proxy
       User: `${uid}:${uid}`,
       WorkingDir: "/workspace",
       Cmd: ["/bin/sleep", "infinity"],
-      ExtraHosts: [`npm-proxy:${proxyIp}`],
       Labels: labels,
       HostConfig: {
         Privileged: false,
         ReadonlyRootfs: true,
         NetworkMode: sandboxNetworkName(spec.sandboxId),
         Dns: ["127.0.0.1"],
-        PidMode: "private",
-        IpcMode: "private",
+        ExtraHosts: [`npm-proxy:${proxyIp}`],
         CgroupnsMode: "private",
         CapDrop: ["ALL"],
         SecurityOpt: ["no-new-privileges:true"],
@@ -318,16 +392,13 @@ function buildContainerConfig(spec: SandboxCreateSpec, hostCheck: boolean, proxy
         MemorySwap: spec.limits.memoryMb * 1024 * 1024,
         NanoCpus: Math.round(spec.limits.cpu * 1_000_000_000),
         PidsLimit: spec.limits.pids,
-        Tmpfs: {
-          "/tmp": "rw,noexec,nosuid,nodev,size=64m,mode=1777",
-          "/run": "rw,noexec,nosuid,nodev,size=8m,mode=1777",
-        },
-        Mounts: [{
+        Tmpfs: tmpfs,
+        Mounts: workspaceMode === "user-quota" ? [{
           Type: "volume",
           Source: volumeName,
           Target: "/workspace",
           ReadOnly: false,
-        }],
+        }] : [],
         Devices: [],
         PortBindings: {},
         RestartPolicy: { Name: "no" },
@@ -402,7 +473,7 @@ const cgroupProbeProgram = [
   "const maxRow=map.find(([inside,,length])=>59999>=inside&&59999<inside+length);const maxHostUid=maxRow&&maxRow[1]+59999-maxRow[0];",
   "const memory=Number(read('memory.max'));const pids=Number(read('pids.max'));const cpu=read('cpu.max').split(/\\s+/).map(Number);",
   "const probeRow=map.find(([inside,,length])=>60000>=inside&&60000<inside+length);const probeHostUid=probeRow&&probeRow[1]+60000-probeRow[0];",
-  "if(uid!==60000||!hostUid||hostUid===0||!maxHostUid||maxHostUid===0||!probeHostUid||probeHostUid===0||probeHostUid===maxHostUid||memory!==134217728||pids!==16||!Number.isFinite(cpu[0])||!Number.isFinite(cpu[1])||cpu[1]<=0||cpu[0]/cpu[1]>0.25||![0xef53,0x58465342].includes(stat.type))process.exit(30);",
+  "if(uid!==60000||!hostUid||hostUid===0||!maxHostUid||maxHostUid===0||!probeHostUid||probeHostUid===0||probeHostUid===maxHostUid||memory!==536870912||pids!==64||!Number.isFinite(cpu[0])||!Number.isFinite(cpu[1])||cpu[1]<=0||cpu[0]/cpu[1]>0.5||![0xef53,0x58465342].includes(stat.type))process.exit(30);",
   "try{fs.writeFileSync('/etc/rootless-probe','x');process.exit(31)}catch(e){if(e.code!=='EROFS'&&e.code!=='EACCES')process.exit(32)}",
   "let full=false,written=0;for(let i=0;i<32&&!full;i++){try{fs.writeFileSync('/workspace/probe-'+i,Buffer.alloc(1024*1024));written+=1024*1024}catch(e){if(e.code==='ENOSPC')full=true;else process.exit(33)}}",
   "if(!full||written<15*1024*1024||written>17*1024*1024)process.exit(34);for(const name of fs.readdirSync('/workspace'))fs.unlinkSync('/workspace/'+name);",
@@ -410,29 +481,47 @@ const cgroupProbeProgram = [
   "setTimeout(()=>{for(const child of kids)child.kill('SIGKILL');setTimeout(()=>process.exit(denied?0:35),100)},500)",
 ].join("");
 
-const memoryProbeProgram = "const chunks=[];for(let i=0;i<256;i++)chunks.push(Buffer.alloc(1024*1024,1));";
+const dockerDesktopCgroupProbeProgram = [
+  "const fs=require('node:fs');const stat=fs.statfsSync('/workspace');const read=n=>fs.readFileSync('/sys/fs/cgroup/'+n,'utf8').trim();",
+  "const status=fs.readFileSync('/proc/self/status','utf8');const caps=/^CapEff:\\s*([0-9a-f]+)$/mi.exec(status)?.[1];const seccomp=Number(/^Seccomp:\\s*(\\d+)$/mi.exec(status)?.[1]);",
+  "const memory=Number(read('memory.max'));const pids=Number(read('pids.max'));const cpu=read('cpu.max').split(/\\s+/).map(Number);",
+  "if(process.getuid()!==60000||memory!==536870912||pids!==64||!Number.isFinite(cpu[0])||!Number.isFinite(cpu[1])||cpu[1]<=0||cpu[0]/cpu[1]>0.5||caps!=='0000000000000000'||seccomp!==2||stat.type!==0x01021994)process.exit(30);",
+  "try{fs.writeFileSync('/etc/security-probe','x');process.exit(31)}catch(e){if(e.code!=='EROFS'&&e.code!=='EACCES')process.exit(32)}",
+  "let full=false,written=0;for(let i=0;i<32&&!full;i++){try{fs.writeFileSync('/workspace/probe-'+i,Buffer.alloc(1024*1024));written+=1024*1024}catch(e){if(e.code==='ENOSPC')full=true;else process.exit(33)}}",
+  "if(!full||written<15*1024*1024||written>17*1024*1024)process.exit(34);for(const name of fs.readdirSync('/workspace'))fs.unlinkSync('/workspace/'+name);",
+].join("");
+
 const networkProbeProgram = [
   "const assert=require('node:assert/strict');(async()=>{",
-  "const proxy=await fetch('http://npm-proxy:8080/healthz');assert.equal(proxy.status,200);",
-  "const metadata=await fetch('http://npm-proxy:8080/registry/registry.npmjs.org/phaser',{signal:AbortSignal.timeout(5000)});assert.equal(metadata.status,200);",
+  "const proxy=await fetch('http://npm-proxy:8080/healthz',{signal:AbortSignal.timeout(2000)});if(proxy.status!==200)throw new Error('proxy_health_status_'+proxy.status);",
+  "const metadata=await fetch('http://npm-proxy:8080/registry/registry.npmjs.org/phaser',{signal:AbortSignal.timeout(5000)});if(metadata.status!==200)throw new Error('registry_status_'+metadata.status);",
   "const targets=['http://1.1.1.1/','http://10.0.0.1/','http://100.100.100.200/latest/meta-data','http://169.254.169.254/latest/meta-data','http://169.254.170.2/v2/metadata','http://172.16.0.1/','http://192.168.1.1/','http://[2606:4700:4700::1111]/','http://[fd00::1]/','http://[fe80::1]/'];",
   "const direct=await Promise.all(targets.map(url=>fetch(url,{signal:AbortSignal.timeout(1500)}).then(()=>false,()=>true)));assert.ok(direct.every(Boolean));",
-  "const privateHost=await fetch('http://npm-proxy:8080/registry/127.0.0.1/latest');assert.equal(privateHost.status,403);",
-  "const dns=require('node:dns').promises;const resolver=new (require('node:dns').Resolver)();resolver.setServers(['127.0.0.11']);",
-  "let externalDns=false;try{await resolver.resolve4('registry.npmjs.org');externalDns=true}catch{}assert.equal(externalDns,false);",
-  "})().catch(()=>process.exit(41));",
+  "const privateHost=await fetch('http://npm-proxy:8080/registry/127.0.0.1/latest',{signal:AbortSignal.timeout(2000)});assert.equal(privateHost.status,403);",
+  "const resolver=new (require('node:dns').Resolver)();resolver.setServers(['1.1.1.1']);",
+  "const externalDns=await Promise.race([new Promise(resolve=>resolver.resolve4('registry.npmjs.org',error=>resolve(!error))),new Promise(resolve=>setTimeout(()=>resolve(false),1500))]);assert.equal(externalDns,false);",
+  "})().catch(error=>{console.error(error.name+':'+error.message);process.exit(41)});",
 ].join("");
 
 export class RootlessDockerDriver implements SandboxDriver {
   private readonly client: DockerEngineClient;
+  private readonly hostRuntimeMode: HostRuntimeMode;
+  private readonly workspaceMode: WorkspaceVolumeMode;
+  private createdEgressNetwork = false;
 
   constructor(
     socketPath: string,
     private readonly image: string,
     private readonly defaultLimits: SandboxLimits,
     private readonly egressAllowlist: readonly string[] = ["registry.npmjs.org"],
+    options: { hostRuntimeMode?: HostRuntimeMode; workspaceMode?: WorkspaceVolumeMode } = {},
   ) {
     this.client = new DockerEngineClient(socketPath);
+    this.hostRuntimeMode = options.hostRuntimeMode ?? "rootless";
+    this.workspaceMode = options.workspaceMode ?? "user-quota";
+    if ((this.hostRuntimeMode === "rootless") !== (this.workspaceMode === "user-quota")) {
+      throw new SandboxRuntimeError("sandbox_runtime_mode_mismatch");
+    }
   }
 
   private async ensureEgressNetwork(): Promise<void> {
@@ -445,11 +534,22 @@ export class RootlessDockerDriver implements SandboxDriver {
         CheckDuplicate: true,
         Labels: { "com.meta-game.managed": "true", "com.meta-game.network-kind": "egress" },
       }, [201]);
+      this.createdEgressNetwork = true;
     } catch (error) {
       if (!(error instanceof SandboxRuntimeError) || error.code !== "runtime_conflict") throw error;
     }
     const network = await this.client.request<DockerNetwork>("GET", `/networks/${encodeURIComponent(sharedEgressNetwork)}`);
     assertEgressNetwork(network);
+  }
+
+  async disposeSecurityRuntime(): Promise<void> {
+    if (this.hostRuntimeMode !== "docker-desktop-security") throw new SandboxRuntimeError("security_runtime_cleanup_not_allowed");
+    if (!this.createdEgressNetwork) return;
+    const network = await this.client.request<DockerNetwork>("GET", `/networks/${encodeURIComponent(sharedEgressNetwork)}`);
+    assertEgressNetwork(network);
+    if (Object.keys(network.Containers ?? {}).length) throw new SandboxRuntimeError("security_runtime_network_in_use");
+    await this.client.request("DELETE", `/networks/${encodeURIComponent(network.Id)}`, undefined, [204, 404]);
+    this.createdEgressNetwork = false;
   }
 
   private async ensureSandboxNetwork(spec: SandboxCreateSpec): Promise<void> {
@@ -488,8 +588,6 @@ export class RootlessDockerDriver implements SandboxDriver {
             Privileged: false,
             ReadonlyRootfs: true,
             NetworkMode: sharedEgressNetwork,
-            PidMode: "private",
-            IpcMode: "private",
             CgroupnsMode: "private",
             Memory: 128 * 1024 * 1024,
             MemorySwap: 128 * 1024 * 1024,
@@ -511,16 +609,22 @@ export class RootlessDockerDriver implements SandboxDriver {
     if (!runtime) throw new SandboxRuntimeError("egress_proxy_missing");
     const network = await this.client.request<DockerNetwork>("GET", `/networks/${encodeURIComponent(sandboxNetworkName(spec.sandboxId))}`);
     assertSandboxNetwork(network, spec);
+    const proxyIp = privateProxyIpv4For(network);
+    if (!proxyIp) throw new SandboxRuntimeError("egress_proxy_address_invalid");
     const current = runtime.NetworkSettings?.Networks ?? {};
-    if (!current[sandboxNetworkName(spec.sandboxId)]) {
+    const endpoint = current[sandboxNetworkName(spec.sandboxId)];
+    if (!endpoint) {
       try {
         await this.client.request("POST", `/networks/${encodeURIComponent(network.Id)}/connect`, {
           Container: runtime.Id,
-          EndpointConfig: { Aliases: ["npm-proxy"] },
+          EndpointConfig: { Aliases: ["npm-proxy"], IPAMConfig: { IPv4Address: proxyIp } },
         }, [201, 200]);
       } catch (error) {
         if (!(error instanceof SandboxRuntimeError) || error.code !== "runtime_conflict") throw error;
       }
+    } else {
+      const assignedIp = runtime.State.Running ? endpoint.IPAddress : endpoint.IPAddress || endpoint.IPAMConfig?.IPv4Address;
+      if (assignedIp !== proxyIp) throw new SandboxRuntimeError("egress_proxy_address_mismatch");
     }
     await this.client.request("POST", `/containers/${encodeURIComponent(runtime.Id)}/start`, undefined, [204, 304]);
     return this.assertEgressProxy(spec);
@@ -531,30 +635,45 @@ export class RootlessDockerDriver implements SandboxDriver {
     if (!runtime) throw new SandboxRuntimeError("egress_proxy_missing");
     const labels = runtime.Config.Labels ?? {};
     const networks = runtime.NetworkSettings?.Networks ?? {};
-    const proxyIp = networks[sandboxNetworkName(spec.sandboxId)]?.IPAddress;
+    const networkName = sandboxNetworkName(spec.sandboxId);
+    const network = await this.client.request<DockerNetwork>("GET", `/networks/${encodeURIComponent(networkName)}`);
+    assertSandboxNetwork(network, spec);
+    const expectedProxyIp = privateProxyIpv4For(network);
+    const endpoint = networks[networkName];
+    const proxyIp = endpoint?.IPAddress || (!runtime.State.Running ? endpoint?.IPAMConfig?.IPv4Address : undefined);
     const envAllowlist = (runtime.Config.Env ?? []).find((entry) => entry.startsWith("SANDBOX_EGRESS_ALLOWLIST="));
     const envSandboxId = (runtime.Config.Env ?? []).find((entry) => entry.startsWith("SANDBOX_ID="));
-    const safe = labels["com.meta-game.managed"] === "true" &&
-      labels["com.meta-game.runtime-kind"] === "egress-proxy" &&
-      labels["com.meta-game.sandbox-id"] === spec.sandboxId &&
-      labels["com.meta-game.project-id"] === spec.projectId &&
-      runtime.Config.Image === spec.image && runtime.Config.User === "10000:10000" &&
-      runtime.Config.WorkingDir === "/opt/meta-game" &&
-      JSON.stringify(runtime.Config.Cmd) === JSON.stringify(["node", "/opt/meta-game/egress-proxy.mjs"]) &&
-      envAllowlist === `SANDBOX_EGRESS_ALLOWLIST=${(spec.egressAllowlist ?? this.egressAllowlist).join(",")}` &&
-      envSandboxId === `SANDBOX_ID=${spec.sandboxId}` &&
-      runtime.HostConfig.Privileged === false && runtime.HostConfig.ReadonlyRootfs === true &&
-      runtime.HostConfig.NetworkMode === sharedEgressNetwork &&
-      runtime.HostConfig.Memory === 128 * 1024 * 1024 && runtime.HostConfig.MemorySwap === 128 * 1024 * 1024 &&
-      runtime.HostConfig.NanoCpus === 250_000_000 && runtime.HostConfig.PidsLimit === 64 &&
-      runtime.HostConfig.CapDrop?.includes("ALL") === true &&
-      runtime.HostConfig.SecurityOpt?.includes("no-new-privileges:true") === true &&
-      Object.keys(runtime.HostConfig.PortBindings ?? {}).length === 0 &&
-      (runtime.HostConfig.Binds?.length ?? 0) === 0 && runtime.Mounts.length === 0 &&
-      Boolean(networks[sharedEgressNetwork]) && Boolean(networks[sandboxNetworkName(spec.sandboxId)]) &&
-      networks[sandboxNetworkName(spec.sandboxId)]?.Aliases?.includes("npm-proxy") === true &&
-      Object.keys(networks).length === 2;
-    if (!safe || !isPrivateNetworkIpv4(proxyIp)) throw new SandboxRuntimeError("egress_proxy_security_invariant_failed");
+    const checks: Record<string, boolean> = {
+      managedLabel: labels["com.meta-game.managed"] === "true",
+      runtimeLabel: labels["com.meta-game.runtime-kind"] === "egress-proxy",
+      sandboxLabel: labels["com.meta-game.sandbox-id"] === spec.sandboxId,
+      projectLabel: labels["com.meta-game.project-id"] === spec.projectId,
+      image: runtime.Config.Image === spec.image,
+      user: runtime.Config.User === "10000:10000",
+      workingDirectory: runtime.Config.WorkingDir === "/opt/meta-game",
+      command: JSON.stringify(runtime.Config.Cmd) === JSON.stringify(["node", "/opt/meta-game/egress-proxy.mjs"]),
+      allowlist: envAllowlist === `SANDBOX_EGRESS_ALLOWLIST=${(spec.egressAllowlist ?? this.egressAllowlist).join(",")}`,
+      sandboxEnvironment: envSandboxId === `SANDBOX_ID=${spec.sandboxId}`,
+      unprivileged: runtime.HostConfig.Privileged === false,
+      readOnlyRoot: runtime.HostConfig.ReadonlyRootfs === true,
+      networkMode: runtime.HostConfig.NetworkMode === sharedEgressNetwork,
+      memory: runtime.HostConfig.Memory === 128 * 1024 * 1024 && runtime.HostConfig.MemorySwap === 128 * 1024 * 1024,
+      cpuAndPids: runtime.HostConfig.NanoCpus === 250_000_000 && runtime.HostConfig.PidsLimit === 64,
+      capabilities: runtime.HostConfig.CapDrop?.includes("ALL") === true,
+      noNewPrivileges: runtime.HostConfig.SecurityOpt?.includes("no-new-privileges:true") === true,
+      noPorts: Object.keys(runtime.HostConfig.PortBindings ?? {}).length === 0,
+      noMounts: (runtime.HostConfig.Binds?.length ?? 0) === 0 && runtime.Mounts.length === 0,
+      sharedNetwork: Boolean(networks[sharedEgressNetwork]),
+      sandboxNetwork: Boolean(networks[networkName]),
+      proxyAlias: runtime.State.Running
+        ? endpoint?.Aliases?.includes("npm-proxy") === true
+        : Boolean(endpoint?.IPAMConfig?.IPv4Address),
+      staticAddress: expectedProxyIp !== undefined && proxyIp === expectedProxyIp,
+      networkCount: Object.keys(networks).length === 2,
+    };
+    const safe = Object.values(checks).every(Boolean);
+    const privateProxyIp = isPrivateNetworkIpv4(proxyIp);
+    if (!safe || !privateProxyIp) throw new SandboxRuntimeError("egress_proxy_security_invariant_failed");
     return proxyIp;
   }
 
@@ -587,9 +706,13 @@ export class RootlessDockerDriver implements SandboxDriver {
     const engineMajor = Number(/^([0-9]+)\./.exec(info.ServerVersion ?? "")?.[1] ?? 0);
     if (engineMajor < 28) throw new SandboxRuntimeError("docker_engine_28_required_for_isolated_gateway");
     const securityOptions = (info.SecurityOptions ?? []).map((option) => option.toLowerCase());
-    if (!securityOptions.some((option) => option.includes("rootless"))) throw new SandboxRuntimeError("rootless_runtime_required");
     if (info.CgroupVersion !== "2") throw new SandboxRuntimeError("cgroups_v2_required");
-    if (info.CgroupDriver !== "systemd") throw new SandboxRuntimeError("systemd_cgroup_driver_required");
+    if (this.hostRuntimeMode === "rootless") {
+      if (!securityOptions.some((option) => option.includes("rootless"))) throw new SandboxRuntimeError("rootless_runtime_required");
+      if (info.CgroupDriver !== "systemd") throw new SandboxRuntimeError("systemd_cgroup_driver_required");
+    } else if (info.OperatingSystem !== "Docker Desktop" || info.CgroupDriver !== "cgroupfs" || this.workspaceMode !== "tmpfs") {
+      throw new SandboxRuntimeError("docker_desktop_security_runtime_required");
+    }
     if (!securityOptions.some((option) => option.includes("seccomp"))) throw new SandboxRuntimeError("seccomp_required");
     if (!info.Driver || !["overlay2", "overlayfs", "fuse-overlayfs"].includes(info.Driver)) {
       throw new SandboxRuntimeError("unsupported_runtime_storage_driver");
@@ -599,23 +722,33 @@ export class RootlessDockerDriver implements SandboxDriver {
       projectId: randomUUID(),
       uid: hostCheckUid,
       image: this.image,
-      limits: { cpu: 0.25, memoryMb: 128, diskMb: hostCheckDiskMb, pids: 16, commandTimeoutMs: 60_000 },
+      limits: { cpu: hostCheckCpu, memoryMb: hostCheckMemoryMb, diskMb: hostCheckDiskMb, pids: hostCheckPids, commandTimeoutMs: 60_000 },
       egressAllowlist: this.egressAllowlist,
     };
+    let probeFailure: unknown;
     try {
       await this.createWithSpec(spec, true);
-      const limitsProbe = await this.execWithSpec(spec, ["node", "-e", cgroupProbeProgram], "", 10_000, true);
+      const probeProgram = this.hostRuntimeMode === "rootless" ? cgroupProbeProgram : dockerDesktopCgroupProbeProgram;
+      const limitsProbe = await this.execWithSpec(spec, ["node", "-e", probeProgram], "", 10_000, true);
       if (limitsProbe.exitCode !== 0) throw new SandboxRuntimeError("sandbox_limits_probe_failed");
-      const memoryProbe = await this.execWithSpec(spec, ["node", "-e", memoryProbeProgram], "", 15_000, true);
-      if (memoryProbe.exitCode !== 137) throw new SandboxRuntimeError("sandbox_memory_probe_failed");
-      const networkProbe = await this.execWithSpec(spec, ["node", "-e", networkProbeProgram], "", 10_000, true);
+      const networkProbe = await this.execWithSpec(spec, ["node", "-e", networkProbeProgram], "", 15_000, true);
       if (networkProbe.exitCode !== 0) throw new SandboxRuntimeError("sandbox_egress_probe_failed");
+      const networkProbeRuntime = await this.inspectByName(sandboxContainerName(spec.sandboxId));
+      if (!networkProbeRuntime) throw new SandboxRuntimeError("sandbox_network_probe_container_missing");
+      if (!networkProbeRuntime.State.Running) {
+        await this.client.request("POST", `/containers/${encodeURIComponent(networkProbeRuntime.Id)}/start`, undefined, [204, 304]);
+        await this.inspectAndVerify(spec, networkProbeRuntime.Id, true);
+      }
       await this.verifyToolRuntime(spec);
     } catch (error) {
+      probeFailure = error;
       throw error instanceof SandboxRuntimeError ? error : new SandboxRuntimeError("sandbox_host_probe_failed");
     } finally {
-      await this.destroyWithSpec(spec, true).catch(() => {
-        throw new SandboxRuntimeError("sandbox_host_probe_cleanup_failed");
+      await this.destroyWithSpec(spec, true).catch((error: unknown) => {
+        const cleanupCode = error instanceof SandboxRuntimeError ? error.code : "unknown";
+        const probeCode = probeFailure instanceof SandboxRuntimeError ? probeFailure.code : probeFailure ? "unknown" : undefined;
+        const message = probeCode ? `probe_${probeCode};cleanup_${cleanupCode}` : cleanupCode;
+        throw new SandboxRuntimeError("sandbox_host_probe_cleanup_failed", message);
       });
     }
   }
@@ -649,7 +782,7 @@ export class RootlessDockerDriver implements SandboxDriver {
     const linkSetup = await this.execWithSpec(spec, ["node", "-e", [
       "const fs=require('node:fs');fs.writeFileSync('/tmp/meta-game-host-check-marker','untouched');",
       "fs.symlinkSync('/tmp','/workspace/.host-check-link');",
-      "const f=JSON.parse(fs.readFileSync('/workspace/.host-check.txt','utf8'));if(f!=='sandbox-safe\\n')process.exit(2);",
+      "const f=fs.readFileSync('/workspace/.host-check.txt','utf8');if(f!=='sandbox-safe\\n')process.exit(2);",
     ].join("")], "", 5_000, true);
     if (linkSetup.exitCode !== 0) throw new SandboxRuntimeError("sandbox_filesystem_link_probe_failed");
     const escape = await this.execWithSpec(
@@ -663,7 +796,7 @@ export class RootlessDockerDriver implements SandboxDriver {
       private: true,
       scripts: {
         preinstall: "node -e process.exit(41)",
-        build: "node -e process.stdout.write(42)",
+        build: "node -e \"process.stdout.write('42')\"",
       },
     });
     const manifest = await this.execWithSpec(
@@ -723,8 +856,14 @@ export class RootlessDockerDriver implements SandboxDriver {
     await this.ensureEgressNetwork();
     await this.ensureSandboxNetwork(spec);
     const proxyIp = await this.ensureEgressProxy(spec);
-    const config = buildContainerConfig(spec, hostCheck, proxyIp);
-    await this.ensureWorkspaceVolume(config.volumeName, config.labels, spec.limits.diskMb);
+    const config = buildContainerConfig(
+      spec,
+      hostCheck,
+      proxyIp,
+      this.workspaceMode,
+      this.hostRuntimeMode === "docker-desktop-security",
+    );
+    await this.ensureWorkspaceVolume(config.volumeName, config.labels, spec);
     let runtime: { Id: string };
     try {
       runtime = await this.client.request<{ Id: string }>("POST", `/containers/create?name=${encodeURIComponent(config.containerName)}`, config.body, [201]);
@@ -732,7 +871,7 @@ export class RootlessDockerDriver implements SandboxDriver {
       if (!(error instanceof SandboxRuntimeError) || error.code !== "runtime_conflict") throw error;
       const existing = await this.inspectByName(config.containerName);
       if (!existing) throw error;
-      assertContainerSecurity(existing, spec, proxyIp, hostCheck);
+      assertContainerSecurity(existing, spec, proxyIp, hostCheck, this.workspaceMode);
       runtime = { Id: existing.Id };
     }
 
@@ -747,11 +886,11 @@ export class RootlessDockerDriver implements SandboxDriver {
   async inspect(sandboxId: string, projectId: string, uid: number): Promise<SandboxInspection> {
     const runtime = await this.inspectByName(sandboxContainerName(sandboxId));
     if (!runtime) return { sandboxId, state: "missing", uid: assertSandboxUid(uid), limits: this.defaultLimits };
-    await this.verifyWorkspaceVolume(sandboxId, projectId, this.defaultLimits.diskMb);
     const spec = { sandboxId, projectId, uid, image: this.image, limits: this.defaultLimits, egressAllowlist: this.egressAllowlist };
+    await this.verifyWorkspaceVolume(spec);
     await this.ensureSandboxNetwork(spec);
     const proxyIp = await this.assertEgressProxy(spec);
-    assertContainerSecurity(runtime, spec, proxyIp);
+    assertContainerSecurity(runtime, spec, proxyIp, false, this.workspaceMode);
     await this.assertSandboxNetworkMembership(spec);
     return {
       sandboxId,
@@ -768,9 +907,9 @@ export class RootlessDockerDriver implements SandboxDriver {
   private async stopWithSpec(spec: SandboxCreateSpec, hostCheck = false): Promise<void> {
     const runtime = await this.inspectByName(sandboxContainerName(spec.sandboxId));
     if (!runtime) return;
-    await this.verifyWorkspaceVolume(spec.sandboxId, spec.projectId, spec.limits.diskMb);
+    await this.verifyWorkspaceVolume(spec);
     const proxyIp = await this.assertEgressProxy(spec);
-    assertContainerSecurity(runtime, spec, proxyIp, hostCheck);
+    assertContainerSecurity(runtime, spec, proxyIp, hostCheck, this.workspaceMode);
     await this.client.request("POST", `/containers/${encodeURIComponent(runtime.Id)}/stop?t=5`, undefined, [204, 304]);
     await this.stopEgressProxy(spec);
   }
@@ -782,9 +921,9 @@ export class RootlessDockerDriver implements SandboxDriver {
   private async destroyWithSpec(spec: SandboxCreateSpec, hostCheck = false): Promise<void> {
     const runtime = await this.inspectByName(sandboxContainerName(spec.sandboxId));
     if (runtime) {
-      await this.verifyWorkspaceVolume(spec.sandboxId, spec.projectId, spec.limits.diskMb);
+      await this.verifyWorkspaceVolume(spec);
       const proxyIp = await this.assertEgressProxy(spec);
-      assertContainerSecurity(runtime, spec, proxyIp, hostCheck);
+      assertContainerSecurity(runtime, spec, proxyIp, hostCheck, this.workspaceMode);
       if (runtime.State.Running) await this.stopWithSpec(spec, hostCheck);
       await this.client.request("DELETE", `/containers/${encodeURIComponent(runtime.Id)}?force=true&v=1`, undefined, [204, 404]);
     }
@@ -833,9 +972,9 @@ export class RootlessDockerDriver implements SandboxDriver {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > spec.limits.commandTimeoutMs) throw new SandboxRuntimeError("invalid_timeout");
     const runtime = await this.inspectByName(sandboxContainerName(spec.sandboxId));
     if (!runtime || !runtime.State.Running) throw new SandboxRuntimeError("sandbox_not_running");
-    await this.verifyWorkspaceVolume(spec.sandboxId, spec.projectId, spec.limits.diskMb);
+    await this.verifyWorkspaceVolume(spec);
     const proxyIp = await this.assertEgressProxy(spec);
-    assertContainerSecurity(runtime, spec, proxyIp, hostCheck);
+    assertContainerSecurity(runtime, spec, proxyIp, hostCheck, this.workspaceMode);
     const createdAt = performance.now();
     const exec = await this.client.request<{ Id: string }>("POST", `/containers/${encodeURIComponent(runtime.Id)}/exec`, {
       AttachStdin: options.stdin !== undefined,
@@ -860,10 +999,14 @@ export class RootlessDockerDriver implements SandboxDriver {
       const maxOutputBytes = options.maxOutputBytes ?? 64_000;
       const rawLimit = maxOutputBytes * 2 + 65_536;
       const startPath = `/exec/${encodeURIComponent(exec.Id)}/start`;
-      const response = options.stdin !== undefined
-        ? await this.client.hijack(startPath, { Detach: false, Tty: false }, options.stdin, rawLimit, abort.signal)
-        : await this.client.raw("POST", startPath, { Detach: false, Tty: false }, rawLimit, abort.signal, true);
-      if (response.status !== 200) throw new SandboxRuntimeError("sandbox_exec_failed");
+      const response = await this.client.hijack(
+        startPath,
+        { Detach: false, Tty: false },
+        options.stdin ?? "",
+        rawLimit,
+        abort.signal,
+      );
+      if (response.status !== 200 && response.status !== 101) throw new SandboxRuntimeError("sandbox_exec_failed");
       stream = response.body;
       outputTruncated = response.truncated;
     } catch (error) {
@@ -889,31 +1032,36 @@ export class RootlessDockerDriver implements SandboxDriver {
     };
   }
 
-  private async ensureWorkspaceVolume(name: string, labels: Record<string, string>, diskMb: number): Promise<void> {
+  private async ensureWorkspaceVolume(name: string, labels: Record<string, string>, spec: SandboxCreateSpec): Promise<void> {
+    if (this.workspaceMode === "tmpfs") return;
     try {
       await this.client.request("POST", "/volumes/create", {
         Name: name,
         Driver: "local",
+        Options: {},
         Labels: labels,
       }, [201]);
     } catch (error) {
       if (!(error instanceof SandboxRuntimeError) || error.code !== "runtime_conflict") throw error;
     }
-    const sandboxId = labels["com.meta-game.sandbox-id"];
-    const projectId = labels["com.meta-game.project-id"];
-    if (!sandboxId || !projectId) throw new SandboxRuntimeError("sandbox_volume_identity_mismatch");
-    await this.verifyWorkspaceVolume(sandboxId, projectId, diskMb);
+    if (labels["com.meta-game.sandbox-id"] !== spec.sandboxId || labels["com.meta-game.project-id"] !== spec.projectId) {
+      throw new SandboxRuntimeError("sandbox_volume_identity_mismatch");
+    }
+    await this.verifyWorkspaceVolume(spec);
   }
 
-  private async verifyWorkspaceVolume(sandboxId: string, projectId: string, diskMb: number): Promise<void> {
+  private async verifyWorkspaceVolume(spec: SandboxCreateSpec): Promise<void> {
+    if (this.workspaceMode === "tmpfs") return;
     const volume = await this.client.request<DockerVolume>(
-      "GET", `/volumes/${encodeURIComponent(sandboxVolumeName(sandboxId))}`,
+      "GET", `/volumes/${encodeURIComponent(sandboxVolumeName(spec.sandboxId))}`,
     );
-    if (volume.Driver !== "local" || volume.Labels?.["com.meta-game.sandbox-id"] !== sandboxId ||
+    const expectedOptions = {};
+    if (volume.Driver !== "local" || volume.Labels?.["com.meta-game.sandbox-id"] !== spec.sandboxId ||
       volume.Labels?.["com.meta-game.managed"] !== "true" ||
-      volume.Labels?.["com.meta-game.project-id"] !== projectId ||
-      volume.Labels?.["com.meta-game.workspace-limit-mb"] !== String(diskMb) ||
-      Object.keys(volume.Options ?? {}).length !== 0) {
+      volume.Labels?.["com.meta-game.project-id"] !== spec.projectId ||
+      volume.Labels?.["com.meta-game.workspace-limit-mb"] !== String(spec.limits.diskMb) ||
+      volume.Labels?.["com.meta-game.workspace-mode"] !== this.workspaceMode ||
+      JSON.stringify(volume.Options ?? {}) !== JSON.stringify(expectedOptions)) {
       throw new SandboxRuntimeError("sandbox_volume_identity_mismatch");
     }
   }
@@ -930,7 +1078,7 @@ export class RootlessDockerDriver implements SandboxDriver {
   private async inspectAndVerify(spec: SandboxCreateSpec, runtimeId: string, hostCheck = false): Promise<SandboxInspection> {
     const inspect = await this.client.request<DockerInspect>("GET", `/containers/${encodeURIComponent(runtimeId)}/json`);
     const proxyIp = await this.assertEgressProxy(spec);
-    const uid = assertContainerSecurity(inspect, spec, proxyIp, hostCheck);
+    const uid = assertContainerSecurity(inspect, spec, proxyIp, hostCheck, this.workspaceMode);
     await this.assertSandboxNetworkMembership(spec);
     return { sandboxId: spec.sandboxId, state: dockerState(inspect.State), uid, limits: spec.limits };
   }

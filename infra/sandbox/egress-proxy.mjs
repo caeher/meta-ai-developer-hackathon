@@ -69,7 +69,9 @@ function requestPinned(hostname, pathname, address, method) {
       path: pathname,
       method,
       headers: { accept: "application/json, application/octet-stream;q=0.9, */*;q=0.8", "user-agent": "meta-game-sandbox-registry/1" },
-      lookup: (_name, _options, callback) => callback(null, address, 4),
+      lookup: (_name, options, callback) => options.all
+        ? callback(null, [{ address, family: 4 }])
+        : callback(null, address, 4),
       agent: false,
     }, (response) => {
       const chunks = [];
