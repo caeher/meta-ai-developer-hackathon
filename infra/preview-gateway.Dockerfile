@@ -28,4 +28,6 @@ COPY packages/db/src packages/db/src
 COPY packages/preview/src packages/preview/src
 COPY tsconfig.base.json tsconfig.base.json
 
+USER node
+
 CMD ["npm", "run", "start", "--workspace", "@meta-game/preview-gateway"]

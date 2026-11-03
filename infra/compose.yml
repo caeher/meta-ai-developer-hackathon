@@ -139,9 +139,9 @@ services:
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:3000}
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-      AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      APP_ORIGIN: ${APP_ORIGIN:-https://app.localhost}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://app.localhost}
+      AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:-https://app.localhost,http://localhost:3000,http://127.0.0.1:3000}
       AUTH_SECRET: ${AUTH_SECRET:-replace-with-random-32-byte-secret}
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
@@ -187,7 +187,7 @@ services:
       - ../tsconfig.base.json:/workspace/tsconfig.base.json:ro
       - ../scripts/check-node-version.mjs:/workspace/scripts/check-node-version.mjs:ro
       - web-node-modules:/workspace/node_modules
-      - web-next-cache:/workspace/apps/web/.next
+      - web-next-cache-node:/workspace/apps/web/.next
     depends_on:
       postgres:
         condition: service_healthy
@@ -256,7 +256,7 @@ services:
       WORKER_INTERNAL_PORT: ${WORKER_INTERNAL_PORT:-8082}
       PUBLISH_BASE_DOMAIN: ${PUBLISH_BASE_DOMAIN:-games.localhost}
       SANDBOX_DRIVER: ${SANDBOX_DRIVER:-disabled}
-      SANDBOX_CONTROLLER_URL: ${SANDBOX_CONTROLLER_URL:-https://sandbox-controller.example.internal:8443}
+      SANDBOX_CONTROLLER_URL: ${SANDBOX_CONTROLLER_URL:-http://sandbox-controller:8081}
       SANDBOX_CONTROLLER_TOKEN: ${SANDBOX_CONTROLLER_TOKEN:-placeholder-generate-a-random-token}
     depends_on:
       postgres:
@@ -276,6 +276,60 @@ services:
     pids_limit: 128
     networks:
       - control
+
+  sandbox-controller:
+    profiles: [runtime]
+    build:
+      context: ..
+      dockerfile: infra/sandbox-controller.Dockerfile
+    init: true
+    restart: unless-stopped
+    logging: *bounded-logging
+    # Único servicio de confianza con acceso al socket Docker; no se publica al host.
+    user: "0:0"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+      - /run:rw,noexec,nosuid,nodev,size=8m,mode=1777
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meta_game}:${POSTGRES_PASSWORD:-local-only-postgres-password-change-me-2026}@postgres:5432/${POSTGRES_DB:-meta_game}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OBSERVABILITY_PORT: ${OBSERVABILITY_PORT:-9090}
+      SANDBOX_DRIVER: ${SANDBOX_DRIVER:-disabled}
+      SANDBOX_HOST_RUNTIME_MODE: ${SANDBOX_HOST_RUNTIME_MODE:-rootless}
+      SANDBOX_WORKSPACE_MODE: ${SANDBOX_WORKSPACE_MODE:-user-quota}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+      SANDBOX_CONTROLLER_TOKEN: ${SANDBOX_CONTROLLER_TOKEN:-replace-with-generated-random-token}
+      SANDBOX_CONTROLLER_HOST: 0.0.0.0
+      SANDBOX_CONTROLLER_PORT: ${SANDBOX_CONTROLLER_PORT:-8081}
+      SANDBOX_DOCKER_SOCKET: ${SANDBOX_DOCKER_SOCKET:-/var/run/docker.sock}
+      SANDBOX_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-1}
+      SANDBOX_MEMORY_MB: ${SANDBOX_MEMORY_MB:-1024}
+      SANDBOX_DISK_MB: ${SANDBOX_DISK_MB:-2048}
+      SANDBOX_PIDS_LIMIT: ${SANDBOX_PIDS_LIMIT:-128}
+      SANDBOX_COMMAND_TIMEOUT_MS: ${SANDBOX_COMMAND_TIMEOUT_MS:-60000}
+      SANDBOX_IDLE_TTL_SECONDS: ${SANDBOX_IDLE_TTL_SECONDS:-900}
+      SANDBOX_EGRESS_ALLOWLIST: ${SANDBOX_EGRESS_ALLOWLIST:-registry.npmjs.org}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    networks:
+      - control
+      - sandbox-egress
 
   publishing-origin:
     profiles: [publishing]
@@ -331,7 +385,7 @@ services:
       OBSERVABILITY_PORT: ${OBSERVABILITY_PORT:-9090}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      APP_ORIGIN: ${APP_ORIGIN:-https://app.localhost}
       PREVIEW_BASE_DOMAIN: ${PREVIEW_BASE_DOMAIN:-preview.localhost}
       PREVIEW_GATEWAY_ENABLED: ${PREVIEW_GATEWAY_ENABLED:-false}
       PREVIEW_TOKEN_PUBLIC_KEYS: ${PREVIEW_TOKEN_PUBLIC_KEYS:-replace-with-json-public-keys}
@@ -419,6 +473,11 @@ services:
     cap_add:
       - NET_BIND_SERVICE
     pids_limit: 64
+    healthcheck:
+      test: [CMD, caddy, validate, --config, /etc/caddy/Caddyfile]
+      interval: 15s
+      timeout: 5s
+      retries: 4
     networks:
       - control
 
@@ -427,7 +486,7 @@ volumes:
   redis-data:
   s3-data:
   web-node-modules:
-  web-next-cache:
+  web-next-cache-node:
   caddy-data:
   caddy-config:
 

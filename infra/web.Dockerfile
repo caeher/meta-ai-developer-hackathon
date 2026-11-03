@@ -23,6 +23,7 @@ RUN npm ci --no-audit --no-fund
 COPY apps/web/app apps/web/app
 COPY apps/web/components apps/web/components
 COPY apps/web/server apps/web/server
+COPY apps/web/hooks apps/web/hooks
 COPY apps/web/styles apps/web/styles
 COPY apps/web/next.config.ts apps/web/next.config.ts
 COPY apps/web/tsconfig.json apps/web/tsconfig.json
@@ -31,8 +32,13 @@ COPY packages/config/tsconfig.json packages/config/tsconfig.json
 COPY packages/contracts/src packages/contracts/src
 COPY packages/db/src packages/db/src
 COPY packages/preview/src packages/preview/src
+COPY packages/storage/src packages/storage/src
 COPY packages/contracts/tsconfig.json packages/contracts/tsconfig.json
 COPY tsconfig.base.json tsconfig.base.json
+
+RUN mkdir -p /workspace/apps/web/.next \
+    && chown -R node:node /workspace/apps/web
+USER node
 
 ENV NEXT_TELEMETRY_DISABLED=1
 EXPOSE 3000

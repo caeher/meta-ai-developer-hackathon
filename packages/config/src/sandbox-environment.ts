@@ -6,7 +6,7 @@ const boundedInteger = (fallback: number, minimum: number, maximum: number) =>
   ).default(fallback);
 
 const loopbackHost = z.string().min(1).max(253).refine((host) => {
-  if (host === "localhost") return true;
+  if (host === "localhost" || host === "0.0.0.0") return true;
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
     const parts = host.split(".").map(Number);
     if (parts.some((part) => part > 255)) return false;
@@ -14,11 +14,11 @@ const loopbackHost = z.string().min(1).max(253).refine((host) => {
   }
   if (host === "::1") return true;
   return false;
-}, "SANDBOX_CONTROLLER_HOST must be a loopback address; use a TLS proxy for remote workers");
+}, "SANDBOX_CONTROLLER_HOST must be loopback or 0.0.0.0 on an internal Compose network");
 
 const imageDigest = z.string().min(1).max(300).regex(
-  /^[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}$/,
-  "SANDBOX_IMAGE must be pinned to a sha256 digest",
+  /^(?:[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}|sha256:[a-f0-9]{64})$/,
+  "SANDBOX_IMAGE must be pinned to a sha256 digest or immutable local image ID",
 );
 
 const egressAllowlist = z.string().max(2048).default("registry.npmjs.org").transform((value) =>
@@ -47,6 +47,8 @@ export const SandboxEnvironmentSchema = z.object({
   SANDBOX_CONTROLLER_HOST: loopbackHost.default("127.0.0.1"),
   SANDBOX_CONTROLLER_PORT: boundedInteger(8081, 1, 65535),
   SANDBOX_DOCKER_SOCKET: z.string().min(1).max(255).default("/run/user/1000/docker.sock"),
+  SANDBOX_HOST_RUNTIME_MODE: z.enum(["rootless", "docker-desktop-security"]).default("rootless"),
+  SANDBOX_WORKSPACE_MODE: z.enum(["user-quota", "tmpfs"]).default("user-quota"),
   SANDBOX_CPU_LIMIT: boundedInteger(1, 1, 8),
   SANDBOX_MEMORY_MB: boundedInteger(1024, 256, 8192),
   SANDBOX_DISK_MB: boundedInteger(2048, 128, 16_384),

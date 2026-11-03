@@ -17,7 +17,13 @@ const limits = {
   pids: environment.SANDBOX_PIDS_LIMIT,
   commandTimeoutMs: environment.SANDBOX_COMMAND_TIMEOUT_MS,
 };
-const driver = new RootlessDockerDriver(environment.SANDBOX_DOCKER_SOCKET, environment.SANDBOX_IMAGE, limits, environment.SANDBOX_EGRESS_ALLOWLIST);
+const driver = new RootlessDockerDriver(
+  environment.SANDBOX_DOCKER_SOCKET,
+  environment.SANDBOX_IMAGE,
+  limits,
+  environment.SANDBOX_EGRESS_ALLOWLIST,
+  { hostRuntimeMode: environment.SANDBOX_HOST_RUNTIME_MODE, workspaceMode: environment.SANDBOX_WORKSPACE_MODE },
+);
 await driver.verifyHost();
 const service = new SandboxService(createSandboxRegistry(database.db), driver, environment);
 await service.reapExpired();

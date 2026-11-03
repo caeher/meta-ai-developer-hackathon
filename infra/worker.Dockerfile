@@ -36,4 +36,6 @@ COPY vendor/gamedev-skills vendor/gamedev-skills
 COPY packages/game-templates/phaser packages/game-templates/phaser
 COPY tsconfig.base.json tsconfig.base.json
 
+USER node
+
 CMD ["npm", "run", "start:worker"]

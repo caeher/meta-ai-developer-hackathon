@@ -1,4 +1,4 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -6,6 +6,7 @@ import { readLocalEnvironment } from "./infra-common.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 export const repositoryRoot = resolve(scriptDirectory, "..");
+dotenv.config({ path: resolve(repositoryRoot, ".env.example") });
 
 function isPlaceholderDatabaseUrl(value) {
   if (!value) return true;

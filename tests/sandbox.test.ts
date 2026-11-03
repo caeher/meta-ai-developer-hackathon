@@ -194,6 +194,32 @@ afterEach(async () => {
 });
 
 describe("sandbox rootless contract", () => {
+  it("accepts Docker Desktop Compose with an immutable local image ID and bounded tmpfs", () => {
+    const desktop = parseSandboxEnvironment({
+      SANDBOX_DRIVER: "rootless",
+      SANDBOX_IMAGE: `sha256:${"d".repeat(64)}`,
+      SANDBOX_CONTROLLER_TOKEN: TOKEN,
+      SANDBOX_CONTROLLER_HOST: "0.0.0.0",
+      SANDBOX_CONTROLLER_PORT: "8081",
+      SANDBOX_DOCKER_SOCKET: "/var/run/docker.sock",
+      SANDBOX_HOST_RUNTIME_MODE: "docker-desktop-security",
+      SANDBOX_WORKSPACE_MODE: "tmpfs",
+      SANDBOX_CPU_LIMIT: "1",
+      SANDBOX_MEMORY_MB: "1024",
+      SANDBOX_DISK_MB: "2048",
+      SANDBOX_PIDS_LIMIT: "128",
+      SANDBOX_COMMAND_TIMEOUT_MS: "60000",
+      SANDBOX_IDLE_TTL_SECONDS: "900",
+    });
+
+    expect(desktop).toMatchObject({
+      SANDBOX_IMAGE: `sha256:${"d".repeat(64)}`,
+      SANDBOX_CONTROLLER_HOST: "0.0.0.0",
+      SANDBOX_HOST_RUNTIME_MODE: "docker-desktop-security",
+      SANDBOX_WORKSPACE_MODE: "tmpfs",
+    });
+  });
+
   it("limita UID, argv y rutas al workspace", () => {
     expect(assertSandboxUid(10_000)).toBe(10_000);
     expect(() => assertSandboxUid(60_000)).toThrow(SandboxRuntimeError);
@@ -487,8 +513,10 @@ describe("sandbox rootless contract", () => {
     expect(f.driver.exec).not.toHaveBeenCalled();
   });
 
-  it("solo permite HTTP de loopback para el cliente worker", () => {
+  it("allows HTTP only on loopback or the exact private Compose endpoint", () => {
     expect(() => new SandboxControllerClient("http://sandbox.internal:8081", TOKEN)).toThrow();
+    expect(() => new SandboxControllerClient("http://sandbox-controller:8081", TOKEN)).not.toThrow();
+    expect(() => new SandboxControllerClient("http://sandbox-controller:8082", TOKEN)).toThrow();
     expect(() => new SandboxControllerClient("http://127.0.0.1:8081", "placeholder-token-that-is-way-too-long")).toThrow();
   });
 });

@@ -4,10 +4,19 @@
 
 *.preview.localhost {
 	tls internal
-	reverse_proxy preview-gateway:8080
+	reverse_proxy preview-gateway:8080 {
+		flush_interval -1
+	}
 }
 
 *.games.localhost {
 	tls internal
 	reverse_proxy publishing-origin:8083
+}
+
+app.localhost {
+	tls internal
+	reverse_proxy web:3000 {
+		flush_interval -1
+	}
 }

@@ -21,6 +21,14 @@ export class SandboxControllerClient {
   constructor(url: string, private readonly token: string, private readonly fetcher: typeof fetch = fetch) {
     this.baseUrl = new URL(url);
     const loopback = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(this.baseUrl.hostname);
+    const privateComposeController = this.baseUrl.protocol === "http:" && this.baseUrl.hostname === "sandbox-controller" && this.baseUrl.port === "8081";
+    if (privateComposeController) {
+      if (this.baseUrl.username || this.baseUrl.password || this.baseUrl.search || this.baseUrl.hash || this.baseUrl.pathname !== "/") {
+        throw new TypeError("SANDBOX_CONTROLLER_URL must be a bare private Compose endpoint");
+      }
+      if (token.length < 32 || /placeholder|replace-me|change-me/i.test(token)) throw new TypeError("Invalid sandbox controller token");
+      return;
+    }
     if (!(["http:", "https:"].includes(this.baseUrl.protocol) && (this.baseUrl.protocol === "https:" || loopback)) ||
       this.baseUrl.username || this.baseUrl.password || this.baseUrl.search || this.baseUrl.hash || this.baseUrl.pathname !== "/") {
       throw new TypeError("SANDBOX_CONTROLLER_URL must use HTTPS, or HTTP on loopback");

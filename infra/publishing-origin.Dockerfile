@@ -28,4 +28,6 @@ COPY packages/db/src packages/db/src
 COPY packages/storage/src packages/storage/src
 COPY tsconfig.base.json tsconfig.base.json
 
+USER node
+
 CMD ["npm", "run", "start", "--workspace", "@meta-game/publishing-origin"]

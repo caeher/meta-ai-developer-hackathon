@@ -34,3 +34,9 @@ jobs:
         run: npm run build
       - name: Build sandbox controller and worker
         run: npm run build:controller && npm run build:worker
+      - name: Validate internal Docker Compose profiles
+        run: docker compose --file infra/compose.yml --env-file infra/env.example --profile web --profile worker --profile runtime --profile preview --profile publishing --profile local-domains config --quiet
+      - name: Build internal service images
+        run: docker compose --file infra/compose.yml --env-file infra/env.example --profile web --profile worker --profile runtime --profile preview --profile publishing build web worker sandbox-controller preview-gateway publishing-origin
+      - name: Build isolated game runtime image
+        run: docker build --file infra/sandbox/Dockerfile --tag meta-game-sandbox:ci .

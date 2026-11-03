@@ -9,7 +9,7 @@ export const repositoryRoot = dirname(scriptsDirectory);
 export const infraDirectory = join(repositoryRoot, "infra");
 export const composeFile = join(infraDirectory, "compose.yml");
 export const localEnvironmentFile = join(infraDirectory, ".env");
-const exampleEnvironmentFile = join(infraDirectory, "env.example");
+export const exampleEnvironmentFile = join(infraDirectory, "env.example");
 
 export function ensureLocalEnvironmentFile() {
   if (!existsSync(localEnvironmentFile)) {
@@ -53,21 +53,29 @@ function parseEnvFile(contents) {
 }
 
 export function readLocalEnvironment() {
-  const contents = readFileSync(localEnvironmentFile, "utf8");
+  const filePath = process.env.LOCAL_INFRA_ENV === "example" ? exampleEnvironmentFile : localEnvironmentFile;
+  const contents = readFileSync(filePath, "utf8");
   const values = parseEnvFile(contents);
   return parseInfraEnvironment(values);
 }
 
-export function composeArguments(extra = []) {
-  return ["compose", "--file", composeFile, "--env-file", localEnvironmentFile, ...extra];
+export function readExampleEnvironment() {
+  const contents = readFileSync(exampleEnvironmentFile, "utf8");
+  const values = parseEnvFile(contents);
+  return parseInfraEnvironment(values);
 }
 
-export function runDocker(arguments_, { quiet = false } = {}) {
+export function composeArguments(extra = [], envFile = process.env.LOCAL_INFRA_ENV === "example" ? exampleEnvironmentFile : localEnvironmentFile) {
+  return ["compose", "--file", composeFile, "--env-file", envFile, ...extra];
+}
+
+export function runDocker(arguments_, { quiet = false, env = process.env } = {}) {
   const result = spawnSync(process.platform === "win32" ? "docker.exe" : "docker", arguments_, {
     cwd: repositoryRoot,
     stdio: quiet ? "ignore" : "inherit",
     windowsHide: true,
     shell: false,
+    env,
   });
 
   if (result.error) {
