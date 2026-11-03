@@ -16,9 +16,9 @@ export const EnqueueRunRequestSchema = z.object({
   messageRequestId: z.string().trim().min(8).max(128).optional(),
   /**
    * @deprecated El consentimiento deriva de users.contributor_consent_at en el servidor;
-   * se acepta por compatibilidad con clientes viejos y se ignora.
+   * se acepta por compatibilidad con clientes viejos (true o false) y se ignora.
    */
-  contributorConsent: z.literal(true).optional(),
+  contributorConsent: z.boolean().optional(),
 }).strict();
 
 /** Redis payload is deliberately limited to opaque IDs and the idempotency key. */

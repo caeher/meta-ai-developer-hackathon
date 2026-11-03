@@ -153,7 +153,19 @@ describe("run API handlers", () => {
     expect(input).toMatchObject({ projectId, idempotencyKey: "run-request-006", messageRequestId: "message-request-006" });
   });
 
-  it("rechaza con 403 si el usuario no tiene consentimiento, sin crear run ni reserva", async () => {
+  it("ignora contributorConsent:false de un cliente viejo y deriva del usuario", async () => {
+    const { handlers, enqueueRun } = makeHandlers();
+    const response = await handlers.POST(request("POST", {
+      idempotencyKey: "run-request-009",
+      messageRequestId: "message-request-009",
+      contributorConsent: false,
+    }), { params: Promise.resolve({ projectId }) });
+    expect(response.status).toBe(202);
+    const input = enqueueRun.mock.calls.at(0)?.at(1) as unknown as Record<string, unknown>;
+    expect(input).not.toHaveProperty("contributorConsent");
+  });
+
+  it("rechaza con 403 si no hay consentimiento", async () => {
     const { handlers, enqueueRun, requireContributorConsent } = makeHandlers();
     requireContributorConsent.mockRejectedValueOnce(new ContributorConsentRequiredError());
     const response = await handlers.POST(request("POST", {
