@@ -20,7 +20,7 @@ interface FakeState {
 }
 
 function chainable(terminal: () => Promise<unknown>) {
-  const q: Record<string, any> = {};
+  const q: Record<string, (...args: never[]) => unknown> = {};
   q.from = () => q;
   q.values = () => q;
   q.set = () => q;
@@ -36,7 +36,7 @@ function chainable(terminal: () => Promise<unknown>) {
 }
 
 function makeFakeDb(state: FakeState): GameDatabase {
-  const db: Record<string, any> = {};
+  const db: Record<string, (...args: never[]) => unknown> = {};
   db.select = () => {
     let table: unknown = null;
     const q = chainable(() =>
