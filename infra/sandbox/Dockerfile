@@ -14,8 +14,7 @@ FROM ${NODE_BASE_IMAGE}
 ENV HOME=/tmp \
     TMPDIR=/tmp \
     npm_config_cache=/tmp/npm-cache \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/meta-game/browsers \
-    NODE_ENV=development
+    PLAYWRIGHT_BROWSERS_PATH=/opt/meta-game/browsers
 
 RUN groupadd --system --gid 10000 sandbox \
     && useradd --system --uid 10000 --gid sandbox --no-create-home --home-dir /nonexistent sandbox \

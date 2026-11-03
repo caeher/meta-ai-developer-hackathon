@@ -37,6 +37,7 @@ describe("bootstrap de plantilla Phaser", () => {
   it("siembra por writeFile, instala sin scripts, verifica y publica preview tras health check", async () => {
     const template = await loadPhaserTemplate();
     const order: string[] = [];
+    const installed: Array<{ name: string; version: string }> = [];
     const written = new Map<string, string>();
     const sandbox = {
       async writeFile(_projectId: string, path: string, content: string) {
@@ -46,7 +47,7 @@ describe("bootstrap de plantilla Phaser", () => {
       },
       async installDependencies(_projectId: string, input: { packages: Array<{ name: string; version: string }> }) {
         order.push("install");
-        expect(input.packages).toEqual(template.dependencies);
+        installed.push(...input.packages);
         return { stdout: "", stderr: "", exitCode: 0, durationMs: 1, truncated: false };
       },
       async runCommand(_projectId: string, input: { args: string[] }) {
@@ -65,6 +66,7 @@ describe("bootstrap de plantilla Phaser", () => {
     });
 
     expect(order[0]).toBe(`write:${PHASER_TEMPLATE_MARKER_PATH}`);
+    expect(installed).toEqual(template.dependencies);
     expect(order.indexOf("install")).toBeGreaterThan(order.findIndex((entry) => entry.startsWith("write:src/")));
     expect(order.indexOf("run:test")).toBeGreaterThan(order.indexOf("install"));
     expect(order.indexOf("run:run build")).toBeGreaterThan(order.indexOf("run:test"));

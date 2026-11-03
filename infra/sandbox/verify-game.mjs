@@ -35,7 +35,7 @@ async function main() {
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+    browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage", "--no-zygote", "--single-process"] });
     if (probe) {
       check("isolated Chromium runtime", true, "Chromium aislado está instalado en la imagen del sandbox.");
       finish();

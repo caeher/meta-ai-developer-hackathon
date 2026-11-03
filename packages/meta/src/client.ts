@@ -172,7 +172,7 @@ export class MetaClient {
 
   async plan(prompt: string, options: MetaOperationOptions = {}): Promise<MetaPlanResult> {
     assertPrompt(prompt, 80 * 1024, "planning prompt");
-    const payload = buildPlanPayload(this.config.modelPlan, prompt, boundedOutputTokens(options.maxOutputTokens, 1_024));
+    const payload = buildPlanPayload(this.config.modelPlan, prompt, boundedOutputTokens(options.maxOutputTokens, 4_096));
     assertPayloadSize(payload);
     return this.measure("plan", async () => {
       const result = await this.transport.createResponse(payload, options.signal);

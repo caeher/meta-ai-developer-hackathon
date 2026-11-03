@@ -162,8 +162,15 @@ export async function materializePhaserTemplate(
     if (result.bytesWritten !== Buffer.byteLength(file.content, "utf8")) throw new Error("phaser_template_write_incomplete");
   }
 
-  const install = await sandbox.installDependencies(projectId, { packages: [...template.dependencies] }, signal);
-  await recordCheck(onCheck, "Phaser dependencies", install.exitCode,
+  // Instalar de una en una: cada llamada queda bajo el timeout fijo por
+  // comando del sandbox y el progreso (node_modules/package-lock) persiste
+  // en el workspace si una instalacion posterior se interrumpe.
+  let installExitCode = 0;
+  for (const dependency of template.dependencies) {
+    const result = await sandbox.installDependencies(projectId, { packages: [dependency] }, signal);
+    if (result.exitCode !== 0) { installExitCode = result.exitCode; break; }
+  }
+  await recordCheck(onCheck, "Phaser dependencies", installExitCode,
     "Dependencias exactas instaladas sin lifecycle scripts.", "No se pudieron instalar las dependencias Phaser.");
 
   const tests = await sandbox.runCommand(projectId, { command: "npm", args: ["test"], cwd: "" }, signal);
@@ -247,7 +254,7 @@ async function recordCheck(
 
 function isNotFound(error: unknown): boolean {
   const code = errorCode(error);
-  return code === "not_found" || code === "sandbox_not_found" || code === "sandbox_file_not_found" || code === "sandbox_path_not_found";
+  return code === "not_found" || code === "file_not_found" || code === "path_not_found" || code === "sandbox_not_found" || code === "sandbox_file_not_found" || code === "sandbox_path_not_found";
 }
 
 function errorCode(error: unknown): string | undefined {

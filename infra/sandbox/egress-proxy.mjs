@@ -60,6 +60,10 @@ export async function resolvePublicIpv4(hostname, resolve = lookup) {
   return addresses[0].address;
 }
 
+export function registryAcceptHeader(pathname) {
+  return pathname.endsWith(".tgz") ? "application/octet-stream" : "application/vnd.npm.install-v1+json";
+}
+
 function requestPinned(hostname, pathname, address, method) {
   return new Promise((resolve, reject) => {
     const request = httpsRequest({
@@ -68,7 +72,7 @@ function requestPinned(hostname, pathname, address, method) {
       port: 443,
       path: pathname,
       method,
-      headers: { accept: "application/json, application/octet-stream;q=0.9, */*;q=0.8", "user-agent": "meta-game-sandbox-registry/1" },
+      headers: { accept: registryAcceptHeader(pathname), "user-agent": "meta-game-sandbox-registry/1" },
       lookup: (_name, options, callback) => options.all
         ? callback(null, [{ address, family: 4 }])
         : callback(null, address, 4),
@@ -124,10 +128,13 @@ export function validateRegistryRequest(path, hosts) {
   const rawPath = `/${match[2]}`;
   if (!hostname || !hosts.has(hostname) || !validPathname(rawPath)) return null;
   const tarball = /^_tarball\/([A-Za-z0-9_-]+)$/.exec(match[2] ?? "");
-  if (!tarball && (!safeMetadataPathPattern.test(rawPath.slice(1)) || !getPackageNameFromMetadataPath(rawPath))) return null;
+  // npm tambien pide los tarballs del package-lock por su ruta resuelta
+  // directa (/<pkg>/-/<file>.tgz, con scope opcional), sin pasar por _tarball.
+  const directTarball = /^\/(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*\/-\/[A-Za-z0-9._~-]+\.tgz$/i.test(rawPath);
+  if (!tarball && !directTarball && (!safeMetadataPathPattern.test(rawPath.slice(1)) || !getPackageNameFromMetadataPath(rawPath))) return null;
   const upstreamPath = tarball ? Buffer.from(tarball[1] ?? "", "base64url").toString("utf8") : rawPath;
   if (!validPathname(upstreamPath) || upstreamPath.includes("?") || upstreamPath.includes("#")) return null;
-  return { hostname, upstreamPath, tarball: Boolean(tarball) };
+  return { hostname, upstreamPath, tarball: Boolean(tarball) || directTarball };
 }
 
 export function validateRedirectLocation(location, baseHost, hosts) {

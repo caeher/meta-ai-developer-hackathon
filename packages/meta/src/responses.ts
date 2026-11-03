@@ -92,7 +92,7 @@ const PLAN_JSON_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
-export function buildPlanPayload(model: string, prompt: string, maxOutputTokens = 1_024): ProviderResponsePayload {
+export function buildPlanPayload(model: string, prompt: string, maxOutputTokens = 4_096): ProviderResponsePayload {
   return {
     model,
     input: prompt,
@@ -261,6 +261,30 @@ export function extractOutputText(response: ProviderResponse): string {
   return chunks.join("").trim();
 }
 
+function isSafeExpectedFile(value: unknown): value is string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 512) return false;
+  if (value.startsWith("/") || value.includes("\\") || value.includes("\0")) return false;
+  return value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." &&
+    ![...part].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127));
+}
+
+// The provider JSON Schema cannot express the workspace-path rule, so the
+// model occasionally returns directory or escaping entries (e.g. "assets/").
+// Those advisory entries are dropped instead of rejecting the whole plan.
+function sanitizePlanExpectedFiles(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  const steps = (raw as Record<string, unknown>).steps;
+  if (!Array.isArray(steps)) return raw;
+  return {
+    ...(raw as Record<string, unknown>),
+    steps: steps.map((step) => {
+      if (typeof step !== "object" || step === null || Array.isArray(step)) return step;
+      const files = (step as Record<string, unknown>).expectedFiles;
+      if (!Array.isArray(files)) return step;
+      return { ...(step as Record<string, unknown>), expectedFiles: files.filter(isSafeExpectedFile) };
+    }),
+  };
+}
 export function parsePlanResponse(response: ProviderResponse, requestId?: string): {
   plan: MetaPlan;
   model: string;
@@ -275,7 +299,7 @@ export function parsePlanResponse(response: ProviderResponse, requestId?: string
   } catch {
     throw new MetaApiError({ code: "invalid_response", message: "Meta returned a plan that is not valid JSON.", requestId });
   }
-  const plan = MetaPlanSchema.safeParse(raw);
+  const plan = MetaPlanSchema.safeParse(sanitizePlanExpectedFiles(raw));
   if (!plan.success) {
     throw new MetaApiError({ code: "invalid_response", message: "Meta returned a plan that does not match the plan contract.", requestId });
   }

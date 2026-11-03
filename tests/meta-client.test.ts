@@ -74,8 +74,32 @@ describe("MetaClient plan and image contracts", () => {
     expect(body.store).toBe(false);
     expect(body.text).toMatchObject({ format: { type: "json_schema", name: "game_creation_plan", strict: true } });
     expect(body).not.toHaveProperty("response_format");
+    // A detailed plan (reasoning + up to 12 structured steps) does not fit in
+    // 1_024 output tokens: Meta ends it as incomplete/max_output_tokens.
+    expect(body.max_output_tokens).toBe(4_096);
   });
 
+  it("drops directory or escaping expected files from a visible plan", async () => {
+    const valid = JSON.parse(await fixture("text-response.json")) as Record<string, unknown>;
+    const output = valid.output as Array<Record<string, unknown>>;
+    const plan = {
+      summary: "Create a compact platform game prototype.",
+      objective: "Create a playable platform scene with bounded movement.",
+      steps: [{
+        id: "scene",
+        title: "Build the main scene",
+        description: "Add the player, platforms, and camera bounds.",
+        expectedFiles: ["src/main.ts", "assets/", "/abs.ts", "../escape.ts", "src\\game.ts"],
+        verifications: ["Run the configured build script."],
+      }],
+    };
+    output[0]!.content = [{ type: "output_text", text: JSON.stringify(plan) }];
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(valid));
+
+    const result = await new MetaClient(config(), fetchMock).plan("Make a game.");
+
+    expect(result.plan.steps[0]?.expectedFiles).toEqual(["src/main.ts"]);
+  });
   it("registra uso y coste estimado solo con precios operativos configurados", async () => {
     const response = JSON.parse(await fixture("text-response.json")) as unknown;
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(response));

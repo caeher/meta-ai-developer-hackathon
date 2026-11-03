@@ -400,6 +400,33 @@ describe("sandbox rootless contract", () => {
     expect(vi.mocked(f.driver.exec).mock.calls.filter((call) => call[3][2] === "start")).toHaveLength(1);
   });
 
+  it("recupera un dev server vivo cuando el health check falla una vez", async () => {
+    const f = fixture();
+    await f.service.create(PROJECT_ID);
+    await f.service.startDevServer(PROJECT_ID);
+    // El servidor sigue vivo, pero el siguiente health check falla: el
+    // reintento debe detener el supervisor anterior antes de arrancar otro,
+    // en vez de chocar con dev_server_already_running y marcar failed.
+    let failNextHealth = true;
+    let alive = true;
+    const original = vi.mocked(f.driver.exec).getMockImplementation()!;
+    vi.mocked(f.driver.exec).mockImplementation(async (...args) => {
+      const argv = args[3];
+      if (argv[0] === "node" && argv[2] === "health" && failNextHealth) {
+        failNextHealth = false;
+        return { stdout: "", stderr: "dev_server_unhealthy", exitCode: 2, durationMs: 1 };
+      }
+      if (argv[0] === "node" && argv[2] === "stop") alive = false;
+      if (argv[0] === "node" && argv[2] === "start") {
+        if (alive) return { stdout: "", stderr: "dev_server_already_running", exitCode: 2, durationMs: 1 };
+        alive = true;
+      }
+      return original(...args);
+    });
+    await expect(f.service.startDevServer(PROJECT_ID)).resolves.toMatchObject({ status: "ready", port: 4173 });
+    await expect(f.service.inspect(PROJECT_ID)).resolves.toMatchObject({ devServer: { status: "ready", port: 4173 } });
+  });
+
   it("autentica worker, resuelve projectId sin aceptar owner y confina las operaciones", async () => {
     const f = fixture();
     const metrics = new TelemetryMetrics("sandbox-controller");

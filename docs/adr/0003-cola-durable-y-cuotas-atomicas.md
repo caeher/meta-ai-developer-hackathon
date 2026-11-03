@@ -21,6 +21,6 @@
 
 ## Límites
 
-- #16 conecta Meta, skills y herramientas del sandbox con plan previo y eventos durables. La bandera permanece apagada mientras no se validen el consentimiento visible del chat (#17), la clave Meta y el runtime Compose local.
+- #16 conecta Meta, skills y herramientas del sandbox con plan previo y eventos durables. El consentimiento visible del chat ya existe (#17); la bandera permanece apagada por defecto hasta disponer de la clave Meta del operador y validar el recorrido completo en el Compose local.
 - El fencing bloquea escrituras tardías en PostgreSQL. No vuelve idempotentes solicitudes externas cuyo proveedor no ofrezca idempotency keys; el futuro orquestador debe persistir antes de cada efecto y reconciliar resultados ambiguos.
 - La integración prueba DB/Redis locales y expiración de lease. La identidad de la aplicación se resuelve desde las sesiones propias de #29; la entrega de correo productivo sigue requiriendo un proveedor configurado.

@@ -18,3 +18,4 @@ export function validatePreviewRequest(
   host: string,
   expectedHost: string,
 ): { gamePath: string; query: string } | null;
+export function registryAcceptHeader(pathname: string): string;

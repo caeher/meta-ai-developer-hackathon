@@ -17,7 +17,7 @@ const CHECKPOINT_MAX_FILE_BYTES = 1_000_000;
 const CHECKPOINT_MAX_TOTAL_BYTES = 12 * 1024 * 1024;
 const CHECKPOINT_MAX_ARCHIVE_BYTES = 20 * 1024 * 1024;
 const CHECKPOINT_SKIP_NAMES = new Set(["node_modules", "dist", ".next", ".git", ".vite", "coverage", "test-results", "playwright-report"]);
-const BINARY_EXTENSIONS = /\.(?:png|jpe?g|webp|gif|ico|wasm|woff2?|ttf|otf|mp3|ogg|wav|mp4|webm|zip|gz|pdf)$/i;
+const BINARY_EXTENSIONS = /\.(?:png|jpe?g|webp|gif|svg|ico|wasm|woff2?|ttf|otf|mp3|ogg|wav|mp4|webm|zip|gz|pdf)$/i;
 
 export type GameCheckpoint = Readonly<{ sha256: string; sizeBytes: number; fileCount: number }>;
 type CheckpointFile = Readonly<{ path: string; content: string; bytes: number; sha256: string }>;
@@ -89,7 +89,7 @@ export async function captureGameCheckpoint(sandbox: AgentSandbox, projectId: st
         continue;
       }
       const path = directory ? `${directory}/${entry.name}` : entry.name;
-      if (isSensitiveWorkspacePath(path) || BINARY_EXTENSIONS.test(path) || entry.size > CHECKPOINT_MAX_FILE_BYTES) continue;
+      if (entry.name === "package-lock.json" || isSensitiveWorkspacePath(path) || BINARY_EXTENSIONS.test(path) || entry.size > CHECKPOINT_MAX_FILE_BYTES) continue;
       if (files.length >= CHECKPOINT_MAX_FILES) throw new Error("game_checkpoint_file_limit");
       let read: { content: string };
       try { read = await sandbox.readFile(projectId, path, signal); }

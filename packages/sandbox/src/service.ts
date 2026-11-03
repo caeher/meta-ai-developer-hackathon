@@ -390,6 +390,12 @@ export class SandboxService {
       serverLeaseExpiresAt: startingLease,
       sandboxLeaseExpiresAt: startingLease,
     })) throw new SandboxBusyError();
+    // Un health check fallido puede dejar el supervisor anterior vivo:
+    // detenerlo antes de arrancar evita dev_server_already_running.
+    await this.executeSandboxCommand(
+      projectId, ["node", "/opt/meta-game/server-manager.mjs", "stop"], "",
+      Math.min(3_000, this.environment.SANDBOX_COMMAND_TIMEOUT_MS), 1024,
+    ).catch(() => undefined);
     const launch = await this.executeSandboxCommand(
       projectId, ["node", "/opt/meta-game/server-manager.mjs", "start"], "",
       this.environment.SANDBOX_COMMAND_TIMEOUT_MS, 1024,

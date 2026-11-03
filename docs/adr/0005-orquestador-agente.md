@@ -21,4 +21,4 @@
 
 ## Límites y activación
 
-`RUNS_ENABLED=false` permanece por defecto. Para activar en el Compose local se necesitan `META_API_KEY`, modelos admitidos y controlador privado con `SANDBOX_DRIVER=rootless` validado en esa configuración. La UI todavía no presenta consentimiento ni encola runs; la preview requiere además #14/#15 con `*.localhost` y TLS local cuando haga falta. Las pruebas offline no equivalen a smoke facturable ni a aislamiento Docker real.
+`RUNS_ENABLED=false` permanece por defecto. Para activar en el Compose local se necesitan `META_API_KEY`, modelos admitidos y controlador privado con `SANDBOX_DRIVER=rootless` validado en esa configuración. La UI ya presenta el consentimiento y encola runs (#17: confirmación explícita de mayoría de edad y términos Contributor en el editor, con reintentos idempotentes). La preview requiere además #14/#15 con `*.localhost` y TLS local cuando haga falta, y su validación viva en Compose sigue pendiente (ver ADR de preview). Las pruebas offline no equivalen a smoke facturable ni a aislamiento Docker real.

@@ -116,6 +116,7 @@ const CODE_POLICY = [
 const PLAN_INSTRUCTIONS = "Convierte la solicitud y la especificación de juego validada en un plan visible y conciso. Incluye un objetivo, pasos ordenados, archivos relativos esperados y verificaciones concretas. No incluyas razonamiento privado.";
 const AGENT_PROMPT_LIMIT_BYTES = 64 * 1024;
 const MAX_CODE_OUTPUT_TOKENS = 4_096;
+const MAX_PLAN_OUTPUT_TOKENS = 4_096;
 const MAX_REPAIR_ATTEMPTS = 1;
 
 export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHandler {
@@ -221,7 +222,7 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       if (!approvedPlan) {
         const planningPrompt = `${CODE_POLICY}\n\n${PLAN_INSTRUCTIONS}\n\n${gameSpecInstructions(state.gameSpec)}\n\nSolicitud del usuario:\n${loaded.prompt}`;
         const estimatedInput = estimateTokens(planningPrompt) + 512;
-        const planOutputTokens = Math.min(1_024, options.maxTokens - usage.tokens - estimatedInput);
+        const planOutputTokens = Math.min(MAX_PLAN_OUTPUT_TOKENS, options.maxTokens - usage.tokens - estimatedInput);
         if (planOutputTokens < 16) throw new RunProcessingError("run_token_budget_exceeded", false, usage);
         const requestKey = "plan";
         await append(state, options.store, handlerContext.claim, {

@@ -50,4 +50,26 @@ describe("GameSpec y checkpoint de generación", () => {
     expect(currentContent).toBe("export const oldGame = true;");
     expect(sandbox.writeFile).toHaveBeenCalledOnce();
   });
+
+  it("omite package-lock.json y SVG al capturar para no bloquear por falsos positivos", async () => {
+    const contents: Record<string, string> = {
+      "package-lock.json": "{\"lockfileVersion\":3,\"packages\":{\"\":{\"version\":\"1.2.3-456.789.0123\"}}}",
+      "public/logo.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M10 20.5-3.25 40.75 50-60.125\"/></svg>",
+      "src/main.ts": "export const game = true;",
+    };
+    const sandbox = {
+      listFiles: vi.fn(async (_projectId: string, path: string) => path === ""
+        ? { path, files: [{ name: "package-lock.json", type: "file" as const, size: 80 }, { name: "public", type: "directory" as const, size: 0 }, { name: "src", type: "directory" as const, size: 0 }] }
+        : path === "public"
+          ? { path, files: [{ name: "logo.svg", type: "file" as const, size: 90 }] }
+          : { path, files: [{ name: "main.ts", type: "file" as const, size: 25 }] }),
+      readFile: vi.fn(async (_projectId: string, path: string) => ({ path, content: contents[path] ?? "" })),
+      writeFile: vi.fn(async () => ({ path: "", bytesWritten: 0 })),
+    } as unknown as AgentSandbox;
+
+    const snapshot = await captureGameCheckpoint(sandbox, "project", new AbortController().signal);
+    const manifest = decodeGameCheckpoint(snapshot.body);
+
+    expect(manifest.files.map(({ path }) => path)).toEqual(["src/main.ts"]);
+  });
 });

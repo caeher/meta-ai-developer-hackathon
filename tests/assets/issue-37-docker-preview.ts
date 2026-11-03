@@ -16,7 +16,7 @@ function requireSuccess(result: SandboxExecResult, code: string): SandboxExecRes
     const category = classifyFailure(details);
     const errorCode = `${code}_${category}`;
     const lines = details.split(/\r?\n/);
-    const diagnosticIndex = lines.findIndex((line) => /Error:|ERR_[A-Z_]+|failed to load config|error during build/i.test(line));
+    const diagnosticIndex = lines.findIndex((line) => /issue_37_browser_check_|Error:|ERR_[A-Z_]+|failed to load config|error during build/i.test(line));
     const diagnostic = (diagnosticIndex >= 0 ? lines.slice(diagnosticIndex, diagnosticIndex + 4).join(" | ") : "no_safe_diagnostic")
       .replace(/[^A-Za-z0-9 .,()/@:_-]/g, "").slice(0, 260);
     throw Object.assign(new Error(errorCode), { code: errorCode, diagnostic });
@@ -244,7 +244,7 @@ const assert = require("node:assert/strict");
 const { chromium } = require("/opt/meta-game/node_modules/playwright");
 let stage = "launch";
 (async () => {
-  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage", "--no-zygote", "--single-process"] });
   try {
     const context = await browser.newContext({ viewport: { width: 128, height: 96 }, serviceWorkers: "block" });
     let pageErrors = 0, phaserWarnings = 0, failedResponses = 0, externalRequests = 0;
@@ -262,8 +262,8 @@ let stage = "launch";
       const local = ["http:", "ws:"].includes(url.protocol) && url.hostname === "127.0.0.1" && url.port === "4173";
       if (!["data:", "blob:"].includes(url.protocol) && !local) externalRequests += 1;
     });
-    const response = await page.goto("http://127.0.0.1:4173/?mode=packed-spritesheet", { waitUntil: "domcontentloaded" });
     stage = "page_load";
+    const response = await page.goto("http://127.0.0.1:4173/?mode=packed-spritesheet", { waitUntil: "domcontentloaded" });
     assert.equal(response?.status(), 200);
     await page.waitForFunction(() => window.__ASSET_PREVIEW_TEST__?.().loaded === true);
     stage = "tile_physics";

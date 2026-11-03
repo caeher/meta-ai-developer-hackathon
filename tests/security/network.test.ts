@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSandboxEnvironment } from "@meta-game/config";
-import { resolvePublicIpv4, validPathname, validPublicIpv4, validatePreviewRequest, validateRedirectLocation, validateRegistryRequest } from "../../infra/sandbox/egress-proxy.mjs";
+import { registryAcceptHeader, resolvePublicIpv4, validPathname, validPublicIpv4, validatePreviewRequest, validateRedirectLocation, validateRegistryRequest } from "../../infra/sandbox/egress-proxy.mjs";
 
 describe("sandbox egress policy", () => {
   it("allows only public IPv4 upstreams and blocks private, reserved and IPv6 destinations", () => {
@@ -20,6 +20,12 @@ describe("sandbox egress policy", () => {
     expect(validateRegistryRequest(`/registry/registry.npmjs.org/_tarball/${tarballPath}`, hosts)).toMatchObject({
       hostname: "registry.npmjs.org", upstreamPath: "/phaser/-/phaser-3.90.0.tgz", tarball: true,
     });
+    // npm fetch los tarballs del package-lock por su ruta resuelta directa.
+    expect(validateRegistryRequest("/registry/registry.npmjs.org/why-is-node-running/-/why-is-node-running-2.3.0.tgz", hosts)).toEqual({
+      hostname: "registry.npmjs.org", upstreamPath: "/why-is-node-running/-/why-is-node-running-2.3.0.tgz", tarball: true,
+    });
+    expect(validateRegistryRequest("/registry/registry.npmjs.org/@types/node/-/node-24.19.2.tgz", hosts)).toMatchObject({ tarball: true });
+    expect(validateRegistryRequest("/registry/registry.npmjs.org/phaser/-/evil.exe", hosts)).toBeNull();
     expect(validateRegistryRequest("/registry/127.0.0.1/latest", hosts)).toBeNull();
     expect(validateRegistryRequest("/registry/registry.npmjs.org/%2e%2e/private", hosts)).toBeNull();
     expect(validateRegistryRequest("/registry/registry.npmjs.org/phaser?token=secret", hosts)).toBeNull();
@@ -32,6 +38,14 @@ describe("sandbox egress policy", () => {
     expect(validateRedirectLocation("https://user:secret@registry.npmjs.org/pkg.tgz", "registry.npmjs.org", hosts)).toBeNull();
     expect(validateRedirectLocation("https://registry.npmjs.org/%252e%252e/private.tgz", "registry.npmjs.org", hosts)).toBeNull();
     expect(validateRegistryRequest("/registry/registry.npmjs.org/%252e%252e/private", hosts)).toBeNull();
+  });
+
+  it("pide metadata npm abreviada para no superar el limite de respuesta", () => {
+    // El packument completo de vite/@types/node supera los 10 MB del proxy;
+    // el abreviado (install-v1) es el que npm solicita y queda bajo el limite.
+    expect(registryAcceptHeader("/vite")).toBe("application/vnd.npm.install-v1+json");
+    expect(registryAcceptHeader("/@types%2fnode")).toBe("application/vnd.npm.install-v1+json");
+    expect(registryAcceptHeader("/vite/-/vite-7.3.7.tgz")).toBe("application/octet-stream");
   });
 
   it("routes preview only to its fixed sandbox and rejects hostile hosts or traversal", () => {
