@@ -47,7 +47,8 @@ type WorkspaceVolumeMode = "user-quota" | "tmpfs";
 type HostRuntimeMode = "rootless" | "docker-desktop-security";
 
 function workspaceTmpfsOptions(spec: SandboxCreateSpec): string {
-  return `rw,nosuid,nodev,size=${spec.limits.diskMb}m,uid=${spec.uid},gid=${spec.uid},mode=0770`;
+  // Generated projects load lockfile-pinned native Node addons such as Rollup from this mount.
+  return `rw,exec,nosuid,nodev,size=${spec.limits.diskMb}m,uid=${spec.uid},gid=${spec.uid},mode=0770`;
 }
 
 function assertHostCheckUid(uid: number): number {
