@@ -19,6 +19,15 @@ import {
   ImageGenerationBriefSchema,
   GeneratedImageToolResultSchema,
   InspectAssetInputSchema,
+  MakeTransparentInputSchema,
+  MakeTransparentInputJsonSchema,
+  MakeTransparentResultSchema,
+  CreateIssuePlanInputSchema,
+  CreateIssuePlanInputJsonSchema,
+  CreateIssuePlanResultSchema,
+  RunIssueAgentsInputSchema,
+  RunIssueAgentsInputJsonSchema,
+  RunIssueAgentsResultSchema,
   InspectAssetInputJsonSchema,
   InspectAssetResultSchema,
   SandboxInstallDependenciesInputSchema,
@@ -34,6 +43,7 @@ import {
 import type { MetaToolDefinition } from "@meta-game/meta";
 import type { SandboxControllerClient } from "@meta-game/sandbox";
 import { isSensitiveWorkspacePath, redactSensitiveText, sensitiveInputReason } from "./safety";
+import { buildIssuePlanFiles, issuePlanResult } from "./issue-plan";
 
 export type AgentSandbox = Pick<
   SandboxControllerClient,
@@ -127,6 +137,27 @@ const definitions: ToolDefinition[] = [
     summary: (args) => `Definir ${Array.isArray(args.animations) ? args.animations.length : 0} animaciones desde atlas ${String(args.atlasAssetId)}`,
   },
   {
+    name: "make_transparent",
+    description: "Create a NEW transparent PNG from an exact private same-project assetId/frame. Local deterministic background removal (corner-flood, color-key or alpha-cleanup); never calls the image provider, never modifies the source, and registers the result so pack_spritesheet can pack it into a Phaser atlas.",
+    inputSchema: MakeTransparentInputSchema,
+    inputJsonSchema: MakeTransparentInputJsonSchema as unknown as Record<string, unknown>,
+    summary: (args) => `Hacer transparente el asset ${String(args.sourceAssetId)} (${String(args.mode ?? "corner-flood")})`,
+  },
+  {
+    name: "create_issue_plan",
+    description: "Write a development plan as Markdown issue files inside the workspace. kind=sprites writes docs/issues/sprites/*.md (one issue per sprite/atlas/animation with exact generate_image -> make_transparent -> inspect_asset -> pack_spritesheet -> define_animation instructions); kind=game writes docs/issues/game/*.md (one issue per code feature, consuming the sprite summary); kind=general writes docs/issues/*.md. Use sprites first, then game, each before its run_issue_agents call.",
+    inputSchema: CreateIssuePlanInputSchema,
+    inputJsonSchema: CreateIssuePlanInputJsonSchema as unknown as Record<string, unknown>,
+    summary: (args) => `Crear plan ${String(args.kind ?? "general")} en issues Markdown: ${String(args.title)} (${Array.isArray(args.issues) ? args.issues.length : 0} issues)`,
+  },
+  {
+    name: "run_issue_agents",
+    description: "Orchestrate one specialized sub-agent per issue, sequentially (single workspace writer), in dependency order. kind=sprites sub-agents can only use asset tools (generate_image, edit_sprite, make_transparent, inspect_asset, pack_spritesheet, create_tileset, create_tilemap, define_animation, read_file, list_files); kind=game sub-agents can only use code tools plus inspect_asset/read-only asset checks; kind=general keeps the full non-orchestration set. Each sub-agent implements only its issue, the issue Markdown status is updated, and progress/tool calls are streamed to the web UI. Sub-agents cannot start nested orchestration. Running kind=game requires the sprites phase to have completed when a sprite plan exists.",
+    inputSchema: RunIssueAgentsInputSchema,
+    inputJsonSchema: RunIssueAgentsInputJsonSchema as unknown as Record<string, unknown>,
+    summary: (args) => `Orquestar sub-agentes ${String(args.kind ?? "general")} para ${Array.isArray(args.issues) ? args.issues.length : 0} issue(s)`,
+  },
+  {
     name: "inspect_asset",
     description: "Read-only inspection of a private image or Phaser asset descriptor. Checks bytes, checksums, atlas frames and pivots, tileset/map bounds, and animation frame names. It never writes or fetches URLs.",
     inputSchema: InspectAssetInputSchema,
@@ -136,6 +167,15 @@ const definitions: ToolDefinition[] = [
 ];
 
 const byName = new Map(definitions.map((definition) => [definition.name, definition]));
+
+/** Tools que puede usar cada sub-agente segun la fase. Nunca incluye orquestacion anidada. */
+export const SPRITE_SUBAGENT_TOOLS = ["generate_image", "edit_sprite", "make_transparent", "inspect_asset", "pack_spritesheet", "create_tileset", "create_tilemap", "define_animation", "read_file", "list_files"] as const;
+export const GAME_SUBAGENT_TOOLS = ["read_file", "write_file", "list_files", "install_dependencies", "run_command", "start_dev_server", "read_logs", "inspect_asset"] as const;
+export function subagentToolNames(kind: "sprites" | "game" | "general"): string[] {
+  if (kind === "sprites") return [...SPRITE_SUBAGENT_TOOLS];
+  if (kind === "game") return [...GAME_SUBAGENT_TOOLS];
+  return definitions.filter((d) => d.name !== "run_issue_agents" && d.name !== "create_issue_plan").map((d) => d.name);
+}
 
 export const agentToolDefinitions: MetaToolDefinition[] = definitions.map(({ name, description, inputSchema, inputJsonSchema }) => ({
   name,
@@ -184,6 +224,9 @@ const assetResultSchemas = {
   create_tilemap: CreateTilemapResultSchema,
   pack_spritesheet: PackSpritesheetResultSchema,
   define_animation: DefineAnimationResultSchema,
+  make_transparent: MakeTransparentResultSchema,
+  create_issue_plan: CreateIssuePlanResultSchema,
+  run_issue_agents: RunIssueAgentsResultSchema,
 } as const;
 
 /** Validate asset tool output before it becomes durable or enters Meta's function_call_output replay. */
@@ -233,6 +276,15 @@ export function createAssetToolCard(callId: string, toolName: string, result: un
         assetType: "sprite", assets: [id(value.assetId, "image", value.sha256, true), id(value.sourceAssetId, "source", value.sourceSha256)],
         previewAssetId: value.assetId, frameCount: 1, verificationStatus: "needs_review",
         verificationSummary: "Bytes y procedencia validados; queda pendiente la revisión visual en el juego.",
+      });
+    }
+    case "make_transparent": {
+      const value = MakeTransparentResultSchema.parse(result);
+      return base({
+        status: "succeeded", title: "Transparencia aplicada", summary: `${value.removedPixels} p?xeles de fondo eliminados (${value.mode}); asset nuevo listo para atlas.`,
+        assetType: "sprite", assets: [id(value.assetId, "image", value.sha256, true), id(value.sourceAssetId, "source", value.sourceSha256)],
+        previewAssetId: value.assetId, frameCount: 1, verificationStatus: "needs_review",
+        verificationSummary: "Alpha y dimensiones validados; queda pendiente la revisi?n visual en el juego.",
       });
     }
     case "inspect_asset": {
@@ -294,6 +346,7 @@ export function createFailedAssetToolCard(callId: string, toolName: string, erro
   const names: Record<string, { title: string; assetType: AssetToolCard["assetType"] }> = {
     generate_image: { title: "Generar imagen", assetType: "sprite" },
     edit_sprite: { title: "Editar sprite", assetType: "sprite" },
+    make_transparent: { title: "Hacer transparente", assetType: "sprite" },
     inspect_asset: { title: "Inspeccionar asset", assetType: "inspection" },
     create_tileset: { title: "Crear tileset", assetType: "tileset" },
     create_tilemap: { title: "Crear tilemap", assetType: "tilemap" },
@@ -317,6 +370,19 @@ export async function executeAgentTool(
 ): Promise<unknown> {
   const args = call.args;
   switch (call.name) {
+    case "create_issue_plan": {
+      const input = CreateIssuePlanInputSchema.parse(args);
+      const planId = `plan-${call.callId}`.replace(/[^A-Za-z0-9._:-]/g, "-").slice(0, 80);
+      const files = buildIssuePlanFiles(input, planId);
+      for (const file of files) {
+        const written = await sandbox.writeFile(projectId, file.path, file.content, signal);
+        if (written.bytesWritten !== Buffer.byteLength(file.content, "utf8")) throw new Error("issue_plan_write_failed");
+      }
+      return issuePlanResult(input, planId);
+    }
+    case "run_issue_agents":
+      // Executed by the orchestrator, which owns Meta and the sub-agent loop.
+      throw new Error("agent_orchestration_requires_orchestrator");
     case "read_file": {
       const result = await sandbox.readFile(projectId, String(args.path), signal);
       const content = redactSensitiveText(result.content);
@@ -398,7 +464,8 @@ function sanitizeAssetResult(value: unknown): unknown {
         /^[a-f0-9]{64}$/.test(value) ||
         /^generated-[0-9a-f-]{36}$/.test(value) ||
         value === "public/assets/generated/manifest.json" ||
-        /^assets\/generated\/(?:[0-9a-f-]{36}\.png|(?:tilesets|tilemaps|atlases|animations)\/[0-9a-f-]{36}\.(?:png|json))$/.test(value)) {
+        /^assets\/generated\/(?:[0-9a-f-]{36}\.png|(?:tilesets|tilemaps|atlases|animations)\/[0-9a-f-]{36}\.(?:png|json))$/.test(value) ||
+        /^docs\/issues\/(?:sprites\/|game\/)?(?:INDEX\.md|\d{2}-[a-z][a-z0-9-]{0,47}\.md)$/.test(value) || /^plan-[A-Za-z0-9._:-]{1,74}$/.test(value)) {
       return value;
     }
     return redactSensitiveText(value);

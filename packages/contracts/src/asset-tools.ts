@@ -802,7 +802,7 @@ export type InspectAssetResult = z.infer<typeof InspectAssetResultSchema>;
 
 export const AssetToolCardSchema = z.object({
   callId: z.string().min(1).max(64).regex(/^[A-Za-z0-9._:-]+$/),
-  toolName: z.enum(["generate_image", "edit_sprite", "inspect_asset", "create_tileset", "create_tilemap", "pack_spritesheet", "define_animation"]),
+  toolName: z.enum(["generate_image", "edit_sprite", "make_transparent", "inspect_asset", "create_tileset", "create_tilemap", "pack_spritesheet", "define_animation"]),
   status: z.enum(["succeeded", "failed"]),
   title: z.string().min(1).max(120),
   summary: z.string().min(1).max(240),

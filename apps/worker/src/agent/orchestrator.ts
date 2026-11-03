@@ -10,6 +10,12 @@ import {
   type MetaPlanResult,
   type MetaUsage,
   type GameSpec,
+  CreateIssuePlanResultSchema,
+  RunIssueAgentsInputSchema,
+  phaseForIssueKind,
+  type AgenticPhase,
+  type IssuePlanKind,
+  type RunIssueAgentsResult,
 } from "@meta-game/contracts";
 import { MetaApiError, type MetaClient } from "@meta-game/meta";
 import { OwnedResourceNotFoundError, UsageLimitExceededError, type RunUsage, type RunWorkerClaim, type VerifiedIdentityContext } from "@meta-game/db";
@@ -23,7 +29,7 @@ import {
   PHASER_TEMPLATE_ID,
   startPhaserTemplatePreview,
 } from "./phaser-template";
-import { agentToolDefinitions as AGENT_TOOL_DEFINITIONS } from "./tools";
+import { agentToolDefinitions as AGENT_TOOL_DEFINITIONS, subagentToolNames } from "./tools";
 import {
   compactToolResult,
   executeAgentTool,
@@ -45,6 +51,9 @@ import { TilemapToolError } from "../assets/create-tilemap";
 import type { PackSpritesheetToolContext } from "../assets/pack-spritesheet";
 import { SpritesheetToolError } from "../assets/pack-spritesheet";
 import type { DefineAnimationToolContext } from "../assets/define-animation";
+import type { MakeTransparentToolContext } from "../assets/make-transparent";
+import { MakeTransparentToolError } from "../assets/make-transparent";
+import { updateIssueFileStatus, issueFilePath } from "./issue-plan";
 import { DefineAnimationToolError } from "../assets/define-animation";
 import { imageResponseTokenUsage } from "../assets/image-generator";
 import { ImagePipelineError } from "../assets/image-pipeline";
@@ -76,6 +85,7 @@ export interface AgentOrchestratorOptions {
   tilemapCreator?: (args: Record<string, unknown>, context: CreateTilemapToolContext) => Promise<unknown>;
   spritesheetPacker?: (args: Record<string, unknown>, context: PackSpritesheetToolContext) => Promise<unknown>;
   animationDefiner?: (args: Record<string, unknown>, context: DefineAnimationToolContext) => Promise<unknown>;
+  transparencyMaker?: (args: Record<string, unknown>, context: MakeTransparentToolContext) => Promise<unknown>;
   versions?: {
     captureVerifiedRun(input: {
       identity: VerifiedIdentityContext;
@@ -97,6 +107,10 @@ type RunState = {
   checkpoint?: GameCheckpoint;
   checkpointAvailable: boolean;
   gameSpec?: GameSpec;
+  inSubagent?: boolean;
+  subagentIssueId?: string;
+  subagentKind?: IssuePlanKind;
+  inVerification?: boolean;
 };
 export interface AgentCheckpointStorage {
   write(identity: { ownerUserId: string; projectId: string; runId: string }, body: Uint8Array): Promise<Omit<GameCheckpoint, "fileCount">>;
@@ -196,13 +210,25 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       }
 
       if (state.checkpointAvailable) await restoreCurrentCheckpoint(options, state, handlerContext.claim, run.projectId);
+      let priorGameSpec: unknown;
       if (!state.gameSpec) {
-        const priorSpec = loaded.priorGameSpec ?? await inspectPriorGameSpec(options.sandbox, run.projectId, signal);
-        state.gameSpec = createGameSpec(loaded.prompt, priorSpec);
+        priorGameSpec = loaded.priorGameSpec ?? await inspectPriorGameSpec(options.sandbox, run.projectId, signal);
+        state.gameSpec = createGameSpec(loaded.prompt, priorGameSpec);
         await append(state, options.store, handlerContext.claim, {
           type: "agent.game_spec",
           payload: { spec: state.gameSpec },
         });
+      }
+      // Fase inventory: el orquestador compara lo pedido con lo que ya tiene el proyecto antes de planificar.
+      if (!state.events.some((e) => e.type === "agent.phase" && e.payload.phase === "inventory")) {
+        const spec = state.gameSpec as unknown as Record<string, unknown>;
+        const inventorySummary = priorGameSpec
+          ? `Inventario: ya existia un GameSpec previo; se compara la peticion con ese estado (genero ${String(spec.genre ?? "sin definir")}) y solo se planifica el delta.`
+          : `Inventario: sin GameSpec previo recuperable; se parte de la plantilla Phaser y de la peticion del cliente.`;
+        await appendBatch(state, options.store, handlerContext.claim, [
+          { type: "agent.phase", payload: { phase: "inventory", status: "started", summary: "Comparando la peticion con el estado actual del proyecto." } },
+          { type: "agent.phase", payload: { phase: "inventory", status: "completed", summary: inventorySummary } },
+        ]);
       }
 
       const selection = await options.skills.routeForRun({
@@ -311,8 +337,10 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
         finalSummary = result.summary;
 
         await handlerContext.markVerifying();
+        await append(state, options.store, handlerContext.claim, { type: "agent.phase", payload: { phase: "verification", status: "started", summary: "Verificando build, tests e interaccion del juego generado." } }).catch(() => undefined);
         const verification = await verifyProject(options, state, handlerContext.claim, run.projectId, state.gameSpec!, repairAttempts + 1);
         if (verification.status === "passed") {
+          await append(state, options.store, handlerContext.claim, { type: "agent.phase", payload: { phase: "verification", status: "completed", summary: "Verificacion superada; preview lista." } }).catch(() => undefined);
           if (options.versions) {
             const checks: { check: string; status: "passed" | "failed"; summary: string }[] = [];
             for (const event of state.events) {
@@ -474,6 +502,17 @@ async function runCodeUntilFinal(input: {
   }
 }
 
+const SPRITE_TOOL_NAMES = new Set(["generate_image", "edit_sprite", "make_transparent", "inspect_asset", "pack_spritesheet", "create_tileset", "create_tilemap", "define_animation"]);
+export function phaseForToolCall(call: { name: string; args: Record<string, unknown> }, state: RunState): AgenticPhase {
+  if (state.inVerification) return "verification";
+  if (state.subagentIssueId) return phaseForIssueKind(state.subagentKind ?? "general", true);
+  const kindArg = call.args.kind === "sprites" || call.args.kind === "game" || call.args.kind === "general" ? call.args.kind : "general";
+  if (call.name === "create_issue_plan") return phaseForIssueKind(kindArg, false);
+  if (call.name === "run_issue_agents") return phaseForIssueKind(kindArg, true);
+  if (SPRITE_TOOL_NAMES.has(call.name)) return "sprites";
+  return "code";
+}
+
 async function executeCachedTool(
   options: AgentOrchestratorOptions,
   state: RunState,
@@ -511,13 +550,15 @@ async function executeCachedTool(
   }
   const started = state.events.some((event) => event.type === "agent.tool_started" && stringPayload(event, "callId") === call.callId);
   if (started) throw new RunProcessingError("agent_tool_result_ambiguous", false, state.usage);
+  const toolPhase = phaseForToolCall(call, state);
+  const toolIssueId = state.subagentIssueId;
   if (countStep) {
     if (state.stepCount >= options.maxSteps) throw new RunProcessingError("run_step_limit_exceeded", false, state.usage);
     state.stepCount += 1;
   }
   await append(state, options.store, claim, {
     type: "agent.tool_started",
-    payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash },
+    payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, phase: toolPhase, ...(toolIssueId ? { issueId: toolIssueId } : {}) },
   });
   let result: unknown;
   try {
@@ -589,6 +630,12 @@ async function executeCachedTool(
     } else if (call.name === "define_animation") {
       if (!options.animationDefiner) throw new RunProcessingError("animation_definition_unavailable", false, state.usage);
       result = await options.animationDefiner(call.args, { claim, callId: call.callId, projectId, signal: state.signal });
+    } else if (call.name === "make_transparent") {
+      if (!options.transparencyMaker) throw new RunProcessingError("transparency_unavailable", false, state.usage);
+      result = await options.transparencyMaker(call.args, { claim, callId: call.callId, projectId, signal: state.signal });
+    } else if (call.name === "run_issue_agents") {
+      if (state.inSubagent) throw new RunProcessingError("agent_nested_orchestration_not_allowed", false, state.usage);
+      result = await runIssueAgents(options, state, claim, projectId, call);
     } else if (call.name === "inspect_asset") {
       if (!options.assetInspector) throw new RunProcessingError("asset_inspection_unavailable", false, state.usage);
       result = await options.assetInspector(call.args, { claim, projectId, signal: state.signal });
@@ -600,7 +647,7 @@ async function executeCachedTool(
     const assetCard = createFailedAssetToolCard(call.callId, call.name, failure.code);
     await append(state, options.store, claim, {
       type: "agent.tool_failed",
-      payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, errorCode: failure.code, ...(assetCard ? { assetCard } : {}) },
+      payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, errorCode: failure.code, phase: toolPhase, ...(toolIssueId ? { issueId: toolIssueId } : {}), ...(assetCard ? { assetCard } : {}) },
     });
     throw failure;
   }
@@ -611,20 +658,29 @@ async function executeCachedTool(
     const assetCard = createFailedAssetToolCard(call.callId, call.name, failure.code);
     await append(state, options.store, claim, {
       type: "agent.tool_failed",
-      payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, errorCode: failure.code, ...(assetCard ? { assetCard } : {}) },
+      payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, errorCode: failure.code, phase: toolPhase, ...(toolIssueId ? { issueId: toolIssueId } : {}), ...(assetCard ? { assetCard } : {}) },
     });
     throw failure;
   }
   const assetCard = createAssetToolCard(call.callId, call.name, compact.value);
+  const issuePlanEvent: AgentRunEvent[] = [];
+  if (call.name === "create_issue_plan") {
+    const parsedPlan = CreateIssuePlanResultSchema.safeParse(compact.value);
+    if (!parsedPlan.success) throw new RunProcessingError("agent_invalid_tool_result", false, state.usage);
+    const planKind = parsedPlan.data.kind ?? "general";
+    issuePlanEvent.push({ type: "agent.issue_plan", payload: { planId: parsedPlan.data.planId, title: parsedPlan.data.title, kind: planKind, issues: parsedPlan.data.issues } });
+    issuePlanEvent.push({ type: "agent.phase", payload: { phase: phaseForIssueKind(planKind, false), status: "completed", summary: planKind === "sprites" ? `Plan de sprites creado en ${parsedPlan.data.indexPath} (${parsedPlan.data.issues.length} issues Markdown).` : planKind === "game" ? `Plan de juego creado en ${parsedPlan.data.indexPath} (${parsedPlan.data.issues.length} issues Markdown) a partir del resumen de sprites.` : `Plan creado en ${parsedPlan.data.indexPath} (${parsedPlan.data.issues.length} issues Markdown).` } });
+  }
   const completedEvents: AgentRunEvent[] = [
+    ...issuePlanEvent,
     {
       type: "agent.tool_completed",
-      payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, result: compact.json },
+      payload: { callId: call.callId, toolName: call.name, argsHash: call.argsHash, result: compact.json, phase: toolPhase, ...(toolIssueId ? { issueId: toolIssueId } : {}) },
     },
     ...(assetCard ? [{ type: "agent.asset_result" as const, payload: { card: assetCard } }] : []),
     {
       type: "agent.action",
-      payload: { callId: call.callId, toolName: call.name, summary: call.summary || call.name },
+      payload: { callId: call.callId, toolName: call.name, summary: call.summary || call.name, phase: toolPhase, ...(toolIssueId ? { issueId: toolIssueId } : {}) },
     },
   ];
   await appendBatch(state, options.store, claim, completedEvents);
@@ -634,12 +690,13 @@ async function executeCachedTool(
 function mapAgentToolFailure(toolName: string, error: unknown, state: RunState): RunProcessingError {
   if (state.signal.aborted) return new RunProcessingError("tool_cancelled", false, state.usage);
   if (error instanceof RunProcessingError) return error;
-  if (["inspect_asset", "edit_sprite", "create_tileset", "create_tilemap", "pack_spritesheet", "define_animation"].includes(toolName) &&
+  if (["inspect_asset", "edit_sprite", "make_transparent", "create_tileset", "create_tilemap", "pack_spritesheet", "define_animation"].includes(toolName) &&
       error instanceof OwnedResourceNotFoundError) return new RunProcessingError("asset_not_found", false, state.usage);
   if (toolName === "create_tileset" && error instanceof TilesetToolError) return new RunProcessingError(error.code, false, state.usage);
   if (toolName === "create_tilemap" && error instanceof TilemapToolError) return new RunProcessingError(error.code, false, state.usage);
   if (toolName === "pack_spritesheet" && error instanceof SpritesheetToolError) return new RunProcessingError(error.code, false, state.usage);
   if (toolName === "define_animation" && error instanceof DefineAnimationToolError) return new RunProcessingError(error.code, false, state.usage);
+  if (toolName === "make_transparent" && error instanceof MakeTransparentToolError) return new RunProcessingError(error.code, false, state.usage);
   if ((toolName === "generate_image" || toolName === "edit_sprite") && error instanceof ImagePipelineError) return new RunProcessingError(error.code, false, state.usage);
   if ((toolName === "generate_image" || toolName === "edit_sprite") && error instanceof UsageLimitExceededError) {
     if (error.limit === "images") return new RunProcessingError("daily_image_limit_exceeded", false, state.usage);
@@ -655,6 +712,151 @@ function mapAgentToolFailure(toolName: string, error: unknown, state: RunState):
   return new RunProcessingError("sandbox_tool_failed", false, state.usage);
 }
 
+
+const SUBAGENT_MAX_ROUNDS = 8;
+
+export function orderIssuesByDependency<T extends { issueId: string; dependsOn: readonly string[] }>(issues: readonly T[]): T[] {
+  const ordered: T[] = []; const done = new Set<string>(); const pending = [...issues];
+  while (pending.length) {
+    const index = pending.findIndex((issue) => issue.dependsOn.every((dep) => done.has(dep)));
+    if (index < 0) throw new Error("agent_issue_dependency_cycle");
+    const [next] = pending.splice(index, 1); ordered.push(next!); done.add(next!.issueId);
+  }
+  return ordered;
+}
+
+async function setIssueStatus(options: AgentOrchestratorOptions, state: RunState, projectId: string, issueId: string, status: "running" | "completed" | "failed", summary: string, kind: IssuePlanKind = "general"): Promise<void> {
+  const candidates = [issueFilePath(kind, issueId), `docs/issues/${issueId}.md`, issueFilePath("sprites", issueId), issueFilePath("game", issueId)];
+  for (const path of [...new Set(candidates)]) {
+    try {
+      const file = await options.sandbox.readFile(projectId, path, state.signal);
+      const updated = updateIssueFileStatus(file.content, status, summary);
+      if (updated !== file.content) await options.sandbox.writeFile(projectId, path, updated, state.signal);
+      return;
+    } catch { /* Try the next candidate path; status events remain authoritative. */ }
+  }
+}
+
+export function subagentPrompt(kind: IssuePlanKind, issue: { issueId: string; title: string; instructions: string }): string {
+  if (kind === "sprites") {
+    return `Eres un sub-agente DE SPRITES. Implementa SOLO la issue ${issue.issueId} (${issue.title}) de docs/issues/sprites/${issue.issueId}.md. Instrucciones: ${issue.instructions} Usa SOLO tools de assets: generate_image -> make_transparent (si hay fondo que quitar) -> inspect_asset -> pack_spritesheet (atlas Phaser) -> define_animation; create_tileset/create_tilemap si la issue lo pide. Usa unicamente assetIds devueltos por las tools, nunca inventes IDs ni rutas. No escribas codigo del juego. Al terminar resume en una frase con los assetId/atlasId/frameNames producidos.`;
+  }
+  if (kind === "game") {
+    return `Eres un sub-agente DE CODIGO. Implementa SOLO la issue ${issue.issueId} (${issue.title}) de docs/issues/game/${issue.issueId}.md, consumiendo el resumen de sprites previo (assetId/atlasId/frameNames de las issues de sprites). Instrucciones: ${issue.instructions} Usa SOLO tools de codigo y lectura/inspeccion de assets; no generes imagenes nuevas. No trabajes en otras issues ni orquestes agentes. Verifica con run_command/start_dev_server si aplica y resume en una frase los archivos cambiados.`;
+  }
+  return `Eres un sub-agente. Implementa SOLO la issue ${issue.issueId} (${issue.title}) del plan en docs/issues/${issue.issueId}.md. Instrucciones: ${issue.instructions} Usa solo las herramientas tipadas, no orquestes otros agentes y no trabajes en otras issues. Cuando termines, resume en una frase lo hecho.`;
+}
+
+async function runIssueAgents(
+  options: AgentOrchestratorOptions,
+  state: RunState,
+  claim: RunWorkerClaim,
+  projectId: string,
+  call: PreparedAgentToolCall,
+): Promise<RunIssueAgentsResult> {
+  const parsed = RunIssueAgentsInputSchema.safeParse(call.args);
+  if (!parsed.success) throw new RunProcessingError("agent_invalid_tool_arguments", false, state.usage);
+  const kind: IssuePlanKind = parsed.data.kind ?? "general";
+  const phase = phaseForIssueKind(kind, true);
+  // Orden obligatorio del flujo: primero plan de sprites, despues sprites, recien entonces codigo.
+  if (kind === "sprites" && !state.events.some((e) => e.type === "agent.issue_plan" && e.payload.kind === "sprites")) {
+    throw new RunProcessingError("agent_sprite_plan_required", false, state.usage);
+  }
+  if (kind === "game" && state.events.some((e) => e.type === "agent.issue_plan" && e.payload.kind === "sprites") &&
+      !state.events.some((e) => e.type === "agent.subagent_completed" && e.payload.kind === "sprites" && e.payload.status === "succeeded")) {
+    throw new RunProcessingError("agent_sprite_phase_incomplete", false, state.usage);
+  }
+  const allowedTools = new Set(subagentToolNames(kind));
+  const toolsForSubagent = AGENT_TOOL_DEFINITIONS.filter((tool) => allowedTools.has(tool.name));
+  const issues = orderIssuesByDependency(parsed.data.issues.map((i) => ({ ...i, dependsOn: [...i.dependsOn] })));
+  await append(state, options.store, claim, { type: "agent.phase", payload: { phase, status: "started", summary: kind === "sprites" ? `Ejecutando ${issues.length} sub-agente(s) de sprites con tools de assets.` : kind === "game" ? `Ejecutando ${issues.length} sub-agente(s) de codigo a partir del resumen de sprites.` : `Ejecutando ${issues.length} sub-agente(s) por issue.` } });
+  const results: RunIssueAgentsResult["results"] = [];
+  const failed = new Set<string>();
+  for (const issue of issues) {
+    checkSignal(state.signal, state.userSignal, state.usage);
+    if (issue.dependsOn.some((dep) => failed.has(dep))) {
+      const summary = "Sub-agente omitido: una dependencia fall?.";
+      failed.add(issue.issueId);
+      await append(state, options.store, claim, { type: "agent.subagent_completed", payload: { issueId: issue.issueId, title: issue.title, status: "failed", summary, kind, phase } });
+      await setIssueStatus(options, state, projectId, issue.issueId, "failed", summary, kind);
+      results.push({ issueId: issue.issueId, title: issue.title, status: "failed", summary, toolCalls: 0 });
+      continue;
+    }
+    await append(state, options.store, claim, { type: "agent.subagent_started", payload: { issueId: issue.issueId, title: issue.title, kind, phase } });
+    await setIssueStatus(options, state, projectId, issue.issueId, "running", "Sub-agente en curso.", kind);
+    let toolCalls = 0; let summary = "";
+    try {
+      let replay: MetaConversationItem[] = [
+        { kind: "message", role: "developer", text: CODE_POLICY },
+        { kind: "message", role: "user", text: subagentPrompt(kind, issue) },
+      ];
+      state.inSubagent = true;
+      state.subagentIssueId = issue.issueId;
+      state.subagentKind = kind;
+      try {
+        for (let round = 1; round <= SUBAGENT_MAX_ROUNDS; round++) {
+          const requestKey = `sub-${issue.issueId}-${round}`;
+          await append(state, options.store, claim, { type: "agent.meta_request_started", payload: { kind: "code", requestKey, round } });
+          const calls: Extract<MetaCodeEvent, { type: "tool_call" }>[] = [];
+          let completionEvent: Extract<MetaCodeEvent, { type: "completed" }> | undefined;
+          try {
+            for await (const event of options.meta.streamCode({ prompt: subagentPrompt(kind, issue), context: replay, tools: toolsForSubagent, parallelToolCalls: false }, { signal: state.signal, maxOutputTokens: MAX_CODE_OUTPUT_TOKENS })) {
+              if (event.type === "tool_call") calls.push(event);
+              else if (event.type === "completed") completionEvent = event;
+            }
+          } catch (error) { throw providerFailure(error, state.usage, state.signal, state.userSignal); }
+          if (!completionEvent) throw new RunProcessingError("meta_incomplete_response", false, state.usage);
+          const subUsage = requiredUsage(completionEvent.usage, state.usage);
+          state.usage = addUsage(state.usage, subUsage);
+          await append(state, options.store, claim, {
+            type: "agent.meta_response_completed",
+            payload: { kind: "code", requestKey, responseId: completionEvent.responseId, ...(completionEvent.requestId ? { requestId: completionEvent.requestId } : {}), model: completionEvent.model, usage: { tokens: subUsage.totalTokens, images: 0 } },
+          });
+          replay = completionEvent.replay;
+          if (state.usage.tokens > options.maxTokens) throw new RunProcessingError("run_token_budget_exceeded", false, state.usage);
+          if (!calls.length) {
+            const messages = completionEvent.replay.filter((item) => item.kind === "message" && item.role === "assistant");
+            const last = messages.at(-1);
+            summary = (last?.kind === "message" ? redactSensitiveText(last.text) : "").slice(0, 600) || `Issue ${issue.issueId} completada por el sub-agente.`;
+            break;
+          }
+          const prepared = prepareAgentToolCalls(calls).map((preparedCall) => ({ ...preparedCall, callId: `sub-${issue.issueId}-${preparedCall.callId}`.slice(0, 64) }));
+          for (const subCall of prepared) {
+            const output = await executeCachedTool(options, state, claim, projectId, subCall, true);
+            toolCalls += 1;
+            replay = [...replay, makeToolResult(subCall.callId, output)];
+          }
+          if (round === SUBAGENT_MAX_ROUNDS) throw new RunProcessingError("subagent_round_limit_exceeded", false, state.usage);
+        }
+      } finally { state.inSubagent = false; state.subagentIssueId = undefined; state.subagentKind = undefined; }
+      await append(state, options.store, claim, { type: "agent.subagent_completed", payload: { issueId: issue.issueId, title: issue.title, status: "succeeded", summary, kind, phase } });
+      await setIssueStatus(options, state, projectId, issue.issueId, "completed", summary, kind);
+      results.push({ issueId: issue.issueId, title: issue.title, status: "succeeded", summary, toolCalls });
+    } catch (error) {
+      state.inSubagent = false; state.subagentIssueId = undefined; state.subagentKind = undefined;
+      const code = error instanceof RunProcessingError ? error.code : "subagent_failed";
+      // Cancellation / budget exhaustion must abort the whole run, not be swallowed per-issue.
+      if (["run_cancelled", "run_time_limit_exceeded", "run_token_budget_exceeded", "run_step_limit_exceeded"].includes(code)) throw error;
+      const summary = `El sub-agente fall? (${code}).`;
+      failed.add(issue.issueId);
+      await append(state, options.store, claim, { type: "agent.subagent_completed", payload: { issueId: issue.issueId, title: issue.title, status: "failed", summary, kind, phase } }).catch(() => undefined);
+      await setIssueStatus(options, state, projectId, issue.issueId, "failed", summary, kind);
+      results.push({ issueId: issue.issueId, title: issue.title, status: "failed", summary, toolCalls });
+    }
+  }
+  const succeededCount = results.filter((r) => r.status === "succeeded").length;
+  await append(state, options.store, claim, {
+    type: "agent.phase",
+    payload: {
+      phase, status: succeededCount === results.length ? "completed" : "failed",
+      summary: kind === "sprites"
+        ? `Resumen de sprites: ${succeededCount}/${results.length} issues completadas. ${results.map((r) => `${r.issueId}: ${r.summary}`).join(" ").slice(0, 420)}`
+        : `Fase ${phase}: ${succeededCount}/${results.length} issues completadas. ${results.map((r) => `${r.issueId}: ${r.summary}`).join(" ").slice(0, 420)}`,
+    },
+  }).catch(() => undefined);
+  return { kind, results };
+}
+
 async function verifyProject(
   options: AgentOrchestratorOptions,
   state: RunState,
@@ -667,7 +869,9 @@ async function verifyProject(
     const call = internalCall(`agent-verify-${name}-${pass}-${hashValue(args).slice(0, 8)}`, name, args, summary);
     return executeCachedTool(options, state, claim, projectId, call, true);
   };
-  return verifyGame({
+  state.inVerification = true;
+  try {
+  return await verifyGame({
     spec: gameSpec,
     async readManifest() {
       const result = await runTool("read_file", { path: "package.json" }, "Leer el manifiesto para elegir verificaciones") as { content?: unknown };
@@ -697,6 +901,7 @@ async function verifyProject(
       });
     },
   });
+  } finally { state.inVerification = false; }
 }
 
 async function createGameCheckpoint(
@@ -947,6 +1152,13 @@ function buildCodePrompt(requestText: string, plan: MetaPlan, gameSpec: GameSpec
     `User request:\n${requestText}`,
     `Approved plan:\n${JSON.stringify(plan)}`,
     `Validated game specification:\n${JSON.stringify(gameSpec)}`,
+    "FLUJO AGENTICO OBLIGATORIO (en este orden, sin saltar fases):",
+    "1) INVENTARIO: ya compare tu peticion con el GameSpec/workspace previo (fase inventory); si necesitas detalle usa list_files/read_file sobre GameSpec y public/assets/generated/manifest.json para saber que sprites ya existen y reutilizarlos.",
+    "2) PLAN DE SPRITES: actua como orquestador y llama create_issue_plan con kind='sprites' y un prompt/issue detallado por cada sprite, fondo, tileset o animacion necesaria: objetivo, prompt exacto de generate_image (estilo/vista/paleta/fondo), tamano/frames, transparencia, atlas y animaciones esperadas. Si no hace falta ningun sprite nuevo, crea una unica issue de sprites que lo diga y mande reutilizar los existentes.",
+    "3) SPRITES: llama run_issue_agents con kind='sprites' y las issues recien creadas (issueId/titulo/instrucciones con el detalle anterior). Esos sub-agentes especializados solo tienen tools de assets (generate_image, make_transparent, inspect_asset, pack_spritesheet, define_animation, create_tileset, create_tilemap) y deben devolver assetId/atlasId/frameNames. No escribas codigo del juego en esta fase.",
+    "4) RESUMEN DE SPRITES: lee el resultado de run_issue_agents kind='sprites' (assetIds, atlas, frames, animaciones) y usalo literalmente en la siguiente fase; nunca inventes IDs.",
+    "5) PLAN DE JUEGO: llama create_issue_plan con kind='game' detallando como implementar el juego consumiendo ese resumen de sprites (archivos, escenas Phaser 3.90, fisica, controles, HUD, verificaciones).",
+    "6) CODIGO: llama run_issue_agents con kind='game' y esas issues; los sub-agentes de codigo implementan cada issue con tools de codigo y verifican. Solo si el trabajo es trivial y de un unico archivo puedes escribirlo tu directamente despues de las fases 2-5, dejando constancia en el resumen.",
     "For asset work, use only the explicit assetId values returned by tools; never guess an ID or select a latest asset. Keep dependent calls sequential: generate/edit before inspection, inspect before packing or tileset creation, and use the returned atlas/tileset ID for animation or tilemap creation. Tool arguments cannot contain URLs, workspace paths outside their schema, shell commands, or external destinations.",
     "When code is ready, run applicable build or test checks. Never claim a check passed without its tool result.",
     repairInstruction ? `Repair request: ${repairInstruction}` : "",

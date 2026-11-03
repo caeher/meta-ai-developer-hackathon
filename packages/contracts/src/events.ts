@@ -2,6 +2,7 @@ import { z } from "zod";
 import { MetaPlanSchema } from "./meta";
 import { GameSpecSchema } from "./game-spec";
 import { AssetToolCardSchema } from "./asset-tools";
+import { AgentIssueSchema, AgenticPhaseSchema, IssuePlanKindSchema } from "./agent-orchestration";
 
 const callId = z.string().min(1).max(64).regex(/^[A-Za-z0-9._:-]+$/);
 const safeHash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -59,11 +60,11 @@ export const AgentRunEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   z.object({
     type: z.literal("agent.tool_started"),
-    payload: z.object({ callId, toolName: z.string().min(1).max(64), argsHash: safeHash }).strict(),
+    payload: z.object({ callId, toolName: z.string().min(1).max(64), argsHash: safeHash, phase: AgenticPhaseSchema.optional(), issueId: z.string().min(1).max(64).optional() }).strict(),
   }).strict(),
   z.object({
     type: z.literal("agent.tool_completed"),
-    payload: z.object({ callId, toolName: z.string().min(1).max(64), argsHash: safeHash, result: z.string().max(65_536) }).strict(),
+    payload: z.object({ callId, toolName: z.string().min(1).max(64), argsHash: safeHash, result: z.string().max(65_536), phase: AgenticPhaseSchema.optional(), issueId: z.string().min(1).max(64).optional() }).strict(),
   }).strict(),
   z.object({
     type: z.literal("agent.tool_failed"),
@@ -72,6 +73,8 @@ export const AgentRunEventSchema = z.discriminatedUnion("type", [
       toolName: z.string().min(1).max(64),
       argsHash: safeHash,
       errorCode: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+      phase: AgenticPhaseSchema.optional(),
+      issueId: z.string().min(1).max(64).optional(),
       assetCard: AssetToolCardSchema.optional(),
     }).strict(),
   }).strict(),
@@ -81,7 +84,7 @@ export const AgentRunEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   z.object({
     type: z.literal("agent.action"),
-    payload: z.object({ callId, toolName: z.string().min(1).max(64), summary: z.string().min(1).max(240) }).strict(),
+    payload: z.object({ callId, toolName: z.string().min(1).max(64), summary: z.string().min(1).max(240), phase: AgenticPhaseSchema.optional(), issueId: z.string().min(1).max(64).optional() }).strict(),
   }).strict(),
   z.object({
     type: z.literal("agent.verification"),
@@ -95,6 +98,22 @@ export const AgentRunEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("agent.input_rejected"),
     payload: z.object({ reason: z.enum(["sensitive_content", "missing_message"]) }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent.issue_plan"),
+    payload: z.object({ planId: z.string().min(1).max(80), title: z.string().min(1).max(120), kind: IssuePlanKindSchema.default("general"), issues: z.array(AgentIssueSchema).min(1).max(12) }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent.phase"),
+    payload: z.object({ phase: AgenticPhaseSchema, status: z.enum(["started", "completed", "failed", "skipped"]), summary: z.string().min(1).max(600) }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent.subagent_started"),
+    payload: z.object({ issueId: z.string().min(1).max(64), title: z.string().min(1).max(160), kind: IssuePlanKindSchema.default("general"), phase: AgenticPhaseSchema.optional() }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent.subagent_completed"),
+    payload: z.object({ issueId: z.string().min(1).max(64), title: z.string().min(1).max(160), status: z.enum(["succeeded", "failed"]), summary: z.string().min(1).max(600), kind: IssuePlanKindSchema.default("general"), phase: AgenticPhaseSchema.optional() }).strict(),
   }).strict(),
   z.object({
     type: z.literal("agent.completed"),
@@ -133,14 +152,17 @@ export const RunStreamEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   runStreamBase.extend({
     type: z.literal("step.started"),
-    payload: z.object({ stepId: z.string().min(1).max(64), title: z.string().min(1).max(240) }).strict(),
+    payload: z.object({ stepId: z.string().min(1).max(80), title: z.string().min(1).max(240), toolName: z.string().min(1).max(64).optional(), phase: AgenticPhaseSchema.optional(), issueId: z.string().min(1).max(64).optional() }).strict(),
   }).strict(),
   runStreamBase.extend({
     type: z.literal("step.completed"),
     payload: z.object({
-      stepId: z.string().min(1).max(64),
+      stepId: z.string().min(1).max(80),
       title: z.string().min(1).max(240),
       status: z.enum(["succeeded", "failed", "skipped"]),
+      toolName: z.string().min(1).max(64).optional(),
+      phase: AgenticPhaseSchema.optional(),
+      issueId: z.string().min(1).max(64).optional(),
     }).strict(),
   }).strict(),
   runStreamBase.extend({
@@ -148,6 +170,22 @@ export const RunStreamEventSchema = z.discriminatedUnion("type", [
     payload: z.object({ path: z.string().min(1).max(256), bytesWritten: z.number().int().nonnegative().optional() }).strict(),
   }).strict(),
   runStreamBase.extend({ type: z.literal("asset.card"), payload: AssetToolCardSchema }).strict(),
+  runStreamBase.extend({
+    type: z.literal("issue.plan"),
+    payload: z.object({ planId: z.string().min(1).max(80), title: z.string().min(1).max(120), kind: IssuePlanKindSchema.default("general"), issues: z.array(AgentIssueSchema).min(1).max(12) }).strict(),
+  }).strict(),
+  runStreamBase.extend({
+    type: z.literal("subagent.updated"),
+    payload: z.object({ issueId: z.string().min(1).max(64), title: z.string().min(1).max(160), status: z.enum(["pending", "running", "succeeded", "failed"]), kind: IssuePlanKindSchema.default("general"), phase: AgenticPhaseSchema.optional(), summary: z.string().min(1).max(600).optional() }).strict(),
+  }).strict(),
+  runStreamBase.extend({
+    type: z.literal("phase.updated"),
+    payload: z.object({ phase: AgenticPhaseSchema, status: z.enum(["pending", "running", "completed", "failed", "skipped"]), summary: z.string().min(1).max(600).optional() }).strict(),
+  }).strict(),
+  runStreamBase.extend({
+    type: z.literal("tool.updated"),
+    payload: z.object({ callId: z.string().min(1).max(80), toolName: z.string().min(1).max(64), title: z.string().min(1).max(240), status: z.enum(["running", "succeeded", "failed"]), phase: AgenticPhaseSchema.optional(), issueId: z.string().min(1).max(64).optional(), summary: z.string().min(1).max(600).optional() }).strict(),
+  }).strict(),
   runStreamBase.extend({
     type: z.literal("verification.result"),
     payload: z.object({

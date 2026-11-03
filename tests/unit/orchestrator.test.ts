@@ -175,7 +175,7 @@ function makeOptions(args: {
     checkpoints,
     skills,
     maxSteps: args.maxSteps ?? 20,
-    maxTokens: args.maxTokens ?? 16_000,
+    maxTokens: args.maxTokens ?? 32_000,
     maxDurationMs: 30_000,
     ...(args.imageGenerator ? { imageGenerator: args.imageGenerator } : {}),
     ...(args.spriteEditor ? { spriteEditor: args.spriteEditor } : {}),
@@ -753,5 +753,113 @@ describe("orquestador de runs", () => {
     await expect(handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
       .rejects.toMatchObject({ code: "run_step_limit_exceeded" });
     expect(sandbox.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("crea issues Markdown y un sub-agente las ejecuta en orden, visible en eventos", async () => {
+    const files = new Map<string, string>();
+    const sandboxOverrides: Partial<AgentSandbox> = {
+      readFile: vi.fn(async (_projectId: string, path: string) => {
+        if (path === ".meta-game-template.json") { const e = new Error("not_found") as Error & { code: string }; e.code = "not_found"; throw e; }
+        const stored = files.get(path);
+        return { path, content: stored ?? '{"scripts":{"test":"vitest run","lint":"tsc --noEmit","build":"vite build"}}' };
+      }) as AgentSandbox["readFile"],
+      writeFile: vi.fn(async (_projectId: string, path: string, content: string) => { files.set(path, content); return { path, bytesWritten: Buffer.byteLength(content, "utf8") }; }) as AgentSandbox["writeFile"],
+    };
+    const planCall = codeCall("call-plan-md", "create_issue_plan", { title: "Demo", issues: [{ slug: "core", title: "Core", objective: "Base", tasks: ["Escena"] }] });
+    const orchestrateCall = codeCall("call-orchestrate", "run_issue_agents", { issues: [{ issueId: "01-core", title: "Core", instructions: "Crea src/sub.ts" }] });
+    const subWrite = codeCall("call-sub-write", "write_file", { path: "src/sub.ts", content: "export {};" });
+    const { options, store } = makeOptions({
+      maxTokens: 100000,
+      sandboxOverrides,
+      streams: [
+        [planCall, orchestrateCall, completion([{ kind: "message", role: "assistant", text: "plan" }], "r-main-1", 10)],
+        [subWrite, completion([{ kind: "message", role: "assistant", text: "sub" }], "r-sub-1", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "sub done" }], "r-sub-2", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "main done" }], "r-main-2", 10)],
+      ],
+    });
+    const result = await createAgentRunHandler(options)(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    expect(result.usage?.tokens ?? 0).toBeGreaterThan(0);
+    expect(files.get("docs/issues/INDEX.md")).toContain("01-core");
+    expect(files.get("docs/issues/01-core.md")).toContain("Estado: completed");
+    expect(files.get("src/sub.ts")).toBe("export {};")
+    expect(store.events.some((e) => e.type === "agent.issue_plan")).toBe(true);
+    expect(store.events.some((e) => e.type === "agent.subagent_started" && (e.payload as { issueId?: string }).issueId === "01-core")).toBe(true);
+    expect(store.events.some((e) => e.type === "agent.subagent_completed" && (e.payload as { status?: string }).status === "succeeded")).toBe(true);
+  });
+});
+
+describe("flujo agentico: inventario -> plan sprites -> sprites -> plan juego -> codigo", () => {
+  function phasedSandbox(files: Map<string, string>): Partial<AgentSandbox> {
+    return {
+      readFile: vi.fn(async (_projectId: string, path: string) => {
+        if (path === ".meta-game-template.json") { const e = new Error("not_found") as Error & { code: string }; e.code = "not_found"; throw e; }
+        return { path, content: files.get(path) ?? '{"scripts":{"test":"vitest run","lint":"tsc --noEmit","build":"vite build"}}' };
+      }) as AgentSandbox["readFile"],
+      writeFile: vi.fn(async (_projectId: string, path: string, content: string) => { files.set(path, content); return { path, bytesWritten: Buffer.byteLength(content, "utf8") }; }) as AgentSandbox["writeFile"],
+    };
+  }
+
+  it("ejecuta las fases en orden con sub-agentes especializados y eventos durables", async () => {
+    const files = new Map<string, string>();
+    const spritePlan = codeCall("call-sprite-plan", "create_issue_plan", { title: "Sprites", kind: "sprites", issues: [{ slug: "hero", title: "Heroe", objective: "Sprite heroe", tasks: ["Generar heroe 32x32"] }] });
+    const runSprites = codeCall("call-run-sprites", "run_issue_agents", { kind: "sprites", issues: [{ issueId: "01-hero", title: "Heroe", instructions: "Lee la issue de sprites" }] });
+    const gamePlan = codeCall("call-game-plan", "create_issue_plan", { title: "Juego", kind: "game", issues: [{ slug: "core", title: "Core", objective: "Loop jugable usando atlas del heroe", tasks: ["Escena"] }] });
+    const runGame = codeCall("call-run-game", "run_issue_agents", { kind: "game", issues: [{ issueId: "01-core", title: "Core", instructions: "Crea src/game.ts usando el atlas" }] });
+    const spriteRead = codeCall("call-read-issue", "read_file", { path: "docs/issues/sprites/01-hero.md" });
+    const gameWrite = codeCall("call-write-game", "write_file", { path: "src/game.ts", content: "export {};" });
+    const { options, store } = makeOptions({
+      maxTokens: 100000,
+      sandboxOverrides: phasedSandbox(files),
+      streams: [
+        [spritePlan, runSprites, gamePlan, runGame, completion([{ kind: "message", role: "assistant", text: "main" }], "r-main-1", 10)],
+        [spriteRead, completion([{ kind: "message", role: "assistant", text: "sprite" }], "r-sprite-1", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "Sprite listo: atlas heroe" }], "r-sprite-2", 10)],
+        [gameWrite, completion([{ kind: "message", role: "assistant", text: "game" }], "r-game-1", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "Codigo listo" }], "r-game-2", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "main done" }], "r-main-2", 10)],
+      ],
+    });
+    await createAgentRunHandler(options)(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    expect(files.get("docs/issues/sprites/01-hero.md")).toContain("Estado: completed");
+    expect(files.get("docs/issues/sprites/01-hero.md")).toContain("pack_spritesheet");
+    expect(files.get("docs/issues/game/01-core.md")).toContain("Estado: completed");
+    expect(files.get("src/game.ts")).toBe("export {};");
+    const phases = store.events.filter((e) => e.type === "agent.phase").map((e) => `${String(e.payload.phase)}:${String(e.payload.status)}`);
+    expect(phases).toContain("inventory:completed");
+    expect(phases).toContain("sprite-plan:completed");
+    expect(phases).toContain("sprites:completed");
+    expect(phases).toContain("game-plan:completed");
+    expect(phases).toContain("code:completed");
+    expect(phases.indexOf("sprites:completed")).toBeLessThan(phases.indexOf("game-plan:completed"));
+    expect(store.events.some((e) => e.type === "agent.subagent_completed" && e.payload.kind === "sprites" && e.payload.status === "succeeded")).toBe(true);
+    expect(store.events.some((e) => e.type === "agent.subagent_completed" && e.payload.kind === "game" && e.payload.status === "succeeded")).toBe(true);
+    expect(store.events.some((e) => e.type === "agent.tool_started" && e.payload.phase === "sprites" && e.payload.issueId === "01-hero")).toBe(true);
+    expect(store.events.some((e) => e.type === "agent.tool_started" && e.payload.phase === "code" && e.payload.issueId === "01-core")).toBe(true);
+  });
+
+  it("impide ejecutar codigo de juego si la fase de sprites no se completo", async () => {
+    const files = new Map<string, string>();
+    const spritePlan = codeCall("call-sprite-plan-2", "create_issue_plan", { title: "Sprites", kind: "sprites", issues: [{ slug: "hero", title: "Heroe", objective: "Sprite", tasks: ["Generar"] }] });
+    const runGameEarly = codeCall("call-run-game-early", "run_issue_agents", { kind: "game", issues: [{ issueId: "01-core", title: "Core", instructions: "Codigo prematuro" }] });
+    const { options } = makeOptions({
+      maxTokens: 100000,
+      sandboxOverrides: phasedSandbox(files),
+      streams: [[spritePlan, runGameEarly, completion([], "r-early", 10)]],
+    });
+    await expect(createAgentRunHandler(options)(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
+      .rejects.toMatchObject({ code: "agent_sprite_phase_incomplete" });
+  });
+
+  it("impide ejecutar sprites sin plan de sprites previo", async () => {
+    const files = new Map<string, string>();
+    const runSpritesNoPlan = codeCall("call-run-sprites-noplan", "run_issue_agents", { kind: "sprites", issues: [{ issueId: "01-hero", title: "Heroe", instructions: "Sin plan" }] });
+    const { options } = makeOptions({
+      maxTokens: 100000,
+      sandboxOverrides: phasedSandbox(files),
+      streams: [[runSpritesNoPlan, completion([], "r-noplan", 10)]],
+    });
+    await expect(createAgentRunHandler(options)(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
+      .rejects.toMatchObject({ code: "agent_sprite_plan_required" });
   });
 });

@@ -16,6 +16,7 @@ import { createCreateTilemapTool } from "./assets/create-tilemap";
 import { createPackSpritesheetTool } from "./assets/pack-spritesheet";
 import { createDefineAnimationTool } from "./assets/define-animation";
 import { createInspectAssetTool } from "./assets/inspect-asset";
+import { createMakeTransparentTool } from "./assets/make-transparent";
 import { createAssetReconciler } from "./assets/reconcile-assets";
 import { pendingOrchestratorHandler } from "./handler";
 import { removeProjectRunJobs, startRunWorkerService } from "./queue";
@@ -240,6 +241,7 @@ async function createEnabledAgentHandler() {
   const spritesheetPacker = createPackSpritesheetTool({ storage, sandbox, identity: store.identity });
   const animationDefiner = createDefineAnimationTool({ storage, sandbox, identity: store.identity });
   const assetInspector = createInspectAssetTool({ sandbox, storage, identity: store.identity });
+  const transparencyMaker = createMakeTransparentTool({ storage, sandbox, identity: store.identity });
   return createAgentRunHandler({
     store,
     meta,
@@ -258,6 +260,7 @@ async function createEnabledAgentHandler() {
     spritesheetPacker,
     animationDefiner,
     assetInspector,
+    transparencyMaker,
   });
 }
 
