@@ -224,4 +224,42 @@ describe("SSE de runs", () => {
     expect(listEvents).toHaveBeenCalledTimes(1);
     await reader.cancel();
   });
+
+  it("proyecta el plan en issues y el estado de cada sub-agente", async () => {
+    const rows = [
+      stored(1, "run.queued", {}),
+      stored(2, "agent.issue_plan", { planId: "plan-c1", title: "Demo", issues: [{ id: "01-core", title: "Core", path: "docs/issues/01-core.md", status: "pending", dependsOn: [] }] }),
+      stored(3, "agent.subagent_started", { issueId: "01-core", title: "Core" }),
+      stored(4, "agent.subagent_completed", { issueId: "01-core", title: "Core", status: "succeeded", summary: "Escena creada" }),
+      stored(5, "run.succeeded", {}),
+    ];
+    const { handler } = makeHandler({ rows: rows as never });
+    const response = await handler(request(), { params: Promise.resolve({ runId }) });
+    const frames = parseFrames(await response.text());
+    expect(frames.map((f) => f.event)).toEqual(["run.queued", "issue.plan", "subagent.updated", "subagent.updated", "run.finished"]);
+    expect(frames[1]?.data.payload).toMatchObject({ planId: "plan-c1", issues: [{ id: "01-core", status: "pending" }] });
+    expect(frames[2]?.data.payload).toMatchObject({ issueId: "01-core", status: "running" });
+    expect(frames[3]?.data.payload).toMatchObject({ issueId: "01-core", status: "succeeded", summary: "Escena creada" });
+  });
+});
+
+describe("proyeccion del flujo agentico", () => {
+  it("proyecta agent.phase y tool calls con fase/issue sin filtrar args", async () => {
+    const rows = [
+      stored(1, "run.queued", {}),
+      stored(2, "agent.phase", { phase: "inventory", status: "completed", summary: "Inventario comparado" }),
+      stored(3, "agent.phase", { phase: "sprites", status: "started", summary: "Creando sprites" }),
+      stored(4, "agent.tool_started", { callId: "sub-01-hero-c1", toolName: "pack_spritesheet", argsHash: hash, phase: "sprites", issueId: "01-hero" }),
+      stored(5, "agent.action", { callId: "sub-01-hero-c1", toolName: "pack_spritesheet", summary: "Empaquetar 4 frames", phase: "sprites", issueId: "01-hero" }),
+      stored(6, "run.succeeded", {}),
+    ];
+    const { handler } = makeHandler({ rows: rows as never });
+    const response = await handler(request(), { params: Promise.resolve({ runId }) });
+    const frames = parseFrames(await response.text());
+    expect(frames.map((f) => f.event)).toEqual(["run.queued", "phase.updated", "phase.updated", "step.started", "step.completed", "run.finished"]);
+    expect(frames[1]?.data.payload).toMatchObject({ phase: "inventory", status: "completed" });
+    expect(frames[3]?.data.payload).toMatchObject({ toolName: "pack_spritesheet", phase: "sprites", issueId: "01-hero" });
+    expect(frames[4]?.data.payload).toMatchObject({ status: "succeeded", toolName: "pack_spritesheet", phase: "sprites" });
+    expect(JSON.stringify(frames)).not.toContain("argsHash");
+  });
 });

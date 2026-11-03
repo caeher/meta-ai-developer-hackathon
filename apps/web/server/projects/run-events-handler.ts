@@ -235,7 +235,7 @@ function projectStoredEvent(runId: string, row: RunEventRow): Projected {
     if (parsed.success && parsed.data.type === "agent.tool_started") {
       candidate = {
         type: "step.started",
-        payload: { stepId: parsed.data.payload.callId, title: toolTitle(parsed.data.payload.toolName) },
+        payload: { stepId: parsed.data.payload.callId, title: toolTitle(parsed.data.payload.toolName), toolName: parsed.data.payload.toolName, ...(parsed.data.payload.phase ? { phase: parsed.data.payload.phase } : {}), ...(parsed.data.payload.issueId ? { issueId: parsed.data.payload.issueId } : {}) },
       };
     }
   } else if (row.type === "agent.action") {
@@ -247,13 +247,16 @@ function projectStoredEvent(runId: string, row: RunEventRow): Projected {
           stepId: parsed.data.payload.callId,
           title: safeText(parsed.data.payload.summary, 240) || toolTitle(parsed.data.payload.toolName),
           status: "succeeded",
+          toolName: parsed.data.payload.toolName,
+          ...(parsed.data.payload.phase ? { phase: parsed.data.payload.phase } : {}),
+          ...(parsed.data.payload.issueId ? { issueId: parsed.data.payload.issueId } : {}),
         },
       };
     }
   } else if (row.type === "agent.tool_completed") {
     const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
     if (parsed.success && parsed.data.type === "agent.tool_completed" &&
-        ["write_file", "generate_image"].includes(parsed.data.payload.toolName)) {
+        ["write_file", "generate_image", "create_issue_plan"].includes(parsed.data.payload.toolName)) {
       const result = parseJsonRecord(parsed.data.payload.result);
       const path = safeWorkspacePath(result?.path);
       if (path) {
@@ -281,6 +284,9 @@ function projectStoredEvent(runId: string, row: RunEventRow): Projected {
             stepId: parsed.data.payload.callId,
             title: toolTitle(parsed.data.payload.toolName),
             status: "failed",
+            toolName: parsed.data.payload.toolName,
+            ...(parsed.data.payload.phase ? { phase: parsed.data.payload.phase } : {}),
+            ...(parsed.data.payload.issueId ? { issueId: parsed.data.payload.issueId } : {}),
           },
         };
       }
@@ -297,6 +303,26 @@ function projectStoredEvent(runId: string, row: RunEventRow): Projected {
           summary: safeVerificationSummary(parsed.data.payload.summary, parsed.data.payload.status),
         },
       };
+    }
+  } else if (row.type === "agent.issue_plan") {
+    const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
+    if (parsed.success && parsed.data.type === "agent.issue_plan") {
+      candidate = { type: "issue.plan", payload: { planId: parsed.data.payload.planId, title: safeText(parsed.data.payload.title, 120) || "Plan en issues", kind: parsed.data.payload.kind ?? "general", issues: parsed.data.payload.issues } };
+    }
+  } else if (row.type === "agent.subagent_started") {
+    const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
+    if (parsed.success && parsed.data.type === "agent.subagent_started") {
+      candidate = { type: "subagent.updated", payload: { issueId: parsed.data.payload.issueId, title: safeText(parsed.data.payload.title, 160) || "Issue", status: "running", kind: parsed.data.payload.kind ?? "general", ...(parsed.data.payload.phase ? { phase: parsed.data.payload.phase } : {}) } };
+    }
+  } else if (row.type === "agent.subagent_completed") {
+    const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
+    if (parsed.success && parsed.data.type === "agent.subagent_completed") {
+      candidate = { type: "subagent.updated", payload: { issueId: parsed.data.payload.issueId, title: safeText(parsed.data.payload.title, 160) || "Issue", status: parsed.data.payload.status, kind: parsed.data.payload.kind ?? "general", ...(parsed.data.payload.phase ? { phase: parsed.data.payload.phase } : {}), summary: safeText(parsed.data.payload.summary, 600) } };
+    }
+  } else if (row.type === "agent.phase") {
+    const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
+    if (parsed.success && parsed.data.type === "agent.phase") {
+      candidate = { type: "phase.updated", payload: { phase: parsed.data.payload.phase, status: parsed.data.payload.status === "started" ? "running" : parsed.data.payload.status, summary: safeText(parsed.data.payload.summary, 600) } };
     }
   } else if (row.type === "agent.preview_ready") {
     const parsed = AgentRunEventSchema.safeParse({ type: row.type, payload });
@@ -319,6 +345,9 @@ function toolTitle(toolName: string): string {
     read_file: "Leer un archivo",
     write_file: "Escribir un archivo",
     generate_image: "Generar y validar un asset de juego",
+    make_transparent: "Hacer transparente un asset",
+    create_issue_plan: "Crear el plan en issues Markdown",
+    run_issue_agents: "Orquestar sub-agentes por issue",
     edit_sprite: "Editar un sprite",
     inspect_asset: "Inspeccionar un asset",
     create_tileset: "Crear un tileset",

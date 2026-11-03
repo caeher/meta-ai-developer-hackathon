@@ -87,6 +87,13 @@ const QUICK_PROMPT_GROUPS = [
   },
 ] as const;
 
+const EXAMPLE_PROMPTS = [
+  { label: "Plataformas 2D", prompt: "Crea un juego de plataformas 2D con 2 niveles, monedas coleccionables y una meta visible. Controles: flechas y espacio." },
+  { label: "Puzzle de cajas", prompt: "Crea un puzzle 2D de mover cajas hasta sus metas en 5 niveles cortos, con reinicio de nivel y contador de movimientos." },
+  { label: "Shooter top-down", prompt: "Crea un shooter 2D top-down con oleadas de enemigos, vida, puntuación y power-ups ocasionales. Controles: WASD y ratón." },
+  { label: "RPG top-down", prompt: "Crea un RPG top-down corto con un mapa, un PNJ con diálogo, una misión simple y una condición de victoria." },
+] as const;
+
 const RUN_STATUS_LABELS: Record<EditorRunStatus, string> = {
   queued: "En cola",
   planning: "Planificando",
@@ -126,12 +133,21 @@ function isEditorPublication(value: unknown): value is EditorPublication {
     (candidate.url === null || typeof candidate.url === "string") && typeof candidate.createdAt === "string";
 }
 
-function ProgressView({ view, progress }: { view: "plan" | "steps" | "files" | "verification"; progress?: EditorProgress }) {
+const ISSUE_STATUS_LABELS: Record<string, string> = { pending: "Pendiente", running: "En curso", completed: "Completada", failed: "Fallo" };
+const SUBAGENT_STATUS_LABELS: Record<string, string> = { pending: "En espera", running: "Trabajando", succeeded: "Completo", failed: "Fallo" };
+const PHASE_LABELS: Record<string, string> = { inventory: "Inventario", "sprite-plan": "Plan de sprites", sprites: "Sprites", "game-plan": "Plan de juego", code: "Codigo", verification: "Verificacion" };
+const PHASE_STATUS_LABELS: Record<string, string> = { pending: "Pendiente", running: "En curso", completed: "Completada", failed: "Fallo", skipped: "Omitida" };
+const TOOL_STATUS_LABELS: Record<string, string> = { running: "Ejecutando", succeeded: "OK", failed: "Fallo" };
+
+function ProgressView({ view, progress }: { view: "plan" | "steps" | "files" | "verification" | "issues" | "agents" | "activity"; progress?: EditorProgress }) {
   const content = {
     plan: { title: "El plan aparecerá aquí", description: "El plan se mostrará cuando la generación esté disponible." },
     steps: { title: "Aún no hay pasos", description: "El progreso de cada acción se mostrará en esta vista." },
     files: { title: "Aún no hay archivos cambiados", description: "Los cambios se enumerarán cuando exista una ejecución." },
     verification: { title: "Aún no hay verificaciones", description: "Los resultados de lint, build y ejecución se mostrarán aquí." },
+    issues: { title: "Sin plan en issues todavia", description: "Cuando el agente principal lo cree, cada issue Markdown (docs/issues/*.md) se listara aqui con su estado." },
+    agents: { title: "Sin sub-agentes todavia", description: "El agente principal puede orquestar un sub-agente por issue; aqui veras que hace cada uno." },
+    activity: { title: "Sin tool calls todavia", description: "Cada herramienta que llamen el orquestador y los sub-agentes (sprites, atlas, codigo) aparecera aqui y en el chat con su estado." },
   }[view];
 
   if (progress) {
@@ -141,6 +157,9 @@ function ProgressView({ view, progress }: { view: "plan" | "steps" | "files" | "
         {view === "plan" ? <ol>{progress.plan.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ol> : null}
         {view === "steps" ? <ol>{progress.steps.map((step) => <li key={step.id}><span>{step.title}</span><Badge color="gray" variant="soft">{STEP_STATUS_LABELS[step.status]}</Badge></li>)}</ol> : null}
         {view === "files" ? <ul>{progress.changedFiles.map((file) => <li key={file}><code>{file}</code></li>)}</ul> : null}
+        {view === "issues" ? <ol>{progress.issues.map((issue) => <li key={`${issue.kind}-${issue.id}`}><span>{issue.id}: {issue.title} <Badge color="gray" variant="soft">{issue.kind}</Badge> <code>{issue.path}</code>{issue.dependsOn.length ? ` - depende de ${issue.dependsOn.join(", ")}` : ""}</span><Badge color="gray" variant="soft">{ISSUE_STATUS_LABELS[issue.status] ?? issue.status}</Badge></li>)}</ol> : null}
+        {view === "activity" ? <ol>{progress.toolCalls.map((call) => <li key={call.callId}><span><code>{call.toolName}</code> {call.title}{call.phase ? ` - ${PHASE_LABELS[call.phase] ?? call.phase}` : ""}{call.issueId ? ` - issue ${call.issueId}` : ""}</span><Badge color={call.status === "failed" ? "red" : call.status === "running" ? "cyan" : "green"} variant="soft">{TOOL_STATUS_LABELS[call.status] ?? call.status}</Badge></li>)}</ol> : null}
+        {view === "agents" ? <ol>{progress.subagents.map((agent) => <li key={`${agent.kind}-${agent.issueId}`}><span>Sub-agente {agent.kind === "sprites" ? "de sprites" : agent.kind === "game" ? "de codigo" : ""} - {agent.issueId}: {agent.title}{agent.summary ? ` - ${agent.summary}` : ""}</span><Badge color="gray" variant="soft">{SUBAGENT_STATUS_LABELS[agent.status] ?? agent.status}</Badge></li>)}</ol> : null}
         {view === "verification" ? (
           <div className={styles.verificationResult}>
             <Badge color="gray" variant="soft">{progress.verification.status}</Badge>
@@ -504,6 +523,7 @@ export function EditorShell({
           </Dialog.Root>
         </div>
         <div className={styles.projectActions}>
+          {!publishingEnabled ? <span className={styles.publishHint}>Sin build verificada: Publish y Share están desactivados.</span> : null}
           <PublishDialog
             enabled={publishingEnabled}
             open={publishDialogOpen}
@@ -540,6 +560,9 @@ export function EditorShell({
                 <Tabs.Trigger value="steps">Pasos</Tabs.Trigger>
                 <Tabs.Trigger value="files">Archivos</Tabs.Trigger>
                 <Tabs.Trigger value="verification">Verificación</Tabs.Trigger>
+                <Tabs.Trigger value="issues">Issues</Tabs.Trigger>
+                <Tabs.Trigger value="agents">Agentes</Tabs.Trigger>
+                <Tabs.Trigger value="activity">Actividad</Tabs.Trigger>
               </Tabs.List>
               <Dialog.Root open={quickOptionsOpen} onOpenChange={setQuickOptionsOpen}>
                 <Dialog.Trigger>
@@ -626,13 +649,49 @@ export function EditorShell({
                     <p>{runEvents.assistantSummary}</p>
                   </li>
                 ) : null}
+                {displayProgress && displayProgress.phases.length ? (
+                  <li key="agentic-phases" className={styles.agentMessage}>
+                    <div className={styles.messageMeta}><Text as="span" size="1">Flujo agentico</Text></div>
+                    <ol aria-label="Fases del flujo agentico">
+                      {displayProgress.phases.map((phase) => (
+                        <li key={phase.phase}><span>{PHASE_LABELS[phase.phase] ?? phase.phase}{phase.summary ? `: ${phase.summary}` : ""}</span> <Badge color={phase.status === "failed" ? "red" : phase.status === "running" ? "cyan" : phase.status === "completed" ? "green" : "gray"} variant="soft">{PHASE_STATUS_LABELS[phase.status] ?? phase.status}</Badge></li>
+                      ))}
+                    </ol>
+                  </li>
+                ) : null}
+                {displayProgress?.toolCalls.map((call) => (
+                  <li key={`tool-call-${call.callId}`} className={styles.agentMessage}>
+                    <div className={styles.messageMeta}>
+                      <Text as="span" size="1">Tool call{call.issueId ? ` - ${call.issueId}` : ""}</Text>
+                      <Badge color={call.status === "failed" ? "red" : call.status === "running" ? "cyan" : "green"} variant="soft">{TOOL_STATUS_LABELS[call.status] ?? call.status}</Badge>
+                    </div>
+                    <p><code>{call.toolName}</code> - {call.title}{call.phase ? ` (${PHASE_LABELS[call.phase] ?? call.phase})` : ""}</p>
+                  </li>
+                ))}
+                {displayProgress?.subagents.filter((agent) => agent.status === "running" || agent.summary).map((agent) => (
+                  <li key={`chat-subagent-${agent.kind}-${agent.issueId}`} className={styles.agentMessage}>
+                    <div className={styles.messageMeta}><Text as="span" size="1">Sub-agente {agent.kind}</Text><Badge color="gray" variant="soft">{SUBAGENT_STATUS_LABELS[agent.status] ?? agent.status}</Badge></div>
+                    <p>{agent.issueId}: {agent.title}{agent.summary ? ` - ${agent.summary}` : ""}</p>
+                  </li>
+                ))}
                 {runEvents.progress?.assetCards.map((card) => (
                   <li key={`asset-card-${card.callId}`} className={styles.assetCardItem}>
                     <AssetToolCardView card={card} projectId={projectId} />
                   </li>
                 ))}
                 {messages.length === 0 ? (
-                  <li className={styles.emptyTranscript}><Text as="p" color="gray">Tus mensajes privados aparecerán aquí.</Text></li>
+                  <li className={styles.emptyTranscript}>
+                    <div>
+                      <Text as="p" color="gray">Tus mensajes privados aparecerán aquí.</Text>
+                      <div className={styles.emptyExamples} role="group" aria-label="Ideas de ejemplo">
+                        {EXAMPLE_PROMPTS.map((example) => (
+                          <Button key={example.label} variant="soft" size="2" aria-label={`Ejemplo: ${example.label}`} disabled={runEvents.active || runEvents.working || runEvents.hydrating || sending} onClick={() => { setContent(example.prompt); setStatus("Ejemplo añadido al borrador. Edítalo y envíalo cuando quieras."); }}>
+                            {example.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  </li>
                 ) : null}
               </ol>
               <form className={styles.composer} onSubmit={submitMessage}>
@@ -643,7 +702,7 @@ export function EditorShell({
                   onChange={(event) => setContent(event.target.value)}
                   placeholder="Describe una idea para tu juego…"
                   disabled={runEvents.active || runEvents.working || runEvents.hydrating || sending}
-                  rows={3}
+                  rows={2}
                   maxLength={MAX_PROMPT_LENGTH}
                   aria-describedby="editor-prompt-hint"
                   required
@@ -669,6 +728,15 @@ export function EditorShell({
             </Tabs.Content>
             <Tabs.Content value="verification" className={styles.progressContent}>
               <ProgressView view="verification" progress={displayProgress} />
+            </Tabs.Content>
+            <Tabs.Content value="issues" className={styles.progressContent}>
+              <ProgressView view="issues" progress={displayProgress} />
+            </Tabs.Content>
+            <Tabs.Content value="agents" className={styles.progressContent}>
+              <ProgressView view="agents" progress={displayProgress} />
+            </Tabs.Content>
+            <Tabs.Content value="activity" className={styles.progressContent}>
+              <ProgressView view="activity" progress={displayProgress} />
             </Tabs.Content>
           </Tabs.Root>
         </section>

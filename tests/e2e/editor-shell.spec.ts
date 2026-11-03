@@ -465,3 +465,29 @@ test.describe("editor de dos paneles", () => {
     expect(popup.url()).not.toContain("grant=");
   });
 });
+
+test("la preview ocupa la altura del panel y Opciones rapidas no se corta", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const preview = page.getByRole("region", { name: "Vista previa privada del juego" });
+  const chat = page.getByRole("region", { name: "Chat y progreso" });
+  const previewBox = await preview.boundingBox();
+  const cardBox = await preview.locator("> div").first().boundingBox();
+  expect(previewBox).not.toBeNull();
+  expect(cardBox).not.toBeNull();
+  expect(cardBox!.height).toBeGreaterThanOrEqual(previewBox!.height - 28);
+  const chatBox = await chat.boundingBox();
+  const quickBox = await page.getByRole("button", { name: "Opciones rápidas" }).boundingBox();
+  expect(chatBox).not.toBeNull();
+  expect(quickBox).not.toBeNull();
+  expect(quickBox!.x + quickBox!.width).toBeLessThanOrEqual(chatBox!.x + chatBox!.width + 1);
+});
+
+test("los ejemplos del estado vacio rellenan el borrador sin enviar", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Ejemplo: Plataformas 2D" }).click();
+  await expect(page.getByLabel("Describe tu juego")).toHaveValue(/plataformas 2D/i);
+  await expect(page.getByText("Tus mensajes privados aparecerán aquí.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Enviar al agente" })).toBeEnabled();
+});

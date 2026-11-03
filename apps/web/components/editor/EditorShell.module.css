@@ -50,10 +50,12 @@
 }
 
 .chatPane { border-right: 1px solid var(--app-border); }
-.chatTabs { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.chatTabs { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
 .chatTabs [hidden] { display: none !important; }
-.chatToolbar { min-height: 52px; justify-content: space-between; padding: 7px 12px; border-bottom: 1px solid var(--app-border); }
-.progressTabs { min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.chatToolbar { min-width: 0; min-height: 52px; justify-content: space-between; padding: 7px 12px; border-bottom: 1px solid var(--app-border); }
+.progressTabs { flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.progressTabs::-webkit-scrollbar { display: none; }
+.chatToolbar > :last-child { flex: none; }
 .progressTabs button { flex: none; }
 .chatContent { min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto; padding: 12px 16px 14px; }
 .agentNotice { display: flex; align-items: center; gap: 9px; padding: 0 0 10px; flex-wrap: wrap; }
@@ -68,6 +70,8 @@
 .messageMeta > :last-child { margin-left: auto; }
 .transcript li p { margin: 7px 0 0; color: var(--app-text); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .emptyTranscript { display: grid; min-height: 100%; place-items: center; text-align: center; }
+.emptyExamples { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 520px; margin-top: 16px; }
+.publishHint { max-width: 190px; color: var(--app-text-muted); font-size: 11px; line-height: 1.45; text-align: right; }
 .emptyTranscript p { max-width: 270px; margin: 0; line-height: 1.6; }
 .composer { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid var(--app-border); }
 .composer label { color: var(--app-text); font-size: 13px; }
@@ -137,9 +141,10 @@
 .publicationActions { display: flex; flex: none; align-items: center; gap: 6px; }
 .publicationStatus { color: var(--app-text-muted); font-size: 11px; }
 
-.previewPane { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 12px; }
+.previewPane { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 12px; }
 
 @media (max-width: 900px) {
+  .publishHint { display: none; }
   .workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .projectBar { padding-inline: 14px; }
   .chatToolbar { align-items: flex-start; flex-direction: column; }

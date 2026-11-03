@@ -184,4 +184,33 @@ describe("editor interactivo", () => {
       body: JSON.stringify({ name: "Nueva aventura" }),
     }));
   });
+
+  it("chat agentico: muestra pestanas Issues/Agentes/Actividad y el flujo por fases", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/runs")) return Response.json({ run: null, enabled: true });
+      throw new Error("unexpected");
+    });
+    render(
+      createElement(EditorShell, {
+        projectId, projectName: "Aventura agentica", initialMessages: [], initialCursor: null,
+        progress: {
+          status: "running", plan: [], steps: [], changedFiles: [],
+          issues: [{ id: "01-hero", title: "Heroe", path: "docs/issues/sprites/01-hero.md", kind: "sprites", status: "running", dependsOn: [] }],
+          subagents: [{ issueId: "01-hero", title: "Heroe", status: "running", kind: "sprites", phase: "sprites", summary: "Creando atlas" }],
+          phases: [{ phase: "inventory", status: "completed", summary: "Comparado" }, { phase: "sprites", status: "running", summary: "Atlas en curso" }],
+          toolCalls: [{ callId: "c1", toolName: "pack_spritesheet", title: "Empaquetar atlas", status: "running", phase: "sprites", issueId: "01-hero" }],
+          assetCards: [], verification: { status: "pending" },
+        },
+      }),
+      { wrapper: ({ children }) => createElement(Theme, { appearance: "dark", accentColor: "blue", grayColor: "slate", hasBackground: false }, children) },
+    );
+    expect(screen.getByRole("tab", { name: /^Issues/ })).not.toBeNull();
+    expect(screen.getByRole("tab", { name: /^Agentes/ })).not.toBeNull();
+    expect(screen.getByRole("tab", { name: /^Actividad/ })).not.toBeNull();
+    // Timeline visible dentro del chat: fases + tool call + sub-agente
+    expect(screen.getByText("Flujo agentico")).not.toBeNull();
+    expect(screen.getByText(/pack_spritesheet/)).not.toBeNull();
+    expect(await screen.findByText(/Empaquetar atlas/)).not.toBeNull();
+    expect(screen.getByText(/Creando atlas/)).not.toBeNull();
+  });
 });

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  AGENTIC_PHASES,
   EditorProgressSchema,
   RunResponseSchema,
   RunStreamEventSchema,
@@ -21,8 +22,20 @@ function emptyProgress(status: RunResponse["status"]): EditorProgress {
     steps: [],
     changedFiles: [],
     assetCards: [],
+    issues: [],
+    subagents: [],
+    phases: AGENTIC_PHASES.map((phase) => ({ phase, status: "pending" as const })),
+    toolCalls: [],
     verification: { status: "pending" },
   });
+}
+
+function upsertToolCall(current: EditorProgress, call: EditorProgress["toolCalls"][number]): EditorProgress["toolCalls"] {
+  const index = current.toolCalls.findIndex((item) => item.callId === call.callId);
+  if (index < 0) return [...current.toolCalls, call].slice(-100);
+  const next = [...current.toolCalls];
+  next[index] = { ...next[index]!, ...call, summary: call.summary ?? next[index]!.summary };
+  return next;
 }
 
 function runErrorMessage(code: unknown): string {
@@ -65,6 +78,10 @@ function updateProgress(current: EditorProgress, event: RunStreamEvent): EditorP
     steps: [...current.steps],
     changedFiles: [...current.changedFiles],
     assetCards: [...current.assetCards],
+    issues: current.issues.map((issue) => ({ ...issue, dependsOn: [...issue.dependsOn] })),
+    subagents: current.subagents.map((agent) => ({ ...agent })),
+    phases: (current.phases.length ? current.phases : AGENTIC_PHASES.map((phase) => ({ phase, status: "pending" as const }))).map((phase) => ({ ...phase })),
+    toolCalls: current.toolCalls.map((call) => ({ ...call })),
     verification: { ...current.verification },
   };
   switch (event.type) {
@@ -85,6 +102,9 @@ function updateProgress(current: EditorProgress, event: RunStreamEvent): EditorP
       const step = { id: event.payload.stepId, title: event.payload.title, status: "running" as const };
       if (index < 0) next.steps = [...next.steps, step].slice(0, 100);
       else next.steps[index] = step;
+      if (event.payload.toolName) {
+        next.toolCalls = upsertToolCall(next, { callId: event.payload.stepId, toolName: event.payload.toolName, title: event.payload.title, status: "running", ...(event.payload.phase ? { phase: event.payload.phase } : {}), ...(event.payload.issueId ? { issueId: event.payload.issueId } : {}) });
+      }
       break;
     }
     case "step.completed": {
@@ -92,6 +112,19 @@ function updateProgress(current: EditorProgress, event: RunStreamEvent): EditorP
       const step = { id: event.payload.stepId, title: event.payload.title, status: event.payload.status };
       if (index < 0) next.steps = [...next.steps, step].slice(0, 100);
       else next.steps[index] = step;
+      if (event.payload.toolName) {
+        next.toolCalls = upsertToolCall(next, { callId: event.payload.stepId, toolName: event.payload.toolName, title: event.payload.title, status: event.payload.status === "failed" ? "failed" : "succeeded", summary: event.payload.title, ...(event.payload.phase ? { phase: event.payload.phase } : {}), ...(event.payload.issueId ? { issueId: event.payload.issueId } : {}) });
+      }
+      break;
+    }
+    case "phase.updated": {
+      const index = next.phases.findIndex((phase) => phase.phase === event.payload.phase);
+      const phaseState = { phase: event.payload.phase, status: event.payload.status, ...(event.payload.summary ? { summary: event.payload.summary } : {}) };
+      if (index < 0) next.phases = [...next.phases, phaseState]; else next.phases[index] = phaseState;
+      break;
+    }
+    case "tool.updated": {
+      next.toolCalls = upsertToolCall(next, { callId: event.payload.callId, toolName: event.payload.toolName, title: event.payload.title, status: event.payload.status, ...(event.payload.phase ? { phase: event.payload.phase } : {}), ...(event.payload.issueId ? { issueId: event.payload.issueId } : {}), ...(event.payload.summary ? { summary: event.payload.summary } : {}) });
       break;
     }
     case "file.changed":
@@ -106,6 +139,27 @@ function updateProgress(current: EditorProgress, event: RunStreamEvent): EditorP
       const step = { id: event.payload.callId, title: event.payload.title, status };
       if (stepIndex < 0) next.steps = [...next.steps, step].slice(0, 100);
       else next.steps[stepIndex] = step;
+      break;
+    }
+    case "issue.plan": {
+      for (const issue of event.payload.issues) {
+        const mapped = { ...issue, kind: issue.kind ?? event.payload.kind ?? "general" as const, dependsOn: [...issue.dependsOn] };
+        const index = next.issues.findIndex((item) => item.id === issue.id && item.kind === mapped.kind);
+        if (index < 0) next.issues = [...next.issues, mapped].slice(-24); else next.issues[index] = mapped;
+        const agent = { issueId: issue.id, title: issue.title, status: "pending" as const, kind: mapped.kind, phase: mapped.kind === "sprites" ? "sprites" as const : "code" as const };
+        const agentIndex = next.subagents.findIndex((item) => item.issueId === issue.id && item.kind === mapped.kind);
+        if (agentIndex < 0) next.subagents = [...next.subagents, agent].slice(-24);
+      }
+      break;
+    }
+    case "subagent.updated": {
+      const agent = { issueId: event.payload.issueId, title: event.payload.title, status: event.payload.status, kind: event.payload.kind ?? "general" as const, ...(event.payload.phase ? { phase: event.payload.phase } : {}), ...(event.payload.summary ? { summary: event.payload.summary } : {}) };
+      const agentIndex = next.subagents.findIndex((item) => item.issueId === agent.issueId && item.kind === agent.kind);
+      if (agentIndex < 0) next.subagents = [...next.subagents, agent].slice(-24); else next.subagents[agentIndex] = { ...next.subagents[agentIndex]!, ...agent };
+      const issueStatus = event.payload.status === "succeeded" ? "completed" as const : event.payload.status;
+      const issueIndex = next.issues.findIndex((issue) => issue.id === event.payload.issueId && issue.kind === agent.kind);
+      const fallbackIndex = issueIndex >= 0 ? issueIndex : next.issues.findIndex((issue) => issue.id === event.payload.issueId);
+      if (fallbackIndex >= 0) next.issues[fallbackIndex] = { ...next.issues[fallbackIndex]!, status: issueStatus };
       break;
     }
     case "verification.result":
