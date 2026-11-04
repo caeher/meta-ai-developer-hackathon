@@ -5,6 +5,7 @@ import { gameAudio } from "./game/audio";
 import { BootScene } from "./game/BootScene";
 import { HudScene } from "./game/HudScene";
 import { PlayScene } from "./game/PlayScene";
+import { DiggingScene } from "./game/DiggingScene";
 import {
   GAME_CONTROL_EVENT,
   GAME_HELP,
@@ -29,8 +30,10 @@ const controlsSummary = document.querySelector<HTMLElement>("#game-controls");
 const genreQuery = new URLSearchParams(window.location.search).get("genre");
 const configuredGenre = typeof projectSpec.genre === "string" && isGameGenre(projectSpec.genre) ? projectSpec.genre : "platformer";
 const genre: GameGenre = import.meta.env.DEV && isGameGenre(genreQuery) ? genreQuery : configuredGenre;
+const gameTitle = typeof projectSpec.title === "string" ? projectSpec.title : GAME_LABELS[genre];
 const movement = projectSpec.controls?.movement === "wasd" ? "wasd" : "arrows";
 const actionKey = projectSpec.controls?.action === "e" ? "e" : "space";
+const actionName = typeof projectSpec.actionLabel === "string" ? projectSpec.actionLabel : undefined;
 const actionLabel: Readonly<Record<GameGenre, string>> = {
   platformer: "Saltar",
   puzzle: "Interactuar",
@@ -41,8 +44,8 @@ const actionLabel: Readonly<Record<GameGenre, string>> = {
 if (!canvasParent) throw new Error("game_mount_missing");
 document.title = `Forja · ${GAME_LABELS[genre]}`;
 if (actionButton) {
-  actionButton.textContent = actionLabel[genre];
-  actionButton.setAttribute("aria-label", actionLabel[genre]);
+  actionButton.textContent = actionName ?? actionLabel[genre];
+  actionButton.setAttribute("aria-label", actionName ?? actionLabel[genre]);
 }
 document.querySelectorAll<HTMLButtonElement>('[data-control="up"], [data-control="down"]').forEach((button) => {
   button.hidden = genre === "platformer" || genre === "shooter";
@@ -54,7 +57,7 @@ const game = new Phaser.Game({
   width: GAME_WIDTH,
   height: GAME_HEIGHT,
   backgroundColor: "#1a1b26",
-  scene: [BootScene, PlayScene, HudScene],
+  scene: [BootScene, projectSpec.mode === "digging" ? DiggingScene : PlayScene, HudScene],
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -69,11 +72,14 @@ const game = new Phaser.Game({
   fps: { target: 60, forceSetTimeOut: false },
 });
 game.registry.set("genre", genre);
+game.registry.set("gameTitle", gameTitle);
 const movementLabel = movement === "wasd" ? "WASD" : "Flechas";
 const actionLabelText = actionKey === "e" ? "E" : "Espacio";
-const controlHelp = GAME_HELP[genre].replaceAll("Flechas", movementLabel).replaceAll("espacio", actionLabelText).replaceAll("E para interactuar", `${actionLabelText} para interactuar`);
+const controlHelp = typeof projectSpec.controlHelp === "string"
+  ? projectSpec.controlHelp
+  : GAME_HELP[genre].replaceAll("Flechas", movementLabel).replaceAll("espacio", actionLabelText).replaceAll("E para interactuar", `${actionLabelText} para interactuar`);
 game.registry.set("controlHelp", controlHelp);
-if (controlsSummary) controlsSummary.textContent = `${movementLabel} para moverte · ${actionLabelText} para actuar · botones táctiles visibles`;
+if (controlsSummary) controlsSummary.textContent = controlHelp;
 
 const activeControls = new Set<GameControl>();
 const pointerControls = new Map<number, GameControl>();

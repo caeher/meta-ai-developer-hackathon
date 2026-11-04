@@ -8,6 +8,7 @@ import { SandboxControllerClient } from "@meta-game/sandbox";
 import { createPrivateCheckpointStorageFromEnvironment, createPrivateSnapshotStorageFromEnvironment, createPrivateStorageFromEnvironment, createPublicationArtifactStorageFromEnvironment, createS3PrivateObjectClient, readStorageEnvironment } from "@meta-game/storage";
 import { createSkillRouter } from "@meta-game/skills";
 import { createAgentRunHandler } from "./agent/orchestrator";
+import { createAcceptanceSimulatorMeta } from "./agent/acceptance-simulator";
 import { createPostgresAgentRunStore } from "./agent/store";
 import { createGeneratedImageTool } from "./assets/image-generator";
 import { createEditSpriteTool } from "./assets/edit-sprite";
@@ -219,7 +220,9 @@ async function createEnabledAgentHandler() {
   const store = createPostgresAgentRunStore(database.db);
   const skills = await createSkillRouter({ rootDir });
   const sandbox = getSandboxClient();
-  const meta = new MetaClient(loadMetaConfig(), fetch, telemetryMetrics, readMetaBillingRates());
+  const meta = environment.RUNS_SIMULATOR_ENABLED
+    ? createAcceptanceSimulatorMeta()
+    : new MetaClient(loadMetaConfig(), fetch, telemetryMetrics, readMetaBillingRates());
   const storage = createPrivateStorageFromEnvironment(repositories.assets);
   const checkpoints = getCheckpointStorage();
   closeCallbacks.push(() => { storage.close(); });

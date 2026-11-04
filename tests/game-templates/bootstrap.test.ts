@@ -19,14 +19,16 @@ describe("bootstrap de plantilla Phaser", () => {
       devDependencies: Record<string, string>;
       engines: { node: string };
     };
-
     expect(template.id).toBe(PHASER_TEMPLATE_ID);
     expect(template.manifestSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(paths).toContain("package-lock.json");
     expect(paths).toContain("public/assets/manifest.json");
     expect(paths).toContain("src/game/tilesets.ts");
     expect(paths).toContain("src/game/tilesets.test.ts");
-    expect(paths.length).toBeLessThanOrEqual(32);
+    expect(paths).toContain("src/game/DiggingScene.ts");
+    expect(paths).toContain("src/game/digging.ts");
+    expect(paths).toContain("src/game/digging.test.ts");
+    expect(paths.length).toBeLessThanOrEqual(40);
     expect(paths).not.toContain(".env.local");
     expect(paths.some((path) => path.includes("node_modules") || path.startsWith("dist/"))).toBe(false);
     expect(packageJson).toMatchObject({ dependencies: { phaser: "3.90.0" }, engines: { node: ">=24 <25" } });

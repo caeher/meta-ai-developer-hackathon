@@ -25,6 +25,7 @@ const TEMPLATE_FILES = [
   "public/assets/tile.svg",
   "scripts/check-build.mjs",
   "src/game/BootScene.ts",
+  "src/game/DiggingScene.ts",
   "src/game/HudScene.ts",
   "src/game/PlayScene.ts",
   "src/game/assets.test.ts",
@@ -33,6 +34,8 @@ const TEMPLATE_FILES = [
   "src/game/tilesets.test.ts",
   "src/game/tilesets.ts",
   "src/game/audio.ts",
+  "src/game/digging.test.ts",
+  "src/game/digging.ts",
   "src/game/logic.test.ts",
   "src/game/logic.ts",
   "src/game/project-spec.json",
@@ -43,7 +46,7 @@ const TEMPLATE_FILES = [
   "vite.config.ts",
 ] as const;
 
-const MAX_TEMPLATE_FILES = 32;
+const MAX_TEMPLATE_FILES = 40;
 const MAX_TEMPLATE_BYTES = 2 * 1024 * 1024;
 const TEMPLATE_SOURCE_ROOT = resolve(PHASER_TEMPLATE_ROOT);
 

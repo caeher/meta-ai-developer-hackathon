@@ -1,6 +1,10 @@
 {
   "schemaVersion": 1,
   "genre": "platformer",
+  "mode": "standard",
+  "title": "Juego 2D",
+  "actionLabel": "Saltar",
+  "controlHelp": "Flechas para moverte · espacio para saltar · controles táctiles visibles",
   "intent": "create",
   "objective": "Crear un juego de plataformas con ciclo jugable, objetivo y controles visibles.",
   "changes": [],

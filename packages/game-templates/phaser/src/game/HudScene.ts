@@ -15,7 +15,8 @@ export class HudScene extends Phaser.Scene {
   create(): void {
     const genre = this.registry.get("genre") as GameSnapshot["genre"];
     this.add.rectangle(0, 0, 960, 76, 0x1a1b26, 0.94).setOrigin(0).setScrollFactor(0).setDepth(100);
-    this.add.text(22, 13, `FORJA · ${GAME_LABELS[genre]}`, {
+    const gameTitle = this.registry.get("gameTitle");
+    this.add.text(22, 13, `FORJA · ${typeof gameTitle === "string" ? gameTitle : GAME_LABELS[genre]}`, {
       fontFamily: "ui-sans-serif, system-ui, sans-serif",
       fontSize: "20px",
       fontStyle: "bold",
@@ -48,10 +49,17 @@ export class HudScene extends Phaser.Scene {
     const status = snapshot.phase === "won" ? "¡Victoria! · R para reiniciar"
       : snapshot.phase === "lost" ? "Derrota · R para volver a jugar"
         : snapshot.paused ? "Pausa"
-          : `Cristales ${snapshot.score}/${snapshot.target} · Vidas ${snapshot.lives}${snapshot.muted ? " · Sonido apagado" : ""}`;
+          : snapshot.level && snapshot.levels && snapshot.remainingSeconds !== undefined
+            ? `Gemas ${snapshot.score}/${snapshot.target} · Nivel ${snapshot.level}/${snapshot.levels} · ${formatTime(snapshot.remainingSeconds)} · Vidas ${snapshot.lives}${snapshot.muted ? " · Sonido apagado" : ""}`
+            : `Cristales ${snapshot.score}/${snapshot.target} · Vidas ${snapshot.lives}${snapshot.muted ? " · Sonido apagado" : ""}`;
     if (status === this.previousText) return;
     this.previousText = status;
     this.details.setText(status);
     this.details.setColor(snapshot.phase === "won" ? "#9ece6a" : snapshot.phase === "lost" ? "#f7768e" : "#7dcfff");
   }
+}
+
+function formatTime(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
 }

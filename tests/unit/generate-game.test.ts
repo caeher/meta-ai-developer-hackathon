@@ -5,6 +5,7 @@ import type { AgentSandbox } from "../../apps/worker/src/agent/tools";
 describe("GameSpec y checkpoint de generación", () => {
   it.each([
     ["Crea un juego de plataformas", "platformer"],
+    ["Crea un Boulder Dash con excavación, gemas y rocas que caen", "puzzle"],
     ["Crea un puzzle de lógica", "puzzle"],
     ["Crea un shooter espacial", "shooter"],
     ["Crea un RPG top-down", "rpg"],

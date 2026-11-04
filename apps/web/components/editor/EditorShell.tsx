@@ -188,6 +188,7 @@ export function EditorShell({
   previewBaseDomain,
   versions = [],
   publishingEnabled = false,
+  simulatorEnabled = false,
 }: {
   projectId: string;
   projectName: string;
@@ -197,6 +198,7 @@ export function EditorShell({
   previewBaseDomain?: string;
   versions?: readonly PreviewVersion[];
   publishingEnabled?: boolean;
+  simulatorEnabled?: boolean;
 }) {
   const runEvents = useRunEvents(projectId);
   const [projectName, setProjectName] = useState(initialProjectName);
@@ -708,7 +710,7 @@ export function EditorShell({
                   required
                 />
                 <div className={styles.composerFooter}>
-                  <Text id="editor-prompt-hint" as="span" size="1" color="gray">Máximo 100.000 caracteres. El mensaje queda privado y se envía a Meta al ejecutar.</Text>
+                  <Text id="editor-prompt-hint" as="span" size="1" color="gray">{simulatorEnabled ? "Modo simulador local: el mensaje queda privado y se procesa localmente; no se envía a Meta. Solo admite la demo de excavación." : "Máximo 100.000 caracteres. El mensaje queda privado y se envía a Meta al ejecutar."}</Text>
                   <Button type="submit" disabled={sending || runEvents.working || runEvents.active || runEvents.hydrating || !content.trim()}>
                     {sending || runEvents.working ? "Encolando…" : runEvents.hydrating ? "Recuperando…" : "Enviar al agente"}
                   </Button>

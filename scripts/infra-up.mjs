@@ -13,7 +13,7 @@ import {
 import { spawnSync } from "node:child_process";
 
 function parseOptions(arguments_) {
-  const options = { web: false, worker: false, preview: false, publishing: false, localDomains: false, acceptance: false, runs: false };
+  const options = { web: false, worker: false, preview: false, publishing: false, localDomains: false, acceptance: false, runs: false, simulator: false };
 
   for (const argument of arguments_) {
     if (argument === "--web") options.web = true;
@@ -23,10 +23,12 @@ function parseOptions(arguments_) {
     else if (argument === "--local-domains") options.localDomains = true;
     else if (argument === "--acceptance") options.acceptance = true;
     else if (argument === "--runs") options.runs = true;
+    else if (argument === "--simulator") options.simulator = true;
     else throw new Error(`Opción desconocida para infra:up: ${argument}`);
   }
 
   if (options.runs && !options.acceptance) throw new Error("--runs solo se permite junto a --acceptance.");
+  if (options.simulator && (!options.acceptance || !options.runs)) throw new Error("--simulator solo se permite junto a --acceptance --runs.");
   return options;
 }
 
@@ -73,7 +75,7 @@ function buildAcceptanceSandboxImage() {
   return imageId;
 }
 
-function createAcceptanceEnvironment(sandboxImage, runsEnabled) {
+function createAcceptanceEnvironment(sandboxImage, runsEnabled, simulatorEnabled) {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const keyId = `local-acceptance-${randomUUID()}`;
   const privateKeyBase64 = privateKey.export({ format: "der", type: "pkcs8" }).toString("base64");
@@ -95,6 +97,7 @@ function createAcceptanceEnvironment(sandboxImage, runsEnabled) {
     PUBLISHING_ENABLED: "true",
     PUBLISH_BASE_DOMAIN: "games.localhost",
     RUNS_ENABLED: runsEnabled ? "true" : "false",
+    RUNS_SIMULATOR_ENABLED: simulatorEnabled ? "true" : "false",
     AGENT_ASSET_TOOL_CALLS_ENABLED: "false",
     RESOURCE_LIFECYCLE_ENABLED: "false",
     SANDBOX_DRIVER: "rootless",
@@ -203,7 +206,7 @@ try {
   let dockerEnvironment = safeProcessEnvironment();
   if (options.acceptance) {
     ensureSandboxEgressNetwork();
-    dockerEnvironment = safeProcessEnvironment(createAcceptanceEnvironment(buildAcceptanceSandboxImage(), options.runs));
+    dockerEnvironment = safeProcessEnvironment(createAcceptanceEnvironment(buildAcceptanceSandboxImage(), options.runs, options.simulator));
   }
   if (options.preview && !options.acceptance) {
     if (environment.PREVIEW_GATEWAY_ENABLED !== "true") {
@@ -239,6 +242,9 @@ try {
   if (options.acceptance) {
     migrateAcceptanceDatabase(envFile, dockerEnvironment);
     await verifyLocalHttpsRoutes();
+  }
+  if (options.acceptance && options.simulator) {
+    console.log("Simulador de excavación local activo: sin llamadas al proveedor ni generación de imágenes.");
   }
   console.log("Postgres, Redis y S3 local están disponibles; los buckets siguen siendo privados.");
   if (options.web) console.log("La aplicación web está disponible en http://localhost:3000.");

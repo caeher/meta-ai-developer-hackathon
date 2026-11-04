@@ -165,7 +165,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function detectGenre(text: string): GameGenre | undefined {
   if (/\b(rpg|role.playing|top.down|topdown|rol)\b/.test(text)) return "rpg";
   if (/\b(shooter|shoot|disparos?|naves?|space invaders?)\b/.test(text)) return "shooter";
-  if (/\b(puzzle|rompecabezas|logica|laberinto)\b/.test(text)) return "puzzle";
+  if (/\b(puzzle|rompecabezas|logica|laberinto|boulder.?dash|digging|excava(?:cion|r)?|minero|gemas?|rocas?)\b/.test(text)) return "puzzle";
   if (/\b(platformer|platform|plataformas?|saltos?)\b/.test(text)) return "platformer";
   return undefined;
 }

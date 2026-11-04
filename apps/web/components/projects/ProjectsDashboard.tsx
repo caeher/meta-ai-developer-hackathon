@@ -54,7 +54,7 @@ async function readError(response: Response): Promise<string> {
   return "No se pudo completar la solicitud. Inténtalo de nuevo.";
 }
 
-export function ProjectsDashboard({ initialPage, initialUsage, generationEnabled }: { initialPage: ProjectPage; initialUsage: UsageSummary; generationEnabled: boolean }) {
+export function ProjectsDashboard({ initialPage, initialUsage, generationEnabled, simulatorEnabled }: { initialPage: ProjectPage; initialUsage: UsageSummary; generationEnabled: boolean; simulatorEnabled: boolean }) {
   const [usage, setUsage] = useState(initialUsage);
   const [projects, setProjects] = useState(initialPage.items);
   const [projectsUsed, setProjectsUsed] = useState(initialUsage.projects.used);
@@ -205,7 +205,7 @@ export function ProjectsDashboard({ initialPage, initialUsage, generationEnabled
           <Text as="p" color="gray">Cada proyecto y conversación solo está disponible para su propietario.</Text>
         </div>
         <Flex gap="3" wrap="wrap" align="center">
-          <Badge color={generationEnabled ? "green" : "cyan"} variant="soft">{generationEnabled ? "Agente listo" : "Generación deshabilitada"}</Badge>
+          <Badge color={simulatorEnabled ? "orange" : generationEnabled ? "green" : "cyan"} variant="soft">{simulatorEnabled ? "Simulador local" : generationEnabled ? "Agente listo" : "Generación deshabilitada"}</Badge>
           <Dialog.Root open={deleteAccountOpen} onOpenChange={(open) => { if (!deletingAccount) setDeleteAccountOpen(open); }}>
             <Dialog.Trigger><Button size="2" variant="soft" color="red">Eliminar cuenta</Button></Dialog.Trigger>
             <Dialog.Content>

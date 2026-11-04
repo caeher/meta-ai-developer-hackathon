@@ -32,6 +32,9 @@ export interface GameSnapshot extends GameState {
   readonly paused: boolean;
   readonly assetsReady: boolean;
   readonly generatedAssetKeys: readonly string[];
+  readonly level?: number;
+  readonly levels?: number;
+  readonly remainingSeconds?: number;
 }
 
 export const GAME_OBJECTIVES: Readonly<Record<GameGenre, number>> = {
