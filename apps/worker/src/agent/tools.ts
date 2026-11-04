@@ -33,6 +33,7 @@ import {
   SandboxInstallDependenciesInputSchema,
   SandboxListFilesInputSchema,
   SandboxReadFileInputSchema,
+  SandboxReadFilesInputSchema,
   SandboxReadLogsInputSchema,
   SandboxRunCommandInputSchema,
   SandboxStartDevServerInputSchema,
@@ -42,13 +43,13 @@ import {
 } from "@meta-game/contracts";
 import type { MetaToolDefinition } from "@meta-game/meta";
 import type { SandboxControllerClient } from "@meta-game/sandbox";
-import { isSensitiveWorkspacePath, redactSensitiveText, sensitiveInputReason } from "./safety";
+import { isSensitiveWorkspacePath, redactSensitiveText, sensitiveInputReason, sensitiveWorkspaceContentReason } from "./safety";
 import { buildIssuePlanFiles, issuePlanResult } from "./issue-plan";
 import { GAME_SPEC_PATH } from "../pipelines/game-spec-path";
 
 export type AgentSandbox = Pick<
   SandboxControllerClient,
-  "create" | "inspect" | "readFile" | "readBinaryFile" | "writeFile" | "writeBinaryFile" | "deleteFile" | "listFiles" | "installDependencies" | "runCommand" | "startDevServer" | "readLogs" | "verifyGameInteraction"
+  "create" | "inspect" | "readFile" | "readFiles" | "readBinaryFile" | "writeFile" | "writeBinaryFile" | "deleteFile" | "listFiles" | "installDependencies" | "runCommand" | "startDevServer" | "readLogs" | "verifyGameInteraction"
 >;
 
 type ToolDefinition = MetaToolDefinition & Readonly<{ summary(args: Record<string, unknown>): string }>;
@@ -59,6 +60,12 @@ const definitions: ToolDefinition[] = [
     description: "Read a UTF-8 text file inside the current game workspace. Secret and environment files are blocked.",
     inputSchema: SandboxReadFileInputSchema,
     summary: (args) => `Leer ${String(args.path)}`,
+  },
+  {
+    name: "read_files",
+    description: "Read several UTF-8 text files inside the current game workspace in ONE bulk call. Prefer this over repeated read_file calls when you need multiple files.",
+    inputSchema: SandboxReadFilesInputSchema,
+    summary: (args) => `Leer ${((args.paths as string[]) ?? []).length} archivos en lote`,
   },
   {
     name: "write_file",
@@ -171,7 +178,7 @@ const byName = new Map(definitions.map((definition) => [definition.name, definit
 
 /** Tools que puede usar cada sub-agente segun la fase. Nunca incluye orquestacion anidada. */
 export const SPRITE_SUBAGENT_TOOLS = ["generate_image", "edit_sprite", "make_transparent", "inspect_asset", "pack_spritesheet", "create_tileset", "create_tilemap", "define_animation", "read_file", "list_files"] as const;
-export const GAME_SUBAGENT_TOOLS = ["read_file", "write_file", "list_files", "install_dependencies", "run_command", "start_dev_server", "read_logs", "inspect_asset"] as const;
+export const GAME_SUBAGENT_TOOLS = ["read_file", "read_files", "write_file", "list_files", "install_dependencies", "run_command", "start_dev_server", "read_logs", "inspect_asset"] as const;
 export function subagentToolNames(kind: "sprites" | "game" | "general"): string[] {
   if (kind === "sprites") return [...SPRITE_SUBAGENT_TOOLS];
   if (kind === "game") return [...GAME_SUBAGENT_TOOLS];
@@ -203,8 +210,18 @@ export function prepareAgentToolCalls(calls: readonly Extract<MetaCodeEvent, { t
     const parsed = definition.inputSchema.safeParse(call.arguments);
     if (!parsed.success || !isPlainRecord(parsed.data)) throw new Error("agent_invalid_tool_arguments");
     const args = parsed.data;
-    if (sensitiveInputReason(JSON.stringify(args))) throw new Error("agent_sensitive_content_blocked");
     const path = typeof args.path === "string" ? args.path : undefined;
+    // El contenido de write_file es contenido de workspace (SVG, hashes, datos
+    // de nivel): se escanea con las mascaras de workspace, no con el scan de
+    // prompts. El resto de argumentos mantiene el scan estricto.
+    const fileContent = call.name === "write_file" && path && typeof args.content === "string" ? args.content : undefined;
+    if (path && fileContent !== undefined) {
+      const restArgs = Object.fromEntries(Object.entries(args).filter(([key]) => key !== "content"));
+      if (sensitiveInputReason(JSON.stringify(restArgs))) throw new Error("agent_sensitive_content_blocked");
+      if (sensitiveWorkspaceContentReason(path, fileContent)) throw new Error("agent_sensitive_content_blocked");
+    } else if (sensitiveInputReason(JSON.stringify(args))) {
+      throw new Error("agent_sensitive_content_blocked");
+    }
     if (path && isSensitiveWorkspacePath(path)) throw new Error("agent_sensitive_path_blocked");
     if (call.name === "write_file" && path === GAME_SPEC_PATH) throw new Error("agent_reserved_path_blocked");
     const normalized = canonicalJson(args);
@@ -389,6 +406,14 @@ export async function executeAgentTool(
       const result = await sandbox.readFile(projectId, String(args.path), signal);
       const content = redactSensitiveText(result.content);
       return { path: result.path, content: content.slice(0, 6_000), truncated: content.length > 6_000 };
+    }
+    case "read_files": {
+      const result = await sandbox.readFiles(projectId, (args.paths as string[]) ?? [], signal);
+      return {
+        files: result.files.map((file) => "content" in file
+          ? { path: file.path, content: redactSensitiveText(file.content).slice(0, 6_000), truncated: file.content.length > 6_000 }
+          : { path: file.path, errorCode: file.errorCode }),
+      };
     }
     case "write_file": {
       const result = await sandbox.writeFile(projectId, String(args.path), String(args.content), signal);

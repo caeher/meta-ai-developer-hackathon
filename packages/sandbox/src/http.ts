@@ -7,6 +7,7 @@ import { createTelemetryLogger, isOpaqueTelemetryId, withTelemetryContext, type 
 import {
   SandboxInstallDependenciesInputSchema,
   SandboxReadFileInputSchema,
+  SandboxReadFilesInputSchema,
   SandboxReadBinaryFileInputSchema,
   SandboxDeleteFileInputSchema,
   SandboxRunCommandInputSchema,
@@ -20,7 +21,7 @@ const execPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/exec$/i;
 const stopPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/stop$/i;
 const cleanupPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/cleanup$/i;
 const quiescePath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/quiesce$/i;
-const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|read-binary-file|write-file|delete-file|write-binary-file|list-files|install-dependencies|run-command|start-dev-server|read-logs|verify-game)$/i;
+const toolPath = /^\/v1\/projects\/([0-9a-f-]{36})\/sandbox\/tools\/(read-file|read-files|read-binary-file|write-file|delete-file|write-binary-file|list-files|install-dependencies|run-command|start-dev-server|read-logs|verify-game)$/i;
 const projectIdSchema = z.uuid();
 const execSchema = z.object({
   argv: z.array(z.string()).min(1).max(64),
@@ -167,6 +168,14 @@ async function handleRequest(
         const input = SandboxReadFileInputSchema.safeParse(body);
         if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
         const result = await service.readFile(projectId, input.data.path);
+        recordOperation("success");
+        send(response, 200, result);
+        return;
+      }
+      if (tool === "read-files") {
+        const input = SandboxReadFilesInputSchema.safeParse(body);
+        if (!input.success) { send(response, 400, { error: "invalid_tool_input" }); return; }
+        const result = await service.readFiles(projectId, input.data.paths);
         recordOperation("success");
         send(response, 200, result);
         return;

@@ -8,7 +8,7 @@ import {
 import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { AgentSandbox } from "../agent/tools";
-import { isSensitiveWorkspacePath, sensitiveInputReason } from "../agent/safety";
+import { isSensitiveWorkspacePath, sensitiveWorkspaceContentReason } from "../agent/safety";
 
 export { GAME_SPEC_PATH } from "./game-spec-path";
 const CHECKPOINT_SCHEMA_VERSION = 1;
@@ -76,8 +76,7 @@ export function gameSpecInstructions(spec: GameSpec): string {
 }
 
 export async function captureGameCheckpoint(sandbox: AgentSandbox, projectId: string, signal: AbortSignal) {
-  const files: CheckpointFile[] = [];
-  let totalBytes = 0;
+  const candidates: string[] = [];
   const queue = [""];
   while (queue.length) {
     const directory = queue.shift()!;
@@ -90,20 +89,43 @@ export async function captureGameCheckpoint(sandbox: AgentSandbox, projectId: st
       }
       const path = directory ? `${directory}/${entry.name}` : entry.name;
       if (entry.name === "package-lock.json" || isSensitiveWorkspacePath(path) || BINARY_EXTENSIONS.test(path) || entry.size > CHECKPOINT_MAX_FILE_BYTES) continue;
-      if (files.length >= CHECKPOINT_MAX_FILES) throw new Error("game_checkpoint_file_limit");
-      let read: { content: string };
-      try { read = await sandbox.readFile(projectId, path, signal); }
-      catch (error) {
+      candidates.push(path);
+    }
+  }
+  if (candidates.length > CHECKPOINT_MAX_FILES) throw new Error("game_checkpoint_file_limit");
+
+  // Lectura masiva: un solo read-many para todo el lote cuando el sandbox lo
+  // ofrece; si no, lectura secuencial de compatibilidad.
+  const contents = new Map<string, string>();
+  if (candidates.length > 0 && typeof sandbox.readFiles === "function") {
+    const bulk = await sandbox.readFiles(projectId, candidates, signal);
+    for (const entry of bulk.files) {
+      if ("content" in entry) contents.set(entry.path, entry.content);
+      else if (entry.errorCode !== "file_not_utf8") throw new Error(entry.errorCode);
+    }
+  } else {
+    for (const path of candidates) {
+      try {
+        const read = await sandbox.readFile(projectId, path, signal);
+        contents.set(path, read.content);
+      } catch (error) {
         if (errorCode(error) === "file_not_utf8") continue;
         throw error;
       }
-      if (sensitiveInputReason(read.content)) throw new Error("game_checkpoint_sensitive_content_blocked");
-      const bytes = Buffer.byteLength(read.content, "utf8");
-      if (bytes > CHECKPOINT_MAX_FILE_BYTES) continue;
-      totalBytes += bytes;
-      if (totalBytes > CHECKPOINT_MAX_TOTAL_BYTES) throw new Error("game_checkpoint_size_limit");
-      files.push({ path, content: read.content, bytes, sha256: sha256(read.content) });
     }
+  }
+
+  const files: CheckpointFile[] = [];
+  let totalBytes = 0;
+  for (const path of candidates) {
+    const content = contents.get(path);
+    if (content === undefined) continue;
+    if (sensitiveWorkspaceContentReason(path, content)) throw new Error("game_checkpoint_sensitive_content_blocked");
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > CHECKPOINT_MAX_FILE_BYTES) continue;
+    totalBytes += bytes;
+    if (totalBytes > CHECKPOINT_MAX_TOTAL_BYTES) throw new Error("game_checkpoint_size_limit");
+    files.push({ path, content, bytes, sha256: sha256(content) });
   }
 
   const manifest: CheckpointManifest = { schemaVersion: CHECKPOINT_SCHEMA_VERSION, files, totalBytes };

@@ -82,7 +82,7 @@ static int open_directory(const char *path) {
   return current;
 }
 
-static void encode_base64(const unsigned char *data, size_t length) {
+static void encode_base64_raw(const unsigned char *data, size_t length) {
   static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   for (size_t i = 0; i < length; i += 3) {
     unsigned int a = data[i];
@@ -95,6 +95,10 @@ static void encode_base64(const unsigned char *data, size_t length) {
     };
     if (fwrite(out, 1, sizeof(out), stdout) != sizeof(out)) fail("output_failed");
   }
+}
+
+static void encode_base64(const unsigned char *data, size_t length) {
+  encode_base64_raw(data, length);
   (void)putchar('\n');
 }
 
@@ -191,6 +195,58 @@ static void json_string(const char *value) {
   (void)putchar('"');
 }
 
+#define MAX_READ_MANY_PATHS 64
+#define MAX_READ_MANY_INPUT_BYTES (64 * 1024)
+
+static void read_many(void) {
+  static char input[MAX_READ_MANY_INPUT_BYTES + 1];
+  size_t used = 0;
+  while (used < MAX_READ_MANY_INPUT_BYTES) {
+    ssize_t got = read(STDIN_FILENO, input + used, MAX_READ_MANY_INPUT_BYTES - used);
+    if (got < 0) fail("file_read_failed");
+    if (got == 0) break;
+    used += (size_t)got;
+  }
+  unsigned char extra;
+  if (read(STDIN_FILENO, &extra, 1) != 0) fail("invalid_arguments");
+  input[used] = '\0';
+  size_t count = 0;
+  char *save = NULL;
+  for (char *line = strtok_r(input, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+    size_t len = strlen(line);
+    if (len && line[len - 1] == '\r') line[len - 1] = '\0';
+    if (!*line) continue;
+    if (++count > MAX_READ_MANY_PATHS) fail("invalid_arguments");
+    char leaf[NAME_MAX + 1];
+    int parent = open_parent(line, leaf, sizeof(leaf), 0);
+    int fd = openat(parent, leaf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    close(parent);
+    if (fd < 0) fail(errno == ELOOP ? "symlink_not_allowed" : "file_not_found");
+    struct stat info;
+    if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) { close(fd); fail("special_file_not_allowed"); }
+    if (info.st_size < 0 || info.st_size > MAX_FILE_BYTES) { close(fd); fail("file_too_large"); }
+    unsigned char *buffer = malloc(MAX_FILE_BYTES);
+    if (!buffer) { close(fd); fail("out_of_memory"); }
+    size_t size = 0;
+    while (size < MAX_FILE_BYTES) {
+      ssize_t got = read(fd, buffer + size, MAX_FILE_BYTES - size);
+      if (got < 0) { free(buffer); close(fd); fail("file_read_failed"); }
+      if (got == 0) break;
+      size += (size_t)got;
+    }
+    unsigned char tail;
+    if (read(fd, &tail, 1) != 0) { free(buffer); close(fd); fail("file_too_large"); }
+    close(fd);
+    (void)printf("{\"path\":");
+    json_string(line);
+    (void)printf(",\"contentBase64\":\"");
+    encode_base64_raw(buffer, size);
+    free(buffer);
+    (void)puts("\"}");
+  }
+  if (count == 0) fail("invalid_arguments");
+}
+
 static void list_files(const char *path) {
   int directory_fd = open_directory(path);
   int dupfd = dup(directory_fd);
@@ -217,6 +273,7 @@ static void list_files(const char *path) {
 }
 
 int main(int argc, char **argv) {
+  if (argc == 2 && strcmp(argv[1], "read-many") == 0) { read_many(); return 0; }
   if (argc != 3) fail("invalid_arguments");
   if (strcmp(argv[1], "read") == 0) read_file(argv[2]);
   else if (strcmp(argv[1], "write") == 0) write_file(argv[2]);

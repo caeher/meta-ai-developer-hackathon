@@ -15,6 +15,16 @@ const workspacePath = z.string().min(1).max(512).refine((value) => {
 }, "Path must stay within the workspace");
 
 export const SandboxReadFileInputSchema = z.object({ path: workspacePath }).strict();
+export const SANDBOX_READ_FILES_MAX_PATHS = 64;
+export const SANDBOX_BULK_READ_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
+export const SandboxReadFilesInputSchema = z.object({
+  paths: z.array(workspacePath).min(1).max(SANDBOX_READ_FILES_MAX_PATHS),
+}).strict().refine(({ paths }) => new Set(paths).size === paths.length, "Paths must be unique");
+export type SandboxReadFilesInput = z.infer<typeof SandboxReadFilesInputSchema>;
+export type SandboxReadFileEntry =
+  | Readonly<{ path: string; content: string }>
+  | Readonly<{ path: string; errorCode: string }>;
+export type SandboxReadFilesResult = Readonly<{ files: SandboxReadFileEntry[] }>;
 export const SandboxReadBinaryFileInputSchema = z.object({ path: workspacePath.refine((path) =>
   /^public\/assets\/.+\.(?:png|jpe?g|webp|gif|svg|ico|mp3|ogg|wav|mp4|webm|wasm|woff2?|ttf|otf)$/i.test(path) ||
   /^dist\/.+\.(?:png|jpe?g|webp|gif|svg|ico|mp3|ogg|wav|mp4|webm|wasm|woff2?|ttf|otf)$/i.test(path),

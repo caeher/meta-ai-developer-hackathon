@@ -38,6 +38,39 @@ describe("new agent tool contracts", () => {
   });
 });
 
+describe("write_file sensitive scanning", () => {
+  it("accepts SVG geometry digits in write_file content but blocks a real phone number in code", () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path d="M 415 555 0147 32 8 12 24 28 40"/></svg>';
+    const calls = prepareAgentToolCalls([
+      { type: "tool_call", callId: "w1", name: "write_file", arguments: { path: "public/assets/player.svg", content: svg } },
+    ] as never);
+    expect(calls.map((c) => c.name)).toEqual(["write_file"]);
+
+    expect(() => prepareAgentToolCalls([
+      { type: "tool_call", callId: "w2", name: "write_file", arguments: { path: "src/game/dialogue.ts", content: "export const hint = 'Call 202-555-0147';" } },
+    ] as never)).toThrow("agent_sensitive_content_blocked");
+  });
+});
+
+describe("read_files bulk tool", () => {
+  it("prepara y ejecuta read_files con una sola llamada masiva al sandbox", async () => {
+    const readFiles = vi.fn(async (_projectId: string, paths: string[]) => ({
+      files: paths.map((path) => ({ path, content: `// ${path}` })),
+    }));
+    const sandbox = { readFiles } as unknown as AgentSandbox;
+    const [call] = prepareAgentToolCalls([
+      { type: "tool_call", callId: "r1", name: "read_files", arguments: { paths: ["src/main.ts", "src/game.ts"] } },
+    ] as never);
+
+    const result = await executeAgentTool(sandbox, "proj", call!, new AbortController().signal) as { files: Array<{ path: string }> };
+
+    expect(call?.name).toBe("read_files");
+    expect(readFiles).toHaveBeenCalledTimes(1);
+    expect(readFiles).toHaveBeenCalledWith("proj", ["src/main.ts", "src/game.ts"], expect.any(AbortSignal));
+    expect(result.files.map((file) => file.path)).toEqual(["src/main.ts", "src/game.ts"]);
+  });
+});
+
 describe("issue plan markdown", () => {
   const input = CreateIssuePlanInputSchema.parse({
     title: "Plataformas",

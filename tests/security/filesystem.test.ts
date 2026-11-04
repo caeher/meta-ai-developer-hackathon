@@ -3,6 +3,7 @@ import {
   SANDBOX_FILE_MAX_BYTES,
   SandboxListFilesInputSchema,
   SandboxReadFileInputSchema,
+  SandboxReadFilesInputSchema,
   SandboxWriteFileInputSchema,
 } from "@meta-game/contracts";
 
@@ -20,6 +21,14 @@ describe("sandbox filesystem tool contracts", () => {
       expect(SandboxWriteFileInputSchema.safeParse({ path, content: "x" }).success).toBe(false);
     },
   );
+
+  it("accepts a bounded unique batch of workspace paths for bulk reads", () => {
+    expect(SandboxReadFilesInputSchema.safeParse({ paths: ["src/main.ts", "src/game.ts"] }).success).toBe(true);
+    expect(SandboxReadFilesInputSchema.safeParse({ paths: [] }).success).toBe(false);
+    expect(SandboxReadFilesInputSchema.safeParse({ paths: ["src/main.ts", "src/main.ts"] }).success).toBe(false);
+    expect(SandboxReadFilesInputSchema.safeParse({ paths: ["../secret"] }).success).toBe(false);
+    expect(SandboxReadFilesInputSchema.safeParse({ paths: Array.from({ length: 65 }, (_, i) => `src/f${i}.ts`) }).success).toBe(false);
+  });
 
   it("caps UTF-8 file contents at one MiB", () => {
     const accepted = "a".repeat(SANDBOX_FILE_MAX_BYTES);

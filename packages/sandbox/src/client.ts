@@ -11,6 +11,8 @@ import {
   type SandboxDevServerState,
   type SandboxFileEntry,
   type SandboxInstallDependenciesInput,
+  type SandboxReadFilesInput,
+  type SandboxReadFilesResult,
   type SandboxRunCommandInput,
   type SandboxToolCommandResult,
 } from "@meta-game/contracts";
@@ -66,6 +68,11 @@ export class SandboxControllerClient {
 
   readFile(projectId: string, path: string, signal?: AbortSignal): Promise<{ path: string; content: string }> {
     return this.tool(projectId, "read-file", { path }, signal);
+  }
+
+  readFiles(projectId: string, paths: readonly string[], signal?: AbortSignal): Promise<SandboxReadFilesResult> {
+    const input: SandboxReadFilesInput = { paths: [...paths] };
+    return this.tool(projectId, "read-files", input, signal);
   }
 
   async readBinaryFile(projectId: string, path: string, signal?: AbortSignal): Promise<Uint8Array> {

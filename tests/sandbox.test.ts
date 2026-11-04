@@ -77,6 +77,14 @@ function fixture() {
         const bytesWritten = typeof stdin === "string" ? Buffer.byteLength(stdin, "utf8") : stdin.byteLength;
         return { stdout: `${bytesWritten}\n`, stderr: "", exitCode: 0, durationMs: 2 };
       }
+      if (argv[0] === "/usr/local/bin/workspace-fs" && argv[1] === "read-many") {
+        const lines = [
+          { path: "src/main.ts", contentBase64: Buffer.from("export {};", "utf8").toString("base64") },
+          { path: "src/game.ts", contentBase64: Buffer.from("export const game = true;", "utf8").toString("base64") },
+          { path: "assets/blob.bin", contentBase64: Buffer.from([0xff, 0xfe, 0xfd]).toString("base64") },
+        ];
+        return { stdout: `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, stderr: "", exitCode: 0, durationMs: 2 };
+      }
       if (argv[0] === "/usr/local/bin/workspace-fs" && argv[1] === "read") {
         return { stdout: `${Buffer.from("export {};", "utf8").toString("base64")}\n`, stderr: "", exitCode: 0, durationMs: 2 };
       }
@@ -400,6 +408,24 @@ describe("sandbox rootless contract", () => {
     );
   });
 
+  it("lee varios archivos con una sola ejecucion read-many y marca los no UTF-8 por archivo", async () => {
+    const f = fixture();
+    await f.service.create(PROJECT_ID);
+
+    const result = await f.service.readFiles(PROJECT_ID, ["src/main.ts", "src/game.ts", "assets/blob.bin"]);
+
+    expect(result.files).toEqual([
+      { path: "src/main.ts", content: "export {};" },
+      { path: "src/game.ts", content: "export const game = true;" },
+      { path: "assets/blob.bin", errorCode: "file_not_utf8" },
+    ]);
+    const readManyCalls = (f.driver.exec as ReturnType<typeof vi.fn>).mock.calls
+      .filter((call) => (call[3] as string[])[1] === "read-many");
+    expect(readManyCalls).toHaveLength(1);
+    expect(readManyCalls[0]?.[3]).toEqual(["/usr/local/bin/workspace-fs", "read-many"]);
+    expect(readManyCalls[0]?.[6]).toMatchObject({ stdin: "src/main.ts\nsrc/game.ts\nassets/blob.bin\n" });
+  });
+
   it("ejecuta la verificación de interacción con el runner confiable dentro del sandbox y exige preview saludable", async () => {
     const f = fixture();
     await f.service.create(PROJECT_ID);
@@ -492,6 +518,12 @@ describe("sandbox rootless contract", () => {
     expect(metrics.value("sandbox_operations_total", { operation: "create", outcome: "success" })).toBe(1);
     output.mockRestore();
 
+    await expect(client.readFiles(PROJECT_ID, ["src/main.ts", "assets/blob.bin"])).resolves.toEqual({
+      files: [
+        { path: "src/main.ts", content: "export {};" },
+        { path: "assets/blob.bin", errorCode: "file_not_utf8" },
+      ],
+    });
     await expect(client.exec(PROJECT_ID, ["npm", "run", "build"])).resolves.toMatchObject({ stdout: "ok", exitCode: 0, truncated: false });
     await expect(client.writeBinaryFile(PROJECT_ID, "public/assets/generated/00000000-0000-4000-8000-000000000002.png", new Uint8Array([137, 80, 78, 71])))
       .resolves.toMatchObject({ path: "public/assets/generated/00000000-0000-4000-8000-000000000002.png", bytesWritten: 4 });

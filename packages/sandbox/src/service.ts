@@ -15,6 +15,9 @@ import {
   SANDBOX_BINARY_FILE_MAX_BYTES,
   SandboxListFilesInputSchema,
   SandboxReadFileInputSchema,
+  SandboxReadFilesInputSchema,
+  SANDBOX_BULK_READ_OUTPUT_MAX_BYTES,
+  type SandboxReadFilesResult,
   SandboxReadBinaryFileInputSchema,
   SandboxDeleteFileInputSchema,
   SandboxRunCommandInputSchema,
@@ -350,6 +353,39 @@ export class SandboxService {
     const bytesWritten = Number(result.stdout.trim());
     if (!Number.isSafeInteger(bytesWritten) || bytesWritten !== content.byteLength) throw new SandboxRuntimeError("file_write_failed");
     return { path: parsed.data.path, bytesWritten };
+  }
+
+  // Lectura masiva: una sola ejecucion del helper para todo el lote, en vez
+  // de un exec por archivo. Los archivos no UTF-8 se marcan por entrada.
+  async readFiles(projectId: string, paths: readonly string[]): Promise<SandboxReadFilesResult> {
+    const parsed = SandboxReadFilesInputSchema.safeParse({ paths: [...paths] });
+    if (!parsed.success) throw new SandboxRuntimeError("invalid_tool_input");
+    const result = await this.executeSandboxCommand(
+      projectId, ["/usr/local/bin/workspace-fs", "read-many"], "",
+      this.environment.SANDBOX_COMMAND_TIMEOUT_MS, SANDBOX_BULK_READ_OUTPUT_MAX_BYTES,
+      `${parsed.data.paths.join("\n")}\n`,
+    );
+    if (result.exitCode !== 0) throw helperError(result.stderr);
+    const byPath = new Map<string, string>();
+    for (const line of result.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      let entry: { path?: unknown; contentBase64?: unknown };
+      try { entry = JSON.parse(line) as { path?: unknown; contentBase64?: unknown }; }
+      catch { throw new SandboxRuntimeError("file_read_failed"); }
+      if (typeof entry.path !== "string" || typeof entry.contentBase64 !== "string" ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(entry.contentBase64)) {
+        throw new SandboxRuntimeError("file_read_failed");
+      }
+      byPath.set(entry.path, entry.contentBase64);
+    }
+    const files = parsed.data.paths.map((path) => {
+      const encoded = byPath.get(path);
+      if (encoded === undefined) throw new SandboxRuntimeError("file_read_failed");
+      try {
+        return { path, content: new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(encoded, "base64")) };
+      } catch { return { path, errorCode: "file_not_utf8" }; }
+    });
+    return { files };
   }
 
   async listFiles(projectId: string, path = ""): Promise<{ path: string; files: SandboxFileEntry[] }> {
