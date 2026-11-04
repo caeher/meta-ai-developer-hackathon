@@ -188,6 +188,35 @@ function codeCall(callId: string, name: string, argumentsValue: unknown): Extrac
 }
 
 describe("orquestador de runs", () => {
+  it("trata path_not_found de un archivo opcional como un workspace vacío", async () => {
+    const readFile = vi.fn(async (_projectId: string, path: string) => {
+      if (path === "src/game/project-spec.json" || path === ".meta-game-template.json") {
+        const code = path === "src/game/project-spec.json" ? "path_not_found" : "not_found";
+        const error = new Error(code) as Error & { code: string };
+        error.code = code;
+        throw error;
+      }
+      return { path, content: '{"scripts":{"test":"vitest run","lint":"tsc --noEmit","build":"vite build"}}' };
+    });
+    const inspect = vi.fn(async () => ({
+      sandboxId: "sandbox",
+      state: "ready" as const,
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      devServer: { status: "stopped" as const, port: null, leaseExpiresAt: null },
+    }));
+    const { options, planCall, store } = makeOptions({ sandboxOverrides: { inspect, readFile } });
+
+    await createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    });
+
+    expect(readFile).toHaveBeenCalledWith(claim.projectId, "src/game/project-spec.json", expect.any(AbortSignal));
+    expect(planCall).toHaveBeenCalledTimes(1);
+    expect(store.events.some((event) => event.type === "agent.failed")).toBe(false);
+  });
+
   it("reserva una imagen antes de Meta, persiste su uso y entrega el resultado al run", async () => {
     const trace: string[] = [];
     const imageCall = codeCall("call-image-1", "generate_image", {

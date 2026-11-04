@@ -1334,8 +1334,9 @@ function safeCauseCode(error: unknown): string | undefined {
 }
 
 function isNotFound(error: unknown): boolean {
-  return error instanceof Error && "code" in error && ((error as Error & { code?: unknown }).code === "not_found" ||
-    (error as Error & { code?: unknown }).code === "sandbox_not_found");
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  return ["not_found", "sandbox_not_found", "file_not_found", "path_not_found"]
+    .includes(String((error as Error & { code?: unknown }).code));
 }
 
 function validateLimits(options: AgentOrchestratorOptions): void {
