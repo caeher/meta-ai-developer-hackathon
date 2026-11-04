@@ -44,6 +44,7 @@ import type { MetaToolDefinition } from "@meta-game/meta";
 import type { SandboxControllerClient } from "@meta-game/sandbox";
 import { isSensitiveWorkspacePath, redactSensitiveText, sensitiveInputReason } from "./safety";
 import { buildIssuePlanFiles, issuePlanResult } from "./issue-plan";
+import { GAME_SPEC_PATH } from "../pipelines/game-spec-path";
 
 export type AgentSandbox = Pick<
   SandboxControllerClient,
@@ -205,6 +206,7 @@ export function prepareAgentToolCalls(calls: readonly Extract<MetaCodeEvent, { t
     if (sensitiveInputReason(JSON.stringify(args))) throw new Error("agent_sensitive_content_blocked");
     const path = typeof args.path === "string" ? args.path : undefined;
     if (path && isSensitiveWorkspacePath(path)) throw new Error("agent_sensitive_path_blocked");
+    if (call.name === "write_file" && path === GAME_SPEC_PATH) throw new Error("agent_reserved_path_blocked");
     const normalized = canonicalJson(args);
     return {
       callId: call.callId,

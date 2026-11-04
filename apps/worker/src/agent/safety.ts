@@ -10,7 +10,7 @@ const sensitivePatterns = [
 const paymentCardPattern = /\b(?:\d[ -]?){13,19}\b/;
 const phoneLikePattern = /(?:\+?\d[\d ().-]{7,}\d)/;
 const outputRedactionPatterns = [...sensitivePatterns, paymentCardPattern, phoneLikePattern].map((pattern) => new RegExp(pattern.source, `${pattern.flags}g`));
-const secretPathPattern = /(?:^|\/)(?:\.env(?:\.[^/]*)?|id_rsa(?:\.[^/]*)?|authorized_keys|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|service[-_]?account(?:\.[^/]*)?|kubeconfig|[^/]+\.(?:pem|key|p12|pfx))(?:$|\/)/i;
+const secretPathPattern = /(?:^|\/)(?:\.env(?:\.[^/]*)?|\.npmrc|\.yarnrc(?:\.yml)?|\.pypirc|\.git-credentials|id_rsa(?:\.[^/]*)?|id_ed25519(?:\.[^/]*)?|authorized_keys|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|service[-_]?account(?:\.[^/]*)?|kubeconfig|[^/]+\.(?:pem|key|p12|pfx))(?:$|\/)/i;
 
 export function sensitiveInputReason(value: string): "sensitive_content" | undefined {
   return sensitiveContentReason(value, value);

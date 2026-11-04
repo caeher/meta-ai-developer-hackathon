@@ -17,8 +17,10 @@ import {
 } from "@meta-game/storage";
 import type { AgentSandbox } from "../agent/tools";
 import { isSensitiveWorkspacePath, sensitiveWorkspaceContentReason } from "../agent/safety";
+import { GAME_SPEC_PATH } from "../pipelines/game-spec-path";
 
 const BINARY_PATH = /^public\/assets\/.+\.(?:png|jpe?g|webp|gif|ico|mp3|ogg|wav|mp4|webm|wasm|woff2?|ttf|otf)$/i;
+const PHASER_RUNTIME_SPEC_PATH = "src/game/project-spec.json";
 const SKIP_DIRECTORIES = new Set(["node_modules", "dist", ".next", ".git", ".vite", "coverage", "test-results", "playwright-report", "tmp", "temp"]);
 const MAX_FILE_COUNT = 512;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
@@ -57,10 +59,12 @@ export function createVersionService(input: {
     async captureLifecycleSnapshot(identity: VersionSnapshotIdentity, signal: AbortSignal) {
       const files = await captureWorkspaceFiles(input.sandbox, identity.projectId, signal, { requireProjectFiles: false }, limits);
       if (!files.length) return null;
-      const specFile = files.find((file) => file.path === "src/game/project-spec.json" && file.encoding === "utf8");
+      const normalizedSpecFile = files.find((file) => file.path === GAME_SPEC_PATH && file.encoding === "utf8");
+      const runtimeSpecFile = files.find((file) => file.path === PHASER_RUNTIME_SPEC_PATH && file.encoding === "utf8");
+      const specFile = normalizedSpecFile ?? runtimeSpecFile;
       if (!specFile || specFile.encoding !== "utf8") throw new Error("lifecycle_snapshot_game_spec_missing");
       let gameSpec: GameSpec;
-      try { gameSpec = GameSpecSchema.parse(JSON.parse(specFile.content)); }
+      try { gameSpec = parseWorkspaceGameSpec(specFile.content, specFile.path === PHASER_RUNTIME_SPEC_PATH); }
       catch { throw new Error("lifecycle_snapshot_game_spec_invalid"); }
       const snapshot: VersionSnapshot = {
         schemaVersion: 1,
@@ -110,11 +114,11 @@ export function createVersionService(input: {
         throw new Error("version_verification_report_invalid");
       }
       const files = await captureWorkspaceFiles(input.sandbox, args.claim.projectId, args.signal, {}, limits);
-      const specFile = files.find((file) => file.path === "src/game/project-spec.json");
+      const specFile = files.find((file) => file.path === GAME_SPEC_PATH);
       if (!specFile || specFile.encoding !== "utf8") throw new Error("version_game_spec_missing");
       const storedSpec = GameSpecSchema.parse(JSON.parse(specFile.content));
       if (JSON.stringify(storedSpec) !== JSON.stringify(GameSpecSchema.parse(args.gameSpec))) throw new Error("version_game_spec_mismatch");
-      for (const requiredPath of ["package.json", "package-lock.json", "public/assets/manifest.json"]) {
+      for (const requiredPath of ["package.json", "package-lock.json", GAME_SPEC_PATH, PHASER_RUNTIME_SPEC_PATH, "public/assets/manifest.json"]) {
         if (!files.some((file) => file.path === requiredPath)) throw new Error("version_required_file_missing");
       }
 
@@ -401,11 +405,29 @@ async function captureWorkspaceFiles(
   }
   files.sort((left, right) => left.path.localeCompare(right.path));
   if (options.requireProjectFiles !== false) {
-    for (const path of ["package.json", "package-lock.json", "src/game/project-spec.json", "public/assets/manifest.json"]) {
+    for (const path of ["package.json", "package-lock.json", GAME_SPEC_PATH, PHASER_RUNTIME_SPEC_PATH, "public/assets/manifest.json"]) {
       if (!files.some((file) => file.path === path)) throw new Error("version_required_file_missing");
     }
   }
   return files;
+}
+
+function parseWorkspaceGameSpec(content: string, allowRuntimeExtensions: boolean): GameSpec {
+  const value: unknown = JSON.parse(content);
+  const strict = GameSpecSchema.safeParse(value);
+  if (strict.success) return strict.data;
+  if (!allowRuntimeExtensions || typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("game_spec_invalid");
+  }
+  const source = value as Record<string, unknown>;
+  return GameSpecSchema.parse({
+    schemaVersion: source.schemaVersion,
+    genre: source.genre,
+    intent: source.intent,
+    objective: source.objective,
+    changes: source.changes,
+    controls: source.controls,
+  });
 }
 
 async function applyFileSet(

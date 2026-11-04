@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import { GameSpecSchema } from "@meta-game/contracts";
 import { AgentRunEventSchema, type AgentRunEvent, type MetaCodeEvent, type MetaConversationItem, type MetaPlan } from "@meta-game/contracts";
 import { identityFromAuthenticatedSession, UsageLimitExceededError } from "@meta-game/db";
 import type { AgentRunStore } from "../../apps/worker/src/agent/store";
@@ -190,8 +191,8 @@ function codeCall(callId: string, name: string, argumentsValue: unknown): Extrac
 describe("orquestador de runs", () => {
   it("trata path_not_found de un archivo opcional como un workspace vacío", async () => {
     const readFile = vi.fn(async (_projectId: string, path: string) => {
-      if (path === "src/game/project-spec.json" || path === ".meta-game-template.json") {
-        const code = path === "src/game/project-spec.json" ? "path_not_found" : "not_found";
+      if (path === "src/game/game-spec.json" || path === ".meta-game-template.json") {
+        const code = path === "src/game/game-spec.json" ? "path_not_found" : "not_found";
         const error = new Error(code) as Error & { code: string };
         error.code = code;
         throw error;
@@ -212,7 +213,7 @@ describe("orquestador de runs", () => {
       markVerifying: vi.fn(),
     });
 
-    expect(readFile).toHaveBeenCalledWith(claim.projectId, "src/game/project-spec.json", expect.any(AbortSignal));
+    expect(readFile).toHaveBeenCalledWith(claim.projectId, "src/game/game-spec.json", expect.any(AbortSignal));
     expect(planCall).toHaveBeenCalledTimes(1);
     expect(store.events.some((event) => event.type === "agent.failed")).toBe(false);
   });
@@ -897,6 +898,9 @@ describe("snapshotFailureCauseCode", () => {
     expect(snapshotFailureCauseCode(new Error("version_game_spec_mismatch"))).toBe("version_game_spec_mismatch");
     expect(snapshotFailureCauseCode(new Error("token secreto"))).toBe("version_snapshot_internal_error");
     expect(snapshotFailureCauseCode("boom")).toBe("version_snapshot_internal_error");
+    const invalidSpec = GameSpecSchema.safeParse({ schemaVersion: 1, genre: "puzzle", intent: "create", changes: [], controls: { movement: "arrows", action: "space", touch: true } });
+    expect(invalidSpec.success).toBe(false);
+    if (!invalidSpec.success) expect(snapshotFailureCauseCode(invalidSpec.error)).toBe("zod_objective_invalid_type");
     const failed = AgentRunEventSchema.safeParse({ type: "agent.failed", payload: { errorCode: "version_snapshot_failed", causeCode: "version_game_spec_mismatch" } });
     expect(failed.success).toBe(true);
     const err = new RunProcessingError("version_snapshot_failed", false, undefined, "version_game_spec_mismatch");

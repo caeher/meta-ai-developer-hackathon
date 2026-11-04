@@ -1,9 +1,16 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { sensitiveInputReason, sensitiveWorkspaceContentReason } from "../../apps/worker/src/agent/safety";
+import { isSensitiveWorkspacePath, sensitiveInputReason, sensitiveWorkspaceContentReason } from "../../apps/worker/src/agent/safety";
 
 describe("sensitive workspace scanning", () => {
+  it("keeps package-manager and credential config out of workspace snapshots", () => {
+    for (const path of [".npmrc", ".yarnrc.yml", ".pypirc", ".git-credentials", "src/credentials.json", "src/id_ed25519"]) {
+      expect(isSensitiveWorkspacePath(path)).toBe(true);
+    }
+    expect(isSensitiveWorkspacePath("package-lock.json")).toBe(false);
+  });
+
   it("continues to block phone numbers in user text", () => {
     expect(sensitiveInputReason("Call me at 202-555-0147")).toBe("sensitive_content");
     expect(sensitiveInputReason("Card 1111 1111 1111 1111")).toBe("sensitive_content");

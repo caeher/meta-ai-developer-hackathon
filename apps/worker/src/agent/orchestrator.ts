@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { ZodError } from "zod";
 import {
   AgentRunEventSchema,
   GameSpecSchema,
@@ -527,6 +528,23 @@ async function runCodeUntilFinal(input: {
 
 export function snapshotFailureCauseCode(error: unknown): string {
   if (error instanceof Error) {
+    if (error instanceof ZodError) {
+      const issue = error.issues[0];
+      const path = issue?.path
+        .map((segment) => typeof segment === "number" ? `item${segment}` : segment)
+        .join("_")
+        .toLowerCase()
+        .replace(/[^a-z0-9_]+/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_|_$/g, "")
+        .slice(0, 80);
+      const reason = issue?.message === "Sensitive or generated files cannot be snapshotted" ? "sensitive_path"
+        : issue?.message === "Snapshot paths must be unique" ? "duplicate_path"
+          : issue?.message === "Snapshot file checksum or size is invalid" ? "file_integrity"
+          : issue?.code === "invalid_format" ? "invalid_format"
+              : issue?.code;
+      return path ? `zod_${path}_${reason ?? "invalid"}`.slice(0, 100) : "zod_schema_invalid";
+    }
     if (/^[a-z][a-z0-9_]{0,99}$/.test(error.message)) return error.message;
     const code = (error as Error & { code?: unknown }).code;
     if (typeof code === "string" && /^[a-z][a-z0-9_]{0,99}$/.test(code)) return code;
@@ -1151,7 +1169,7 @@ async function ensurePhaserTemplate(
         payload: { check: check.check, status: check.status, ...(check.exitCode === undefined ? {} : { exitCode: check.exitCode }), summary: check.summary },
       });
     });
-  } catch {
+  } catch (error) {
     checkSignal(state.signal, state.userSignal, state.usage);
     const hasFailure = state.events.some((event) => event.type === "agent.verification" && event.payload.status === "failed" &&
       ["Phaser dependencies", "Phaser template npm test", "Phaser template npm run build", "Phaser template preview"].includes(stringPayload(event, "check")));
@@ -1161,7 +1179,7 @@ async function ensurePhaserTemplate(
         payload: { check: "Phaser template bootstrap", status: "failed", summary: "No se pudo materializar o verificar la plantilla Phaser." },
       }).catch(() => undefined);
     }
-    throw new RunProcessingError("phaser_template_bootstrap_failed", false, state.usage);
+    throw new RunProcessingError("phaser_template_bootstrap_failed", false, state.usage, safeCauseCode(error));
   }
 
   await appendBatch(state, options.store, claim, [

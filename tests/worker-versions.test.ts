@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { GameSpecSchema } from "@meta-game/contracts";
 import { identityFromAuthenticatedSession } from "@meta-game/db";
-import { createPrivateSnapshotStorage, type PrivateObjectClient } from "@meta-game/storage";
+import { createPrivateSnapshotStorage, decodeVersionSnapshot, type PrivateObjectClient } from "@meta-game/storage";
 import type { AgentSandbox } from "../apps/worker/src/agent/tools";
 import { createVersionService } from "../apps/worker/src/versions/service";
 
@@ -21,7 +22,9 @@ function makeSandbox() {
   const text = new Map<string, string>([
     ["package.json", '{"name":"fixture","version":"1.0.0"}\n'],
     ["package-lock.json", '{"lockfileVersion":3,"packages":{}}\n'],
-    ["src/game/project-spec.json", `${JSON.stringify(spec, null, 2)}\n`],
+    [".npmrc", "engine-strict=true\n"],
+    ["src/game/game-spec.json", `${JSON.stringify(spec, null, 2)}\n`],
+    ["src/game/project-spec.json", `${JSON.stringify({ ...spec, mode: "digging", title: "Esmeralda", actionLabel: "Abrir salida", controlHelp: "Flechas para excavar" }, null, 2)}\n`],
     ["public/assets/manifest.json", '{"schemaVersion":1,"assets":[]}\n'],
     ["public/assets/player.svg", '<svg xmlns="http://www.w3.org/2000/svg"/>\n'],
     ["src/main.ts", "export const level = 1;\n"],
@@ -174,6 +177,34 @@ function claim(runId = randomUUID()) {
 }
 
 describe("snapshots y restauración de versiones", () => {
+  it("prefiere el GameSpec normalizado y conserva la configuración runtime Phaser", async () => {
+    const sandbox = makeSandbox();
+    const runtimeSpec = JSON.parse(sandbox.text.get("src/game/project-spec.json")!);
+    expect(GameSpecSchema.safeParse(runtimeSpec).success).toBe(false);
+    const { service, objects } = makeService(sandbox);
+    const versionId = randomUUID();
+
+    await service.captureLifecycleSnapshot({ ownerUserId, projectId, versionId }, new AbortController().signal);
+
+    const snapshot = decodeVersionSnapshot(objects.get(`private/${ownerUserId}/projects/${projectId}/versions/${versionId}`)!);
+    expect(snapshot.gameSpec).toEqual(spec);
+    expect(snapshot.files.map((file) => file.path)).toContain("src/game/project-spec.json");
+    expect(snapshot.files.map((file) => file.path)).toContain("src/game/game-spec.json");
+    expect(snapshot.files.map((file) => file.path)).not.toContain(".npmrc");
+  });
+
+  it("lee los campos normalizados de configuraciones runtime en snapshots de workspaces antiguos", async () => {
+    const sandbox = makeSandbox();
+    sandbox.text.delete("src/game/game-spec.json");
+    const { service, objects } = makeService(sandbox);
+    const versionId = randomUUID();
+
+    await service.captureLifecycleSnapshot({ ownerUserId, projectId, versionId }, new AbortController().signal);
+
+    const snapshot = decodeVersionSnapshot(objects.get(`private/${ownerUserId}/projects/${projectId}/versions/${versionId}`)!);
+    expect(snapshot.gameSpec).toEqual(spec);
+  });
+
   it("captura la plantilla Phaser sin confundir versiones npm ni coordenadas SVG con teléfonos", async () => {
     const sandbox = makeSandbox();
     sandbox.text.set("package-lock.json", JSON.stringify({

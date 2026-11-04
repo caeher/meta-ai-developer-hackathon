@@ -10,7 +10,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import type { AgentSandbox } from "../agent/tools";
 import { isSensitiveWorkspacePath, sensitiveInputReason } from "../agent/safety";
 
-export const GAME_SPEC_PATH = "src/game/project-spec.json";
+export { GAME_SPEC_PATH } from "./game-spec-path";
 const CHECKPOINT_SCHEMA_VERSION = 1;
 const CHECKPOINT_MAX_FILES = 256;
 const CHECKPOINT_MAX_FILE_BYTES = 1_000_000;
