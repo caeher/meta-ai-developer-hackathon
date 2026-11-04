@@ -272,12 +272,13 @@ async function collectResponse(stream: IncomingMessage, maxBytes: number, trunca
   return { bytes: Buffer.concat(chunks, size), truncated };
 }
 
-function assertContainerSecurity(
+export function assertContainerSecurity(
   inspect: DockerInspect,
   spec: SandboxCreateSpec,
   proxyIp: string,
   hostCheck = false,
   workspaceMode: WorkspaceVolumeMode = "user-quota",
+  allowImageMismatch = false,
 ): number {
   const uid = hostCheck ? assertHostCheckUid(spec.uid) : assertSandboxUid(spec.uid);
   const expectedCpu = Math.round(spec.limits.cpu * 1_000_000_000);
@@ -308,7 +309,7 @@ function assertContainerSecurity(
     inspect.Config.Labels?.["com.meta-game.project-id"] === spec.projectId &&
     inspect.Config.Labels?.["com.meta-game.workspace-limit-mb"] === String(spec.limits.diskMb) &&
     inspect.Config.Labels?.["com.meta-game.workspace-mode"] === workspaceMode &&
-    inspect.Config.Image === spec.image &&
+    (allowImageMismatch || inspect.Config.Image === spec.image) &&
     inspect.Config.User === `${uid}:${uid}` &&
     inspect.Config.WorkingDir === "/workspace" &&
     JSON.stringify(inspect.HostConfig.ExtraHosts) === JSON.stringify([`npm-proxy:${proxyIp}`]) &&
@@ -567,6 +568,14 @@ export class RootlessDockerDriver implements SandboxDriver {
   private async ensureEgressProxy(spec: SandboxCreateSpec): Promise<string> {
     const proxyName = egressProxyContainerName(spec.sandboxId);
     let runtime = await this.inspectByName(proxyName);
+    if (runtime && runtime.Config.Image !== spec.image) {
+      await this.assertEgressProxy(spec, true);
+      if (runtime.State.Running) {
+        await this.client.request("POST", `/containers/${encodeURIComponent(runtime.Id)}/stop?t=5`, undefined, [204, 304]);
+      }
+      await this.client.request("DELETE", `/containers/${encodeURIComponent(runtime.Id)}?force=true`, undefined, [204, 404]);
+      runtime = undefined;
+    }
     if (!runtime) {
       const labels = {
         "com.meta-game.managed": "true",
@@ -631,7 +640,7 @@ export class RootlessDockerDriver implements SandboxDriver {
     return this.assertEgressProxy(spec);
   }
 
-  private async assertEgressProxy(spec: SandboxCreateSpec): Promise<string> {
+  private async assertEgressProxy(spec: SandboxCreateSpec, allowImageMismatch = false): Promise<string> {
     const runtime = await this.inspectByName(egressProxyContainerName(spec.sandboxId));
     if (!runtime) throw new SandboxRuntimeError("egress_proxy_missing");
     const labels = runtime.Config.Labels ?? {};
@@ -649,7 +658,7 @@ export class RootlessDockerDriver implements SandboxDriver {
       runtimeLabel: labels["com.meta-game.runtime-kind"] === "egress-proxy",
       sandboxLabel: labels["com.meta-game.sandbox-id"] === spec.sandboxId,
       projectLabel: labels["com.meta-game.project-id"] === spec.projectId,
-      image: runtime.Config.Image === spec.image,
+      image: allowImageMismatch || runtime.Config.Image === spec.image,
       user: runtime.Config.User === "10000:10000",
       workingDirectory: runtime.Config.WorkingDir === "/opt/meta-game",
       command: JSON.stringify(runtime.Config.Cmd) === JSON.stringify(["node", "/opt/meta-game/egress-proxy.mjs"]),
@@ -872,8 +881,17 @@ export class RootlessDockerDriver implements SandboxDriver {
       if (!(error instanceof SandboxRuntimeError) || error.code !== "runtime_conflict") throw error;
       const existing = await this.inspectByName(config.containerName);
       if (!existing) throw error;
-      assertContainerSecurity(existing, spec, proxyIp, hostCheck, this.workspaceMode);
-      runtime = { Id: existing.Id };
+      if (existing.Config.Image !== spec.image) {
+        assertContainerSecurity(existing, spec, proxyIp, hostCheck, this.workspaceMode, true);
+        if (existing.State.Running) {
+          await this.client.request("POST", `/containers/${encodeURIComponent(existing.Id)}/stop?t=5`, undefined, [204, 304]);
+        }
+        await this.client.request("DELETE", `/containers/${encodeURIComponent(existing.Id)}?force=true`, undefined, [204, 404]);
+        runtime = await this.client.request<{ Id: string }>("POST", `/containers/create?name=${encodeURIComponent(config.containerName)}`, config.body, [201]);
+      } else {
+        assertContainerSecurity(existing, spec, proxyIp, hostCheck, this.workspaceMode);
+        runtime = { Id: existing.Id };
+      }
     }
 
     try {

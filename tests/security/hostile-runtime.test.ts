@@ -21,6 +21,8 @@ const hostileLimits: SandboxLimits = {
 };
 
 let driver: RootlessDockerDriver;
+let securityImage: string;
+let securityEgressAllowlist: string[];
 
 describe.skipIf(!enabled)("aislamiento hostil con sandboxes no privilegiados de Docker Desktop", () => {
   let sandboxes: SandboxCreateSpec[] = [];
@@ -33,6 +35,8 @@ describe.skipIf(!enabled)("aislamiento hostil con sandboxes no privilegiados de 
     if (parsed.SANDBOX_DRIVER !== "rootless") throw new Error("security_rootless_driver_required");
     if (parsed.SANDBOX_DOCKER_SOCKET !== "/var/run/docker.sock") throw new Error("security_compose_socket_required");
 
+    securityImage = parsed.SANDBOX_IMAGE;
+    securityEgressAllowlist = parsed.SANDBOX_EGRESS_ALLOWLIST;
     driver = new RootlessDockerDriver(
       parsed.SANDBOX_DOCKER_SOCKET,
       parsed.SANDBOX_IMAGE,
@@ -71,6 +75,35 @@ describe.skipIf(!enabled)("aislamiento hostil con sandboxes no privilegiados de 
       if (results.some((result) => result.status === "rejected")) throw new Error("security_sandbox_cleanup_failed");
     } finally {
       await driver.disposeSecurityRuntime();
+    }
+  }, 60_000);
+
+  it("reconcilia sandboxes administrados tras rotar la imagen fijada y conserva sus controles de seguridad", async () => {
+    const sandboxId = randomUUID();
+    const projectId = randomUUID();
+    const uid = randomInt(10_000, 60_000);
+    const previousImage = "meta-game-sandbox:acceptance";
+    if (previousImage === securityImage) throw new Error("security_image_drift_fixture_missing");
+    const previousSpec: SandboxCreateSpec = {
+      sandboxId, projectId, uid, image: previousImage, limits: hostileLimits, egressAllowlist: securityEgressAllowlist,
+    };
+    const currentSpec: SandboxCreateSpec = { ...previousSpec, image: securityImage };
+    const previousDriver = new RootlessDockerDriver(
+      "/var/run/docker.sock", previousImage, hostileLimits, securityEgressAllowlist,
+      { hostRuntimeMode: "docker-desktop-security", workspaceMode: "tmpfs" },
+    );
+    await previousDriver.create(previousSpec);
+    try {
+      const upgraded = await driver.create(currentSpec);
+      sandboxes.push(currentSpec);
+      expect(upgraded.state).toBe("running");
+      expect((await driver.inspect(sandboxId, projectId, uid)).state).toBe("running");
+    } catch (error) {
+      await Promise.allSettled([
+        driver.destroy(sandboxId, projectId, uid),
+        previousDriver.destroy(sandboxId, projectId, uid),
+      ]);
+      throw error;
     }
   }, 60_000);
 

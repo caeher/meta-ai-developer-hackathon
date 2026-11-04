@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSandboxEnvironment, TelemetryMetrics, withTelemetryContext } from "@meta-game/config";
 import type { SandboxRecord, SandboxState } from "@meta-game/db";
+import { assertContainerSecurity } from "../packages/sandbox/src/rootless";
 import {
   assertSandboxUid,
   buildRootlessContainerConfig,
@@ -301,6 +302,42 @@ describe("sandbox rootless contract", () => {
       image: IMAGE,
       limits,
     }, "8.8.8.8")).toThrow("egress_proxy_address_invalid");
+  });
+
+  it("solo tolera deriva de imagen en un contenedor administrado cuando el resto sigue seguro", () => {
+    const spec: SandboxCreateSpec = {
+      sandboxId: SANDBOX_ID,
+      projectId: PROJECT_ID,
+      uid: 23451,
+      image: IMAGE,
+      limits: { cpu: 1, memoryMb: 1024, diskMb: 2048, pids: 128, commandTimeoutMs: 60_000 },
+    };
+    const config = buildRootlessContainerConfig(spec);
+    const inspect = {
+      Config: {
+        Image: `sha256:${"b".repeat(64)}`,
+        User: config.body.User,
+        WorkingDir: config.body.WorkingDir,
+        Labels: config.labels,
+        Env: [
+          "NPM_CONFIG_REGISTRY=http://npm-proxy:8080/registry/registry.npmjs.org/",
+          "NPM_CONFIG_UPDATE_NOTIFIER=false",
+          "npm_config_cache=/tmp/npm-cache",
+          "PLAYWRIGHT_BROWSERS_PATH=/opt/meta-game/browsers",
+        ],
+      },
+      HostConfig: config.body.HostConfig,
+      Mounts: [{ Type: "volume", Name: config.volumeName, Destination: "/workspace", RW: true }],
+    } as unknown as Parameters<typeof assertContainerSecurity>[0];
+
+    expect(() => assertContainerSecurity(inspect, spec, "172.16.0.2")).toThrow("sandbox_security_invariant_failed");
+    expect(assertContainerSecurity(inspect, spec, "172.16.0.2", false, "user-quota", true)).toBe(spec.uid);
+    const unsafe = {
+      ...inspect,
+      HostConfig: { ...inspect.HostConfig, Privileged: true },
+    } as Parameters<typeof assertContainerSecurity>[0];
+    expect(() => assertContainerSecurity(unsafe, spec, "172.16.0.2", false, "user-quota", true))
+      .toThrow("sandbox_security_invariant_failed");
   });
 
   it("rechaza wildcard hosts, digest mutable y token placeholder", () => {
