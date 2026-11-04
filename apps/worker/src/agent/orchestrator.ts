@@ -362,7 +362,7 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
               if (error instanceof UsageLimitExceededError && error.limit === "storage") {
                 throw new RunProcessingError("usage_limit_storage", false, state.usage);
               }
-              throw new RunProcessingError("version_snapshot_failed", false, state.usage);
+              throw new RunProcessingError("version_snapshot_failed", false, state.usage, snapshotFailureCauseCode(error));
             }
           }
           if (!findEvent(state.events, "agent.preview_ready")) {
@@ -404,9 +404,9 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       state.usage = finalUsage;
       if (finalError instanceof RunProcessingError) {
         if (!findEvent(state.events, "agent.failed")) {
-          await append(state, options.store, handlerContext.claim, { type: "agent.failed", payload: { errorCode: finalError.code } }).catch(() => undefined);
+          await append(state, options.store, handlerContext.claim, { type: "agent.failed", payload: { errorCode: finalError.code, ...(finalError.causeCode ? { causeCode: finalError.causeCode } : {}) } }).catch(() => undefined);
         }
-        throw new RunProcessingError(finalError.code, finalError.retryable, { tokens: Math.max(finalUsage.tokens, finalError.usage?.tokens ?? 0), images: Math.max(finalUsage.images, finalError.usage?.images ?? 0) });
+        throw new RunProcessingError(finalError.code, finalError.retryable, { tokens: Math.max(finalUsage.tokens, finalError.usage?.tokens ?? 0), images: Math.max(finalUsage.images, finalError.usage?.images ?? 0) }, finalError.causeCode);
       }
       if (handlerContext.signal.aborted || deadlineSignal.aborted) {
         const code = handlerContext.signal.aborted ? "run_cancelled" : "run_time_limit_exceeded";
@@ -500,6 +500,18 @@ async function runCodeUntilFinal(input: {
       replay = [...replay, makeToolResult(call.callId, output)];
     }
   }
+}
+
+
+export function snapshotFailureCauseCode(error: unknown): string {
+  if (error instanceof Error) {
+    if (/^[a-z][a-z0-9_]{0,99}$/.test(error.message)) return error.message;
+    const code = (error as Error & { code?: unknown }).code;
+    if (typeof code === "string" && /^[a-z][a-z0-9_]{0,99}$/.test(code)) return code;
+    const fromName = error.name.replace(/Error$/, "").replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
+    if (/^[a-z][a-z0-9_]{0,99}$/.test(fromName) && fromName) return fromName;
+  }
+  return "version_snapshot_internal_error";
 }
 
 const SPRITE_TOOL_NAMES = new Set(["generate_image", "edit_sprite", "make_transparent", "inspect_asset", "pack_spritesheet", "create_tileset", "create_tilemap", "define_animation"]);

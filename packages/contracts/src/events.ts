@@ -121,7 +121,7 @@ export const AgentRunEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   z.object({
     type: z.literal("agent.failed"),
-    payload: z.object({ errorCode: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/) }).strict(),
+    payload: z.object({ errorCode: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/), causeCode: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/).optional() }).strict(),
   }).strict(),
 ]);
 

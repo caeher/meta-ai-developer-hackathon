@@ -13,15 +13,18 @@ export type RunHandler = (run: WorkerRun, context: RunHandlerContext) => Promise
 export class RunProcessingError extends Error {
   public readonly code: string;
 
+  public readonly causeCode?: string;
   constructor(
     code: string,
     public readonly retryable: boolean,
     public readonly usage?: RunUsage,
+    causeCode?: string,
   ) {
     const safeCode = /^[a-z][a-z0-9_]{0,99}$/.test(code) ? code : "run_processing_failed";
     super(safeCode);
     this.code = safeCode;
     this.name = "RunProcessingError";
+    if (causeCode && /^[a-z][a-z0-9_]{0,99}$/.test(causeCode)) this.causeCode = causeCode;
   }
 }
 

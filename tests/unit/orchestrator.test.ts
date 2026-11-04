@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import type { AgentRunEvent, MetaCodeEvent, MetaConversationItem, MetaPlan } from "@meta-game/contracts";
+import { AgentRunEventSchema, type AgentRunEvent, type MetaCodeEvent, type MetaConversationItem, type MetaPlan } from "@meta-game/contracts";
 import { identityFromAuthenticatedSession, UsageLimitExceededError } from "@meta-game/db";
 import type { AgentRunStore } from "../../apps/worker/src/agent/store";
 import type { GeneratedImageToolContext } from "../../apps/worker/src/assets/image-generator";
-import { createAgentRunHandler } from "../../apps/worker/src/agent/orchestrator";
+import { createAgentRunHandler, snapshotFailureCauseCode } from "../../apps/worker/src/agent/orchestrator";
 import type { AgentCheckpointStorage, AgentOrchestratorOptions } from "../../apps/worker/src/agent/orchestrator";
 import type { AgentSandbox } from "../../apps/worker/src/agent/tools";
 import { RunProcessingError } from "../../apps/worker/src/handler";
@@ -861,5 +861,16 @@ describe("flujo agentico: inventario -> plan sprites -> sprites -> plan juego ->
     });
     await expect(createAgentRunHandler(options)(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
       .rejects.toMatchObject({ code: "agent_sprite_plan_required" });
+  });
+});
+describe("snapshotFailureCauseCode", () => {
+  it("expone codigo interno seguro", () => {
+    expect(snapshotFailureCauseCode(new Error("version_game_spec_mismatch"))).toBe("version_game_spec_mismatch");
+    expect(snapshotFailureCauseCode(new Error("token secreto"))).toBe("version_snapshot_internal_error");
+    expect(snapshotFailureCauseCode("boom")).toBe("version_snapshot_internal_error");
+    const failed = AgentRunEventSchema.safeParse({ type: "agent.failed", payload: { errorCode: "version_snapshot_failed", causeCode: "version_game_spec_mismatch" } });
+    expect(failed.success).toBe(true);
+    const err = new RunProcessingError("version_snapshot_failed", false, undefined, "version_game_spec_mismatch");
+    expect(err.causeCode).toBe("version_game_spec_mismatch");
   });
 });
