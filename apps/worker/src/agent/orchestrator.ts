@@ -424,8 +424,12 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
         await append(state, options.store, handlerContext.claim, { type: "agent.failed", payload: { errorCode: code } }).catch(() => undefined);
         throw new RunProcessingError(code, false, finalUsage);
       }
-      await append(state, options.store, handlerContext.claim, { type: "agent.failed", payload: { errorCode: "orchestrator_failed" } }).catch(() => undefined);
-      throw new RunProcessingError("orchestrator_failed", false, finalUsage);
+      const causeCode = safeCauseCode(finalError);
+      await append(state, options.store, handlerContext.claim, {
+        type: "agent.failed",
+        payload: { errorCode: "orchestrator_failed", ...(causeCode ? { causeCode } : {}) },
+      }).catch(() => undefined);
+      throw new RunProcessingError("orchestrator_failed", false, finalUsage, causeCode);
     }
   };
 }
@@ -1309,6 +1313,13 @@ function createSha256(value: string): string { return createHash("sha256").updat
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function safeCauseCode(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const coded = "code" in error ? (error as Error & { code?: unknown }).code : undefined;
+  const candidate = typeof coded === "string" ? coded : error.message;
+  return /^[a-z][a-z0-9_]{0,99}$/.test(candidate) ? candidate : undefined;
 }
 
 function isNotFound(error: unknown): boolean {

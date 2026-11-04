@@ -874,3 +874,27 @@ describe("snapshotFailureCauseCode", () => {
     expect(err.causeCode).toBe("version_game_spec_mismatch");
   });
 });
+
+describe("código de causa de errores inesperados", () => {
+  it("persiste solo códigos internos validados y omite mensajes arbitrarios", async () => {
+    const coded = Object.assign(new Error("controller detail must not be stored"), { code: "sandbox_controller_unavailable" });
+    const first = makeOptions({ sandboxOverrides: { inspect: vi.fn(async () => { throw coded; }) } });
+    await expect(createAgentRunHandler(first.options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    })).rejects.toMatchObject({ code: "orchestrator_failed", causeCode: "sandbox_controller_unavailable" });
+    expect(first.store.events.find((event) => event.type === "agent.failed")?.payload)
+      .toMatchObject({ errorCode: "orchestrator_failed", causeCode: "sandbox_controller_unavailable" });
+    expect(JSON.stringify(first.store.events)).not.toContain("controller detail");
+
+    const second = makeOptions({ sandboxOverrides: { inspect: vi.fn(async () => { throw new Error("controller detail with arbitrary text"); }) } });
+    await expect(createAgentRunHandler(second.options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    })).rejects.toMatchObject({ code: "orchestrator_failed" });
+    expect(second.store.events.find((event) => event.type === "agent.failed")?.payload)
+      .toEqual({ errorCode: "orchestrator_failed" });
+  });
+});
