@@ -41,7 +41,7 @@ async function main() {
       finish();
       return;
     }
-    const context = await browser.newContext({ viewport: { width: 960, height: 600 }, serviceWorkers: "block" });
+    const context = await browser.newContext({ viewport: { width: 960, height: 600 }, serviceWorkers: "block", hasTouch: true });
     await context.route("**/*", async (route) => {
       const url = new URL(route.request().url());
       const localPreview = url.protocol === "http:" && url.hostname === "127.0.0.1" && url.port === "4173";
@@ -88,12 +88,39 @@ async function main() {
     check("keyboard interaction", keyboardMoved, keyboardMoved ? "El teclado cambia el estado del juego." : "El teclado no produjo movimiento del juego.");
 
     const beforeTouch = await page.evaluate(() => window.__GAME_TEST__?.getState()).catch(() => null);
-    await page.locator('#touch-controls button[data-control="right"]').click({ timeout: 2_000 }).catch(() => undefined);
-    const touchMoved = await page.waitForFunction((before) => {
+    await page.evaluate(() => {
+      window.__VERIFY_TOUCH_POINTER_TYPE__ = null;
+      document.addEventListener("pointerdown", (event) => {
+        window.__VERIFY_TOUCH_POINTER_TYPE__ = event.pointerType;
+      }, { once: true });
+    }).catch(() => undefined);
+    const touchTarget = page.locator('#touch-controls button[data-control="right"]');
+    const touchBox = await touchTarget.boundingBox().catch(() => null);
+    let touchDispatched = touchBox !== null;
+    let touchError = "";
+    if (touchBox) {
+      try {
+        await page.touchscreen.tap(touchBox.x + touchBox.width / 2, touchBox.y + touchBox.height / 2);
+      } catch (error) {
+        touchDispatched = false;
+        touchError = error instanceof Error ? error.message.slice(0, 240) : "touch_input_failed";
+      }
+    } else {
+      touchError = "touch_control_not_visible";
+    }
+    const touchPointerType = await page.evaluate(() => window.__VERIFY_TOUCH_POINTER_TYPE__).catch(() => null);
+    const touchMoved = touchDispatched && touchPointerType === "touch" && await page.waitForFunction((before) => {
       const current = window.__GAME_TEST__?.getState();
       return Boolean(current && before && (current.x !== before.x || current.y !== before.y || current.moves > before.moves));
     }, beforeTouch, { timeout: 2_500 }).then(() => true).catch(() => false);
-    check("touch interaction", touchMoved, touchMoved ? "El control táctil cambia el estado del juego." : "El control táctil no produjo movimiento del juego.");
+    const touchSummary = touchMoved
+      ? "Una pulsación táctil real mueve el juego."
+      : !touchDispatched
+        ? `Chromium no pudo pulsar el control táctil visible: ${touchError}`
+        : touchPointerType !== "touch"
+          ? "El control no recibió un evento pointerdown táctil."
+          : "El control táctil no produjo movimiento del juego.";
+    check("touch interaction", touchMoved, touchSummary);
 
     const loopReady = await page.evaluate(() => {
       const state = window.__GAME_TEST__?.getState();
