@@ -13,7 +13,7 @@ import {
 import { spawnSync } from "node:child_process";
 
 function parseOptions(arguments_) {
-  const options = { web: false, worker: false, preview: false, publishing: false, localDomains: false, acceptance: false };
+  const options = { web: false, worker: false, preview: false, publishing: false, localDomains: false, acceptance: false, runs: false };
 
   for (const argument of arguments_) {
     if (argument === "--web") options.web = true;
@@ -22,9 +22,11 @@ function parseOptions(arguments_) {
     else if (argument === "--publishing") options.publishing = true;
     else if (argument === "--local-domains") options.localDomains = true;
     else if (argument === "--acceptance") options.acceptance = true;
+    else if (argument === "--runs") options.runs = true;
     else throw new Error(`Opción desconocida para infra:up: ${argument}`);
   }
 
+  if (options.runs && !options.acceptance) throw new Error("--runs solo se permite junto a --acceptance.");
   return options;
 }
 
@@ -71,7 +73,7 @@ function buildAcceptanceSandboxImage() {
   return imageId;
 }
 
-function createAcceptanceEnvironment(sandboxImage) {
+function createAcceptanceEnvironment(sandboxImage, runsEnabled) {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const keyId = `local-acceptance-${randomUUID()}`;
   const privateKeyBase64 = privateKey.export({ format: "der", type: "pkcs8" }).toString("base64");
@@ -92,7 +94,8 @@ function createAcceptanceEnvironment(sandboxImage) {
     PREVIEW_SESSION_TTL_SECONDS: "900",
     PUBLISHING_ENABLED: "true",
     PUBLISH_BASE_DOMAIN: "games.localhost",
-    RUNS_ENABLED: "false",
+    RUNS_ENABLED: runsEnabled ? "true" : "false",
+    AGENT_ASSET_TOOL_CALLS_ENABLED: "false",
     RESOURCE_LIFECYCLE_ENABLED: "false",
     SANDBOX_DRIVER: "rootless",
     SANDBOX_HOST_RUNTIME_MODE: "docker-desktop-security",
@@ -200,7 +203,7 @@ try {
   let dockerEnvironment = safeProcessEnvironment();
   if (options.acceptance) {
     ensureSandboxEgressNetwork();
-    dockerEnvironment = safeProcessEnvironment(createAcceptanceEnvironment(buildAcceptanceSandboxImage()));
+    dockerEnvironment = safeProcessEnvironment(createAcceptanceEnvironment(buildAcceptanceSandboxImage(), options.runs));
   }
   if (options.preview && !options.acceptance) {
     if (environment.PREVIEW_GATEWAY_ENABLED !== "true") {
@@ -242,7 +245,7 @@ try {
   if (options.worker) console.log("El worker está activo; los runs terminan con orchestrator_pending hasta integrar el orquestador.");
   if (options.publishing) console.log("El worker y el origen local de publicación están activos detrás de *.games.localhost.");
   if (options.localDomains) console.log("El router local sirve app.localhost, *.preview.localhost y *.games.localhost con una CA TLS interna de Caddy en el volumen local.");
-  if (options.acceptance) console.log("AceptaciÃ³n local activa: app, gateway, origen y controlador listos; runs de Meta apagados; credenciales de prueba efÃ­meras no persistidas.");
+  if (options.acceptance) console.log(`Aceptación local activa: app, gateway, origen y controlador listos; runs de generación ${options.runs ? "habilitados" : "apagados"}; herramientas de assets externos bloqueadas; credenciales de prueba efímeras no persistidas.`);
 } catch (error) {
   reportInfrastructureError(error);
 }

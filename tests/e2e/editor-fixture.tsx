@@ -382,7 +382,7 @@ function EditorTestApp() {
       <Theme appearance="dark" accentColor="blue" grayColor="slate" hasBackground={false} panelBackground="solid" radius="medium">
         <main className="shell">
           <header className="topbar"><a className="brand" href="/projects">Forja</a><AuthControls /></header>
-          <ProjectsDashboard initialPage={{ items: [], nextCursor: null }} initialUsage={fixtureUsage} />
+          <ProjectsDashboard initialPage={{ items: [], nextCursor: null }} initialUsage={fixtureUsage} generationEnabled={false} />
         </main>
       </Theme>
     );

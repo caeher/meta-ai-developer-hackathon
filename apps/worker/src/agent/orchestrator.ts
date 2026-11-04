@@ -77,6 +77,7 @@ export interface AgentOrchestratorOptions {
   maxTokens: number;
   maxDurationMs: number;
   skillTokenBudget?: number;
+  assetToolCallsEnabled?: boolean;
   dailyImageLimit?: number;
   imageGenerator?: AgentImageGenerator;
   spriteEditor?: AgentSpriteEditor;
@@ -132,6 +133,16 @@ const AGENT_PROMPT_LIMIT_BYTES = 64 * 1024;
 const MAX_CODE_OUTPUT_TOKENS = 4_096;
 const MAX_PLAN_OUTPUT_TOKENS = 4_096;
 const MAX_REPAIR_ATTEMPTS = 1;
+const ASSET_TOOL_CALLS_DISABLED = new Set([
+  "generate_image", "edit_sprite", "make_transparent", "create_tileset", "create_tilemap",
+  "pack_spritesheet", "define_animation", "create_issue_plan", "run_issue_agents",
+]);
+
+function toolDefinitionsFor(options: AgentOrchestratorOptions) {
+  return options.assetToolCallsEnabled === false
+    ? AGENT_TOOL_DEFINITIONS.filter((tool) => !ASSET_TOOL_CALLS_DISABLED.has(tool.name))
+    : AGENT_TOOL_DEFINITIONS;
+}
 
 export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHandler {
   validateLimits(options);
@@ -297,7 +308,7 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       checkSignal(signal, handlerContext.signal, usage);
       const initialReplay = initialConversation(selection, approvedPlan, true, state.gameSpec);
       const initialPrompt = buildCodePrompt(loaded.prompt, approvedPlan, state.gameSpec);
-      const initialEstimate = estimateTokens(JSON.stringify({ prompt: initialPrompt, replay: initialReplay, tools: AGENT_TOOL_DEFINITIONS })) + 1_500;
+      const initialEstimate = estimateTokens(JSON.stringify({ prompt: initialPrompt, replay: initialReplay, tools: toolDefinitionsFor(options) })) + 1_500;
       if (Math.min(MAX_CODE_OUTPUT_TOKENS, options.maxTokens - usage.tokens - initialEstimate) < 16) {
         throw new RunProcessingError("run_token_budget_exceeded", false, usage);
       }
@@ -434,11 +445,13 @@ async function runCodeUntilFinal(input: {
 }): Promise<{ replay: MetaConversationItem[]; round: number; summary: string }> {
   let replay = input.replay;
   let round = input.round;
+  const toolDefinitions = toolDefinitionsFor(input.options);
+  const availableToolNames = new Set(toolDefinitions.map((tool) => tool.name));
   while (true) {
     checkSignal(input.state.signal, input.state.userSignal, input.state.usage);
     round += 1;
     const prompt = buildCodePrompt(input.requestText, input.plan, input.gameSpec, input.repairInstruction);
-    const inputEstimate = estimateTokens(JSON.stringify({ prompt, replay, tools: AGENT_TOOL_DEFINITIONS })) + 1_500;
+    const inputEstimate = estimateTokens(JSON.stringify({ prompt, replay, tools: toolDefinitions })) + 1_500;
     const outputBudget = Math.min(MAX_CODE_OUTPUT_TOKENS, input.options.maxTokens - input.state.usage.tokens - inputEstimate);
     if (outputBudget < 16) throw new RunProcessingError("run_token_budget_exceeded", false, input.state.usage);
 
@@ -453,7 +466,7 @@ async function runCodeUntilFinal(input: {
       for await (const event of input.options.meta.streamCode({
         prompt,
         context: replay,
-        tools: AGENT_TOOL_DEFINITIONS,
+        tools: toolDefinitions,
         parallelToolCalls: false,
       }, { signal: input.state.signal, maxOutputTokens: outputBudget })) {
         if (event.type === "tool_call") calls.push(event);
@@ -480,7 +493,12 @@ async function runCodeUntilFinal(input: {
       throw new RunProcessingError("run_token_budget_exceeded", false, input.state.usage);
     }
     let prepared: PreparedAgentToolCall[];
-    try { prepared = prepareAgentToolCalls(calls); }
+    try {
+      if (calls.some((call) => AGENT_TOOL_DEFINITIONS.some((tool) => tool.name === call.name) && !availableToolNames.has(call.name))) {
+        throw new Error("agent_tool_not_available");
+      }
+      prepared = prepareAgentToolCalls(calls);
+    }
     catch (error) {
       const code = error instanceof Error && /^agent_[a-z0-9_]+$/.test(error.message) ? error.message : "agent_invalid_tool_arguments";
       throw new RunProcessingError(code, false, input.state.usage);
@@ -779,7 +797,7 @@ async function runIssueAgents(
     throw new RunProcessingError("agent_sprite_phase_incomplete", false, state.usage);
   }
   const allowedTools = new Set(subagentToolNames(kind));
-  const toolsForSubagent = AGENT_TOOL_DEFINITIONS.filter((tool) => allowedTools.has(tool.name));
+  const toolsForSubagent = toolDefinitionsFor(options).filter((tool) => allowedTools.has(tool.name));
   const issues = orderIssuesByDependency(parsed.data.issues.map((i) => ({ ...i, dependsOn: [...i.dependsOn] })));
   await append(state, options.store, claim, { type: "agent.phase", payload: { phase, status: "started", summary: kind === "sprites" ? `Ejecutando ${issues.length} sub-agente(s) de sprites con tools de assets.` : kind === "game" ? `Ejecutando ${issues.length} sub-agente(s) de codigo a partir del resumen de sprites.` : `Ejecutando ${issues.length} sub-agente(s) por issue.` } });
   const results: RunIssueAgentsResult["results"] = [];
@@ -831,6 +849,10 @@ async function runIssueAgents(
             const last = messages.at(-1);
             summary = (last?.kind === "message" ? redactSensitiveText(last.text) : "").slice(0, 600) || `Issue ${issue.issueId} completada por el sub-agente.`;
             break;
+          }
+          if (calls.some((call) => AGENT_TOOL_DEFINITIONS.some((tool) => tool.name === call.name) &&
+            !toolsForSubagent.some((tool) => tool.name === call.name))) {
+            throw new RunProcessingError("agent_tool_not_available", false, state.usage);
           }
           const prepared = prepareAgentToolCalls(calls).map((preparedCall) => ({ ...preparedCall, callId: `sub-${issue.issueId}-${preparedCall.callId}`.slice(0, 64) }));
           for (const subCall of prepared) {

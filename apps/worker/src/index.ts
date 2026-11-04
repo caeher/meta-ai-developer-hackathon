@@ -253,6 +253,7 @@ async function createEnabledAgentHandler() {
     maxTokens: environment.RUN_MAX_TOKENS,
     maxDurationMs: environment.RUN_MAX_DURATION_MS,
     dailyImageLimit: environment.USER_DAILY_IMAGE_LIMIT,
+    assetToolCallsEnabled: process.env.AGENT_ASSET_TOOL_CALLS_ENABLED !== "false",
     imageGenerator,
     spriteEditor,
     tilesetCreator,
