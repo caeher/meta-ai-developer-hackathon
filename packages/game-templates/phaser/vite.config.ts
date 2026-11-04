@@ -15,5 +15,8 @@ export default defineConfig({
   build: {
     emptyOutDir: true,
     sourcemap: false,
+    // El bootstrap de la plantilla se ejecuta bajo el límite inicial de 1 GiB.
+    // Phaser 3.90 con la minificación predeterminada supera ese límite en Docker Desktop.
+    minify: false,
   },
 });
