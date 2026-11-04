@@ -78,7 +78,7 @@ describe.skipIf(!enabled)("aislamiento hostil con sandboxes no privilegiados de 
     }
   }, 60_000);
 
-  it("reconcilia sandboxes administrados tras rotar la imagen fijada y conserva sus controles de seguridad", async () => {
+  it("reconcilia una imagen fijada obsoleta durante inspect antes de create", async () => {
     const sandboxId = randomUUID();
     const projectId = randomUUID();
     const uid = randomInt(10_000, 60_000);
@@ -94,6 +94,8 @@ describe.skipIf(!enabled)("aislamiento hostil con sandboxes no privilegiados de 
     );
     await previousDriver.create(previousSpec);
     try {
+      const inspected = await driver.inspect(sandboxId, projectId, uid);
+      expect(inspected.state).toBe("running");
       const upgraded = await driver.create(currentSpec);
       sandboxes.push(currentSpec);
       expect(upgraded.state).toBe("running");

@@ -908,6 +908,10 @@ export class RootlessDockerDriver implements SandboxDriver {
     const spec = { sandboxId, projectId, uid, image: this.image, limits: this.defaultLimits, egressAllowlist: this.egressAllowlist };
     await this.verifyWorkspaceVolume(spec);
     await this.ensureSandboxNetwork(spec);
+    const proxy = await this.inspectByName(egressProxyContainerName(sandboxId));
+    if (runtime.Config.Image !== spec.image || (proxy && proxy.Config.Image !== spec.image)) {
+      return this.createWithSpec(spec, false);
+    }
     const proxyIp = await this.assertEgressProxy(spec);
     assertContainerSecurity(runtime, spec, proxyIp, false, this.workspaceMode);
     await this.assertSandboxNetworkMembership(spec);
