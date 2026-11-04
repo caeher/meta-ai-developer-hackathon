@@ -7,6 +7,13 @@ export const UPSTREAM_COMMIT = "19d93f97c9c1ea0f8b306e77aa81e0d3e352d3e9";
 const CATALOG_PATH = "packages/skills/catalog.json";
 const MANIFEST_PATH = "vendor/gamedev-skills/manifest.json";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+
+/** Canonical vendor hash: SHA-256 over LF-normalized bytes (upstream/Git form), so a CRLF checkout hashes identically. */
+export function hashVendorContent(data: Buffer): string {
+  const text = data.toString("utf8").replace(/\r\n?/g, "\n");
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -184,7 +191,7 @@ export async function verifySkillsBundle(rootDir: string): Promise<SkillsVerific
     try {
       const pathFromRoot = `vendor/gamedev-skills/${relativePath}`;
       const absolute = await resolveRegularFile(rootDir, pathFromRoot);
-      const actualHash = createHash("sha256").update(await readFile(absolute)).digest("hex");
+      const actualHash = hashVendorContent(await readFile(absolute));
       if (actualHash !== expectedHash) errors.push(`SHA-256 mismatch for ${pathFromRoot}.`);
       fileCount += 1;
     } catch {
@@ -225,7 +232,7 @@ export async function writeSkillsManifest(rootDir: string): Promise<number> {
   const files = [];
   for (const relativePath of paths) {
     const absolute = await resolveRegularFile(rootDir, `vendor/gamedev-skills/${relativePath}`);
-    const sha256 = createHash("sha256").update(await readFile(absolute)).digest("hex");
+    const sha256 = hashVendorContent(await readFile(absolute));
     files.push({ path: relativePath, sha256 });
   }
   const manifest: SkillsManifest = {

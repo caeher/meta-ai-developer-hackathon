@@ -182,6 +182,15 @@ describe("verificación del vendor de skills", () => {
     expect(result).toMatchObject({ valid: true, errors: [], fileCount: 39 });
   });
 
+  it("acepta el mismo contenido con fines de línea CRLF (checkout Windows)", async () => {
+    const root = await makeMinimalBundle();
+    const vendorSkill = path.join(root, "vendor/gamedev-skills/skills/demo/SKILL.md");
+    const lf = await readFile(vendorSkill, "utf8");
+    await writeFile(vendorSkill, lf.replace(/\n/g, "\r\n"));
+    const result = await verifySkillsBundle(root);
+    expect(result).toMatchObject({ valid: true, errors: [], fileCount: 6 });
+  });
+
   it("detecta archivos alterados, referencias faltantes y hashes/SHA inválidos", async () => {
     const root = await makeMinimalBundle();
     const vendorSkill = path.join(root, "vendor/gamedev-skills/skills/demo/SKILL.md");
