@@ -45,4 +45,4 @@ USER node
 ENV NEXT_TELEMETRY_DISABLED=1
 EXPOSE 3000
 
-CMD ["npm", "run", "dev", "--workspace", "@meta-game/web", "--", "--hostname", "0.0.0.0"]
+CMD ["npm", "run", "dev", "--workspace", "@meta-game/web", "--", "--webpack", "--hostname", "0.0.0.0"]
