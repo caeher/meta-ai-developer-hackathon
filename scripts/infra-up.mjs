@@ -1,10 +1,8 @@
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { request as httpsRequest } from "node:https";
-import { join } from "node:path";
 import {
   composeArguments,
   ensureLocalEnvironmentFile,
-  exampleEnvironmentFile,
   localEnvironmentFile,
   readExampleEnvironment,
   readLocalEnvironment,
@@ -108,26 +106,10 @@ function createAcceptanceEnvironment(sandboxImage) {
   };
 }
 
-function migrateAcceptanceDatabase(environment) {
-  const databaseUrl = new URL("postgresql://localhost");
-  databaseUrl.username = environment.POSTGRES_USER;
-  databaseUrl.password = environment.POSTGRES_PASSWORD;
-  databaseUrl.port = environment.POSTGRES_PORT;
-  databaseUrl.pathname = `/${environment.POSTGRES_DB}`;
-  const safeEnvironment = {
-    DATABASE_URL: databaseUrl.toString(),
-    DOTENV_CONFIG_PATH: exampleEnvironmentFile,
-    PATH: process.env.PATH ?? "",
-    SYSTEMROOT: process.env.SYSTEMROOT ?? "",
-    TEMP: process.env.TEMP ?? "",
-    TMP: process.env.TMP ?? "",
-    USERPROFILE: process.env.USERPROFILE ?? "",
-  };
-  const migration = join(repositoryRoot, "node_modules", "drizzle-kit", "bin.cjs");
-  const result = spawnSync(process.execPath, [migration, "migrate", "--config", "packages/db/drizzle.config.ts"], {
-    cwd: repositoryRoot, env: safeEnvironment, stdio: "inherit", windowsHide: true, shell: false,
-  });
-  if (result.error || result.status !== 0) throw new Error("No se pudieron aplicar las migraciones de la aceptaciÃ³n local.");
+function migrateAcceptanceDatabase(envFile, dockerEnvironment) {
+  runDocker(composeArguments([
+    "exec", "-T", "web", "node_modules/.bin/drizzle-kit", "migrate", "--config", "packages/db/drizzle.config.ts",
+  ], envFile), { env: dockerEnvironment });
 }
 
 function localHttpsStatus(hostname, pathname) {
@@ -170,48 +152,51 @@ async function verifyLocalHttpsRoutes() {
   }
 }
 
-function initializeStorageBuckets(environment, envFile, dockerEnvironment) {
+function initializeStorageBuckets(envFile, dockerEnvironment) {
   const configDirectory = "/tmp/forja-mcli-config";
-  const common = ["exec", "-T", "s3", "mcli", "--config-dir", configDirectory];
-  const alias = [
-    ...common,
-    "alias",
-    "set",
-    "local",
-    "http://127.0.0.1:9000",
-    environment.MINIO_ROOT_USER,
-    environment.MINIO_ROOT_PASSWORD,
-  ];
-  runDocker(composeArguments(alias, envFile), { quiet: true, env: dockerEnvironment });
-
-  for (const bucket of [environment.S3_BUCKET_PRIVATE, environment.S3_BUCKET_PUBLIC]) {
-    runDocker(
-      composeArguments([
-        ...common,
-        "mb",
-        "--ignore-existing",
-        `local/${bucket}`,
-      ], envFile),
-      { quiet: true, env: dockerEnvironment },
-    );
-    runDocker(
-      composeArguments([
-        ...common,
-        "anonymous",
-        "set",
-        "none",
-        `local/${bucket}`,
-      ], envFile),
-      { quiet: true, env: dockerEnvironment },
-    );
+  const docker = process.platform === "win32" ? "docker.exe" : "docker";
+  const bucketsResult = spawnSync(docker, composeArguments([
+    "exec", "-T", "worker", "node", "-e",
+    "process.stdout.write(JSON.stringify([process.env.S3_BUCKET_PRIVATE,process.env.S3_BUCKET_PUBLIC]))",
+  ], envFile), {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    windowsHide: true,
+    shell: false,
+    env: dockerEnvironment,
+  });
+  if (bucketsResult.error || bucketsResult.status !== 0) {
+    throw new Error("No se pudieron resolver los buckets configurados para Silo.");
   }
+
+  let buckets;
+  try { buckets = JSON.parse(bucketsResult.stdout); }
+  catch { throw new Error("La configuración de buckets de Silo no devolvió una lista válida."); }
+  if (!Array.isArray(buckets) || buckets.length !== 2 || buckets.some((bucket) =>
+    typeof bucket !== "string" || !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket))) {
+    throw new Error("Los nombres de bucket configurados para Silo no son válidos.");
+  }
+
+  const initialize = [
+    "set -eu",
+    `mcli --config-dir ${configDirectory} alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"`,
+    "for bucket do",
+    `  mcli --config-dir ${configDirectory} mb --ignore-existing "local/$bucket"`,
+    `  mcli --config-dir ${configDirectory} anonymous set none "local/$bucket"`,
+    "done",
+  ].join("\n");
+  runDocker(composeArguments(["exec", "-T", "s3", "sh", "-ec", initialize, "bootstrap", ...buckets], envFile), {
+    quiet: true,
+    env: dockerEnvironment,
+  });
 }
 
 try {
   const options = parseOptions(process.argv.slice(2));
-  if (!options.acceptance) ensureLocalEnvironmentFile();
+  ensureLocalEnvironmentFile();
   const environment = options.acceptance ? readExampleEnvironment() : readLocalEnvironment();
-  const envFile = options.acceptance ? exampleEnvironmentFile : localEnvironmentFile;
+  const envFile = localEnvironmentFile;
   let dockerEnvironment = safeProcessEnvironment();
   if (options.acceptance) {
     ensureSandboxEgressNetwork();
@@ -247,9 +232,9 @@ try {
     "--detach",
     "--wait",
   ], envFile), { env: dockerEnvironment });
-  initializeStorageBuckets(environment, envFile, dockerEnvironment);
+  initializeStorageBuckets(envFile, dockerEnvironment);
   if (options.acceptance) {
-    migrateAcceptanceDatabase(environment);
+    migrateAcceptanceDatabase(envFile, dockerEnvironment);
     await verifyLocalHttpsRoutes();
   }
   console.log("Postgres, Redis y S3 local están disponibles; los buckets siguen siendo privados.");

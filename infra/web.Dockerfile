@@ -31,6 +31,8 @@ COPY packages/config/src packages/config/src
 COPY packages/config/tsconfig.json packages/config/tsconfig.json
 COPY packages/contracts/src packages/contracts/src
 COPY packages/db/src packages/db/src
+COPY packages/db/migrations packages/db/migrations
+COPY packages/db/drizzle.config.ts packages/db/drizzle.config.ts
 COPY packages/preview/src packages/preview/src
 COPY packages/storage/src packages/storage/src
 COPY packages/contracts/tsconfig.json packages/contracts/tsconfig.json
