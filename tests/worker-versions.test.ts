@@ -174,6 +174,41 @@ function claim(runId = randomUUID()) {
 }
 
 describe("snapshots y restauración de versiones", () => {
+  it("captura la plantilla Phaser sin confundir versiones npm ni coordenadas SVG con teléfonos", async () => {
+    const sandbox = makeSandbox();
+    sandbox.text.set("package-lock.json", JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        "node_modules/@esbuild/linux-x64": {
+          resolved: "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.24.0.tgz",
+        },
+      },
+    }));
+    sandbox.text.set("public/assets/player.svg", '<svg viewBox="0 0 64 64"><path d="M 415 555 0147 32 8"/></svg>');
+    const { service } = makeService(sandbox);
+    const run = claim();
+
+    await service.captureVerifiedRun({ identity, claim: run, gameSpec: spec, checks: [{ check: "build", status: "passed", summary: "Build correcto" }], signal: new AbortController().signal });
+
+    const captured = await service.read(identity, projectId, run.runId);
+    expect(captured?.snapshot.files.map((file) => file.path)).toContain("package-lock.json");
+    expect(captured?.snapshot.files.map((file) => file.path)).toContain("public/assets/player.svg");
+  });
+
+  it("sigue rechazando un teléfono en código del workspace", async () => {
+    const sandbox = makeSandbox();
+    sandbox.text.set("src/main.ts", "// Contact: 202-555-0147\n");
+    const { service } = makeService(sandbox);
+
+    await expect(service.captureVerifiedRun({
+      identity,
+      claim: claim(),
+      gameSpec: spec,
+      checks: [{ check: "build", status: "passed", summary: "Build correcto" }],
+      signal: new AbortController().signal,
+    })).rejects.toThrow("version_sensitive_content_blocked");
+  });
+
   it("guarda dos verificaciones privadas y restaura la primera como una tercera versión", async () => {
     const sandbox = makeSandbox();
     const { service, rows } = makeService(sandbox);

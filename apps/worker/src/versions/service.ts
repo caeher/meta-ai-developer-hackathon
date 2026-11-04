@@ -16,7 +16,7 @@ import {
   type SnapshotLimits,
 } from "@meta-game/storage";
 import type { AgentSandbox } from "../agent/tools";
-import { isSensitiveWorkspacePath, sensitiveInputReason } from "../agent/safety";
+import { isSensitiveWorkspacePath, sensitiveWorkspaceContentReason } from "../agent/safety";
 
 const BINARY_PATH = /^public\/assets\/.+\.(?:png|jpe?g|webp|gif|ico|mp3|ogg|wav|mp4|webm|wasm|woff2?|ttf|otf)$/i;
 const SKIP_DIRECTORIES = new Set(["node_modules", "dist", ".next", ".git", ".vite", "coverage", "test-results", "playwright-report", "tmp", "temp"]);
@@ -389,7 +389,7 @@ async function captureWorkspaceFiles(
           if (code === "file_not_utf8") continue;
           throw error;
         }
-        if (sensitiveInputReason(result.content)) throw new Error("version_sensitive_content_blocked");
+        if (sensitiveWorkspaceContentReason(path, result.content)) throw new Error("version_sensitive_content_blocked");
         const bytes = Buffer.byteLength(result.content, "utf8");
         if (bytes > Math.min(SANDBOX_FILE_MAX_BYTES, limits.maxFileBytes)) throw new Error("version_file_size_limit");
         file = { path, encoding: "utf8", content: result.content, bytes, sha256: digest(result.content) };
