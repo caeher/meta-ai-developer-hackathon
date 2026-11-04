@@ -1,0 +1,9 @@
+{
+	admin off
+}
+
+http://*.preview.localhost {
+	reverse_proxy preview-gateway:8080 {
+		flush_interval -1
+	}
+}

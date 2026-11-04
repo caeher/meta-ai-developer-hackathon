@@ -18,6 +18,7 @@ export default async function PreviewHandoffPage({ params }: { params: Promise<{
       projectId={conversation.project.id}
       projectName={conversation.project.name}
       baseDomain={previewConfiguration.baseDomain}
+      protocol={previewConfiguration.protocol}
     />
   );
 }

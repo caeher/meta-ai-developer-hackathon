@@ -71,6 +71,7 @@ export async function withPreviewGrantHandler(
       keyRing,
       allowedOrigins,
       baseDomain,
+      protocol: new URL(appOrigin).protocol === "http:" && baseDomain.endsWith(".localhost") ? "http:" : "https:",
     });
     return await action(handlers);
   } catch (error) {

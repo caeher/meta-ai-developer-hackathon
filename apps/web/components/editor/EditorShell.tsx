@@ -186,6 +186,7 @@ export function EditorShell({
   initialCursor,
   progress,
   previewBaseDomain,
+  previewProtocol = "https:",
   versions = [],
   publishingEnabled = false,
   simulatorEnabled = false,
@@ -196,6 +197,7 @@ export function EditorShell({
   initialCursor: string | null;
   progress?: EditorProgress;
   previewBaseDomain?: string;
+  previewProtocol?: "http:" | "https:";
   versions?: readonly PreviewVersion[];
   publishingEnabled?: boolean;
   simulatorEnabled?: boolean;
@@ -744,7 +746,7 @@ export function EditorShell({
         </section>
 
         <section className={styles.previewPane} aria-label="Vista previa privada del juego">
-          <PreviewFrame projectId={projectId} baseDomain={previewBaseDomain} versions={versions} refreshRevision={runEvents.previewRevision} />
+          <PreviewFrame projectId={projectId} baseDomain={previewBaseDomain} protocol={previewProtocol} versions={versions} refreshRevision={runEvents.previewRevision} />
         </section>
       </div>
     </section>

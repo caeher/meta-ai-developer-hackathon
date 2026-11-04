@@ -13,12 +13,14 @@ export function PreviewHandoff({
   projectId,
   projectName,
   baseDomain,
+  protocol = "https:",
 }: {
   projectId: string;
   projectName: string;
   baseDomain?: string;
+  protocol?: "http:" | "https:";
 }) {
-  const origin = useMemo(() => getPreviewOrigin(projectId, baseDomain), [projectId, baseDomain]);
+  const origin = useMemo(() => getPreviewOrigin(projectId, baseDomain, protocol), [projectId, baseDomain, protocol]);
   const [status, setStatus] = useState<HandoffStatus>("booting");
   const [grant, setGrant] = useState("");
   const [message, setMessage] = useState("Solicitando una sesión privada de primer nivel…");

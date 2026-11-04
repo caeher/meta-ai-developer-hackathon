@@ -1,4 +1,5 @@
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
+import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import {
   composeArguments,
@@ -83,9 +84,9 @@ function createAcceptanceEnvironment(sandboxImage, runsEnabled, simulatorEnabled
   const localToken = () => randomBytes(48).toString("base64url");
 
   return {
-    APP_ORIGIN: "https://app.localhost",
-    NEXT_PUBLIC_APP_URL: "https://app.localhost",
-    AUTH_ALLOWED_ORIGINS: "https://app.localhost,http://localhost:3000,http://127.0.0.1:3000",
+    APP_ORIGIN: "http://127.0.0.1:3000",
+    NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
+    AUTH_ALLOWED_ORIGINS: "http://127.0.0.1:3000,http://localhost:3000,https://app.localhost",
     AUTH_SECRET: randomBytes(32).toString("base64url"),
     PREVIEW_GATEWAY_ENABLED: "true",
     PREVIEW_BASE_DOMAIN: "preview.localhost",
@@ -139,6 +140,25 @@ function localHttpsStatus(hostname, pathname) {
   });
 }
 
+function localHttpStatus(hostname, pathname) {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({
+      hostname: "127.0.0.1",
+      port: 80,
+      path: pathname,
+      method: "GET",
+      headers: { host: hostname },
+      timeout: 5_000,
+    }, (response) => {
+      response.resume();
+      response.once("end", () => resolve(response.statusCode ?? 0));
+    });
+    request.once("timeout", () => request.destroy(new Error("local_http_timeout")));
+    request.once("error", reject);
+    request.end();
+  });
+}
+
 async function verifyLocalHttpsRoutes() {
   const routes = [
     ["app.localhost", "/api/health/readyz", (status) => status === 200],
@@ -156,6 +176,19 @@ async function verifyLocalHttpsRoutes() {
     }
     if (!isExpectedStatus(status)) throw new Error(`No se pudo validar la ruta HTTPS local ${hostname} (HTTP ${status}).`);
   }
+}
+
+async function verifyLocalHttpPreviewRoute() {
+  const hostname = `${randomUUID()}.preview.localhost`;
+  let status = 0;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    try {
+      status = await localHttpStatus(hostname, "/");
+      if (status === 404) break;
+    } catch { /* Retry while the HTTP-only acceptance router starts. */ }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  if (status !== 404) throw new Error(`No se pudo validar la ruta HTTP local de preview (HTTP ${status}).`);
 }
 
 function initializeStorageBuckets(envFile, dockerEnvironment) {
@@ -230,6 +263,7 @@ try {
     ...(options.preview || options.acceptance ? ["--profile", "preview"] : []),
     ...(options.publishing || options.acceptance ? ["--profile", "runtime"] : []),
     ...(options.localDomains ? ["--profile", "local-domains"] : []),
+    ...(options.acceptance ? ["--profile", "acceptance-http"] : []),
   ];
   runDocker(composeArguments([
     ...profiles,
@@ -242,6 +276,7 @@ try {
   if (options.acceptance) {
     migrateAcceptanceDatabase(envFile, dockerEnvironment);
     await verifyLocalHttpsRoutes();
+    await verifyLocalHttpPreviewRoute();
   }
   if (options.acceptance && options.simulator) {
     console.log("Simulador de excavación local activo: sin llamadas al proveedor ni generación de imágenes.");
@@ -250,7 +285,8 @@ try {
   if (options.web) console.log("La aplicación web está disponible en http://localhost:3000.");
   if (options.worker) console.log("El worker está activo; los runs terminan con orchestrator_pending hasta integrar el orquestador.");
   if (options.publishing) console.log("El worker y el origen local de publicación están activos detrás de *.games.localhost.");
-  if (options.localDomains) console.log("El router local sirve app.localhost, *.preview.localhost y *.games.localhost con una CA TLS interna de Caddy en el volumen local.");
+  if (options.localDomains) console.log("El router local conserva HTTPS con la CA interna de Caddy para app.localhost, *.preview.localhost y *.games.localhost.");
+  if (options.acceptance) console.log("BrowserOS puede usar http://127.0.0.1:3000 y la ruta HTTP de preview ligada a loopback; la ruta HTTPS sigue intacta.");
   if (options.acceptance) console.log(`Aceptación local activa: app, gateway, origen y controlador listos; runs de generación ${options.runs ? "habilitados" : "apagados"}; herramientas de assets externos bloqueadas; credenciales de prueba efímeras no persistidas.`);
 } catch (error) {
   reportInfrastructureError(error);

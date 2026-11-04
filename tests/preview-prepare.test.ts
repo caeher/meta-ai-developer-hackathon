@@ -89,11 +89,13 @@ describe("grant de preview con preparacion", () => {
       preparePreview,
       store: { allowRateLimit: async () => true, getProjectEpoch: async () => 0, revokeProject: async () => undefined } as never,
       keyRing,
-      allowedOrigins: ["https://app.localhost"],
+      allowedOrigins: ["http://127.0.0.1:3000"],
       baseDomain: "preview.localhost",
+      protocol: "http:",
     });
-    const response = await handlers.POST(new Request("https://app.localhost/api", { method: "POST", headers: { origin: "https://app.localhost" } }), { params: Promise.resolve({ projectId }) });
+    const response = await handlers.POST(new Request("http://127.0.0.1:3000/api", { method: "POST", headers: { origin: "http://127.0.0.1:3000" } }), { params: Promise.resolve({ projectId }) });
     expect(preparePreview).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(200);
+    expect((await response.json()).previewUrl).toBe(`http://${projectId}.preview.localhost/`);
   });
 });

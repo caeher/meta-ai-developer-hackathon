@@ -496,6 +496,34 @@ services:
     networks:
       - control
 
+  local-http-router:
+    profiles: [acceptance-http]
+    image: docker.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    restart: unless-stopped
+    logging: *bounded-logging
+    ports:
+      - name: local-http-loopback
+        target: 80
+        published: "80"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - ./caddy/Caddyfile.acceptance:/etc/caddy/Caddyfile:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 64
+    healthcheck:
+      test: [CMD, caddy, validate, --config, /etc/caddy/Caddyfile]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+    networks:
+      - control
+
 volumes:
   postgres-data:
   redis-data:

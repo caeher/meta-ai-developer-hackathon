@@ -48,6 +48,7 @@ export function createPreviewGrantHandlers(dependencies: {
   keyRing: PreviewKeyRing;
   allowedOrigins: readonly string[];
   baseDomain: string;
+  protocol?: "http:" | "https:";
   clock?: () => number;
 }) {
   const now = dependencies.clock ?? Date.now;
@@ -97,7 +98,7 @@ export function createPreviewGrantHandlers(dependencies: {
         const grant = signPreviewGrant(claims, dependencies.keyRing);
         return Response.json({
           grant,
-          previewUrl: `https://${projectId.toLowerCase()}.${dependencies.baseDomain}/`,
+          previewUrl: `${dependencies.protocol ?? "https:"}//${projectId.toLowerCase()}.${dependencies.baseDomain}/`,
           expiresAt: new Date(claims.exp * 1000).toISOString(),
         }, { headers: secureHeaders });
       } catch (error) {

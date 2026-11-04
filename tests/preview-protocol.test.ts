@@ -10,6 +10,8 @@ describe("protocolo de navegación de preview", () => {
     expect(getPreviewOrigin(projectId, "preview.example.test/path")).toBeUndefined();
     expect(getPreviewOrigin(projectId, "localhost")).toBeUndefined();
     expect(getPreviewOrigin(projectId, "preview.localhost")).toBe(`https://${projectId}.preview.localhost`);
+    expect(getPreviewOrigin(projectId, "preview.localhost", "http:")).toBe(`http://${projectId}.preview.localhost`);
+    expect(getPreviewOrigin(projectId, "preview.example.test", "http:")).toBeUndefined();
   });
 
   it("acepta rutas locales y rechaza destinos o rutas fuera del origen de preview", () => {

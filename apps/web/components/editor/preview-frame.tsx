@@ -60,16 +60,18 @@ async function exchangeGrant(origin: string, grant: string): Promise<number> {
 export function PreviewFrame({
   projectId,
   baseDomain,
+  protocol = "https:",
   versions = [],
   refreshRevision = 0,
 }: {
   projectId: string;
   baseDomain?: string;
+  protocol?: "http:" | "https:";
   versions?: readonly PreviewVersion[];
   /** Incremented only by an authenticated worker health event. */
   refreshRevision?: number;
 }) {
-  const origin = useMemo(() => getPreviewOrigin(projectId, baseDomain), [projectId, baseDomain]);
+  const origin = useMemo(() => getPreviewOrigin(projectId, baseDomain, protocol), [projectId, baseDomain, protocol]);
   const initialStatus: PreviewStatus = origin ? "booting" : "disabled";
   const [status, setStatus] = useState<PreviewStatus>(initialStatus);
   const [frameUrl, setFrameUrl] = useState<string>();

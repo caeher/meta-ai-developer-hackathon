@@ -47,6 +47,8 @@ Import-Certificate -FilePath "$env:TEMP\meta-ai-local-root.crt" -CertStoreLocati
 
 La importación es opcional y se revierte quitando ese certificado de `Cert:\CurrentUser\Root`. Si `infra:down --volumes` borra `caddy-data`, Caddy emite una CA nueva y hay que volver a confiarla.
 
+El perfil `npm run infra:up -- --acceptance` conserva las rutas HTTPS anteriores y añade un router HTTP independiente, ligado solo a `127.0.0.1:80`, para `*.preview.localhost`. La web de aceptación usa `http://127.0.0.1:3000`; Chromium trata estos orígenes loopback como contextos seguros y la preview privada conserva grants de un solo uso y cookies `Secure; SameSite=None; Partitioned`. Este modo evita instalar o confiar la CA en BrowserOS. El router HTTP no forma parte de perfiles normales ni de producción; la configuración Caddy HTTPS no cambia.
+
 ## Migraciones y validación Docker local
 
 Con los servicios activos, la base de datos se prepara y se verifica con:

@@ -4,11 +4,16 @@ const previewDomainPattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-
 
 export type PreviewRouteMessage = Readonly<{ type: "preview:route"; path: string }>;
 
-export function getPreviewOrigin(projectId: string, baseDomain: string | undefined): string | undefined {
+export function getPreviewOrigin(
+  projectId: string,
+  baseDomain: string | undefined,
+  protocol: "http:" | "https:" = "https:",
+): string | undefined {
   if (!previewUuidPattern.test(projectId) || !baseDomain || baseDomain.length > 253) return undefined;
   const domain = baseDomain.toLowerCase();
   if (!previewDomainPattern.test(domain) || domain === "localhost") return undefined;
-  return `https://${projectId.toLowerCase()}.${domain}`;
+  if (protocol === "http:" && !domain.endsWith(".localhost")) return undefined;
+  return `${protocol}//${projectId.toLowerCase()}.${domain}`;
 }
 
 export function parsePreviewRoutePath(value: unknown): string | undefined {
