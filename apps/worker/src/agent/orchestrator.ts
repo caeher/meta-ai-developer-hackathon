@@ -493,7 +493,7 @@ async function runCodeUntilFinal(input: {
       },
     });
     await append(input.state, input.options.store, input.claim, completionEvent);
-    replay = completion.replay;
+    replay = windowReplay(appendReplayItems(replay, completion.replay), 5);
     if (input.state.usage.tokens > input.options.maxTokens) {
       throw new RunProcessingError("run_token_budget_exceeded", false, input.state.usage);
     }
@@ -520,7 +520,9 @@ async function runCodeUntilFinal(input: {
     for (const call of prepared) {
       checkSignal(input.state.signal, undefined, input.state.usage);
       const output = await executeCachedTool(input.options, input.state, input.claim, input.projectId, call, true);
-      replay = [...replay, makeToolResult(call.callId, output)];
+      if (!replay.some((item) => item.kind === "tool_result" && item.callId === call.callId)) {
+        replay = [...replay, makeToolResult(call.callId, output)];
+      }
     }
   }
 }
@@ -864,7 +866,7 @@ async function runIssueAgents(
             type: "agent.meta_response_completed",
             payload: { kind: "code", requestKey, responseId: completionEvent.responseId, ...(completionEvent.requestId ? { requestId: completionEvent.requestId } : {}), model: completionEvent.model, usage: { tokens: subUsage.totalTokens, images: 0 } },
           });
-          replay = completionEvent.replay;
+          replay = windowReplay(appendReplayItems(replay, completionEvent.replay), 2);
           if (state.usage.tokens > options.maxTokens) throw new RunProcessingError("run_token_budget_exceeded", false, state.usage);
           if (!calls.length) {
             const messages = completionEvent.replay.filter((item) => item.kind === "message" && item.role === "assistant");
@@ -880,7 +882,9 @@ async function runIssueAgents(
           for (const subCall of prepared) {
             const output = await executeCachedTool(options, state, claim, projectId, subCall, true);
             toolCalls += 1;
-            replay = [...replay, makeToolResult(subCall.callId, output)];
+            if (!replay.some((item) => item.kind === "tool_result" && item.callId === subCall.callId)) {
+              replay = [...replay, makeToolResult(subCall.callId, output)];
+            }
           }
           if (round === SUBAGENT_MAX_ROUNDS) throw new RunProcessingError("subagent_round_limit_exceeded", false, state.usage);
         }
@@ -1228,6 +1232,22 @@ function buildCodePrompt(requestText: string, plan: MetaPlan, gameSpec: GameSpec
 
 function internalCall(callId: string, name: string, args: Record<string, unknown>, summary: string): PreparedAgentToolCall {
   return { callId, name, args, argsHash: hashValue(args), summary };
+}
+
+const MAX_REPLAY_ITEMS = 100;
+
+function appendReplayItems(existing: MetaConversationItem[], incoming: MetaConversationItem[]): MetaConversationItem[] {
+  const knownCallIds = new Set(existing.filter((item) => item.kind === "tool_call").map((item) => (item as { callId: string }).callId));
+  const filtered = incoming.filter((item) => item.kind !== "tool_call" || !knownCallIds.has((item as { callId: string }).callId));
+  return [...existing, ...filtered];
+}
+
+function windowReplay(items: MetaConversationItem[], headCount: number): MetaConversationItem[] {
+  if (items.length <= MAX_REPLAY_ITEMS) return items;
+  const head = items.slice(0, headCount);
+  let tailStart = items.length - (MAX_REPLAY_ITEMS - headCount);
+  while (tailStart < items.length && items[tailStart]?.kind === "tool_result") tailStart += 1;
+  return [...head, ...items.slice(tailStart)];
 }
 
 function makeToolResult(callId: string, value: unknown): MetaConversationItem {

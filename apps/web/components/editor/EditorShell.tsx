@@ -225,6 +225,9 @@ export function EditorShell({
   const recoveredPublications = useRef(new Set<string>());
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
   const pendingRunRestored = useRef(false);
+  const transcriptRef = useRef<HTMLOListElement>(null);
+  const stickToBottomRef = useRef(true);
+  const transcriptAnchorRef = useRef<{ firstId: string | null; scrollHeight: number; scrollTop: number } | null>(null);
   const displayProgress = runEvents.progress ?? progress;
   const pendingRunStorageKey = `meta-game:pending-run:${projectId}`;
 
@@ -282,6 +285,27 @@ export function EditorShell({
   useEffect(() => {
     if (runEvents.active) setQuickOptionsOpen(false);
   }, [runEvents.active]);
+
+  useEffect(() => {
+    const element = transcriptRef.current;
+    if (!element) return;
+    const firstId = messages[0]?.id ?? null;
+    const anchor = transcriptAnchorRef.current;
+    if (anchor && firstId !== anchor.firstId) {
+      // Mensajes anteriores prependidos: mantener en vista el mensaje que se estaba leyendo.
+      element.scrollTop = anchor.scrollTop + (element.scrollHeight - anchor.scrollHeight);
+    } else if (stickToBottomRef.current) {
+      element.scrollTop = element.scrollHeight;
+    }
+    transcriptAnchorRef.current = { firstId, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop };
+  }, [messages, displayProgress, runEvents.assistantSummary]);
+
+  function handleTranscriptScroll() {
+    const element = transcriptRef.current;
+    if (!element) return;
+    stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+    if (transcriptAnchorRef.current) transcriptAnchorRef.current.scrollTop = element.scrollTop;
+  }
 
   function rememberPendingRun(next: PendingRun | null) {
     setPendingRun(next);
@@ -636,7 +660,7 @@ export function EditorShell({
                   </Button>
                 </div>
               ) : null}
-              <ol className={styles.transcript} aria-label="Transcripción privada en orden de envío">
+              <ol ref={transcriptRef} onScroll={handleTranscriptScroll} className={styles.transcript} aria-label="Transcripción privada en orden de envío">
                 {messages.map((message) => (
                   <li key={message.id} className={message.role === "user" ? styles.userMessage : styles.agentMessage}>
                     <div className={styles.messageMeta}>

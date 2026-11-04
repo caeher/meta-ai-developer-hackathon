@@ -664,6 +664,53 @@ describe("orquestador de runs", () => {
     expect(sandbox.writeFile).toHaveBeenCalledWith(claim.projectId, "src/game.ts", "export const createGame = () => true;", expect.any(AbortSignal));
   });
 
+  it("acumula replay y resultados de herramientas entre rondas de codigo", async () => {
+    const listCall = codeCall("call-list-1", "list_files", { path: "" });
+    const writeCall = codeCall("call-write-2", "write_file", { path: "src/game.ts", content: "export const gameReady = true;" });
+    const { options, streamCall } = makeOptions({
+      streams: [
+        [listCall, completion([{ kind: "tool_call", callId: listCall.callId, name: listCall.name, arguments: listCall.arguments }], "response-code-list", 10)],
+        [writeCall, completion([{ kind: "tool_call", callId: writeCall.callId, name: writeCall.name, arguments: writeCall.arguments }], "response-code-write", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "La escena esta lista." }], "response-code-final", 10)],
+      ],
+    });
+    const handler = createAgentRunHandler(options);
+    await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    const contexts = streamCall.mock.calls.map((call) => (call[0] as { context?: unknown[] }).context ?? []);
+    expect(contexts.length).toBeGreaterThanOrEqual(3);
+    expect(contexts[1]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "tool_call", callId: "call-list-1" }),
+      expect.objectContaining({ kind: "tool_result", callId: "call-list-1" }),
+    ]));
+    expect(contexts[2]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "tool_call", callId: "call-list-1" }),
+      expect.objectContaining({ kind: "tool_result", callId: "call-list-1" }),
+      expect.objectContaining({ kind: "tool_call", callId: "call-write-2" }),
+      expect.objectContaining({ kind: "tool_result", callId: "call-write-2" }),
+    ]));
+  });
+
+  it("mantiene el contexto por debajo del limite de Meta en runs largos", async () => {
+    const streams: Array<Array<Extract<MetaCodeEvent, { type: "tool_call" }> | Extract<MetaCodeEvent, { type: "completed" }>>> = [];
+    for (let index = 0; index < 70; index += 1) {
+      const call = codeCall(`call-long-${index}`, "list_files", { path: "" });
+      streams.push([call, completion([{ kind: "tool_call", callId: call.callId, name: call.name, arguments: call.arguments }], `response-long-${index}`, 10)]);
+    }
+    streams.push([completion([{ kind: "message", role: "assistant", text: "Listo." }], "response-long-final", 10)]);
+    const { options, streamCall } = makeOptions({ streams: streams as never, maxSteps: 200 });
+    const handler = createAgentRunHandler(options);
+    await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    const contexts = streamCall.mock.calls.map((call) => (call[0] as { context?: unknown[] }).context ?? []);
+    expect(contexts.length).toBeGreaterThanOrEqual(71);
+    for (const context of contexts) expect(context.length).toBeLessThanOrEqual(128);
+    const lastContext = contexts.at(-1) ?? [];
+    const callIds = new Set<string>();
+    for (const item of lastContext as Array<{ kind?: string; callId?: string }>) {
+      if (item.kind === "tool_call" && item.callId) { expect(callIds.has(item.callId)).toBe(false); callIds.add(item.callId); }
+      if (item.kind === "tool_result" && item.callId) expect(callIds.has(item.callId)).toBe(true);
+    }
+  });
+
   it("reutiliza el resultado durable de un call_id repetido y no duplica una escritura", async () => {
     const writeCall = codeCall("call-repeat", "write_file", { path: "src/game.ts", content: "export const gameReady = true;" });
     const response = (id: string) => completion([

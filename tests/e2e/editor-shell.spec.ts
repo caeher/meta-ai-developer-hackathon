@@ -483,6 +483,44 @@ test("la preview ocupa la altura del panel y Opciones rapidas no se corta", asyn
   expect(quickBox!.x + quickBox!.width).toBeLessThanOrEqual(chatBox!.x + chatBox!.width + 1);
 });
 
+test("con muchos mensajes el transcript scrollea y el composer queda visible y usable", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.evaluate((id) => {
+    const messages = Array.from({ length: 40 }, (_, index) => ({
+      id: "00000000-0000-4000-8000-" + String(index + 1).padStart(12, "0"),
+      projectId: id,
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: "Mensaje numero " + (index + 1) + " con texto suficiente para ocupar varias lineas en el panel de chat del editor.",
+      requestId: "00000000-0000-4000-8000-" + String(index + 101).padStart(12, "0"),
+      sequence: index + 1,
+      createdAt: new Date(Date.now() + index).toISOString(),
+    }));
+    sessionStorage.setItem("editor-e2e-messages-" + id, JSON.stringify(messages));
+  }, projectId);
+  await page.reload();
+  const chat = page.getByRole("region", { name: "Chat y progreso" });
+  const transcript = page.getByRole("list", { name: /Transcripci/ });
+  const prompt = page.getByLabel("Describe tu juego");
+  const submit = page.getByRole("button", { name: "Enviar al agente" });
+  await expect(transcript).toBeVisible();
+  const geometry = await transcript.evaluate((element) => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }));
+  expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight);
+  const chatBox = await chat.boundingBox();
+  const promptBox = await prompt.boundingBox();
+  const submitBox = await submit.boundingBox();
+  expect(chatBox).not.toBeNull();
+  expect(promptBox).not.toBeNull();
+  expect(submitBox).not.toBeNull();
+  expect(promptBox!.y).toBeGreaterThanOrEqual(chatBox!.y);
+  expect(promptBox!.y + promptBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height + 1);
+  expect(submitBox!.y + submitBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height + 1);
+  await expect(page.getByText(/Mensaje numero 40/)).toBeVisible();
+  await prompt.fill("Siguiente iteracion del juego");
+  await expect(prompt).toHaveValue("Siguiente iteracion del juego");
+  await expect(submit).toBeEnabled();
+});
+
 test("los ejemplos del estado vacio rellenan el borrador sin enviar", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
