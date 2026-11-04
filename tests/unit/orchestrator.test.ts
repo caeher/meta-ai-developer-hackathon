@@ -100,7 +100,7 @@ function makeOptions(args: {
   const sandbox = {
     create: vi.fn(async () => {
       trace.push("sandbox:create");
-      return { sandboxId: "sandbox", state: "ready", leaseExpiresAt: "2026-11-02T12:00:00.000Z", devServer: { status: "stopped", port: null, leaseExpiresAt: null } };
+      return { sandboxId: "sandbox", state: "ready", leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(), devServer: { status: "stopped", port: null, leaseExpiresAt: null } };
     }),
     inspect: vi.fn(async () => {
       const error = new Error("not_found") as Error & { code: string };
@@ -896,5 +896,39 @@ describe("código de causa de errores inesperados", () => {
     })).rejects.toMatchObject({ code: "orchestrator_failed" });
     expect(second.store.events.find((event) => event.type === "agent.failed")?.payload)
       .toEqual({ errorCode: "orchestrator_failed" });
+  });
+});
+
+describe("recuperación de leases vencidas del sandbox", () => {
+  it("renueva un sandbox ready vencido antes de leer archivos", async () => {
+    const trace: string[] = [];
+    const expired = {
+      sandboxId: "sandbox",
+      state: "ready" as const,
+      leaseExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+      devServer: { status: "stopped" as const, port: null, leaseExpiresAt: null },
+    };
+    const renewed = {
+      ...expired,
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const { options, sandbox } = makeOptions({
+      trace,
+      maxTokens: 100_000,
+      sandboxOverrides: {
+        inspect: vi.fn(async () => expired),
+        create: vi.fn(async () => { trace.push("sandbox:create:renew"); return renewed; }),
+      },
+    });
+    await createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    });
+    const renewedAt = trace.indexOf("sandbox:create:renew");
+    const firstReadAt = trace.findIndex((entry) => entry.startsWith("sandbox:read:"));
+    expect(sandbox.create).toHaveBeenCalledTimes(1);
+    expect(renewedAt).toBeGreaterThanOrEqual(0);
+    expect(firstReadAt).toBeGreaterThan(renewedAt);
   });
 });

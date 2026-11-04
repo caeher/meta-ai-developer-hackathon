@@ -1005,7 +1005,7 @@ async function inspectPriorGameSpec(sandbox: AgentSandbox, projectId: string, si
     if (isNotFound(error)) return undefined;
     throw error;
   });
-  if (inspected?.state !== "ready") return undefined;
+  if (!hasActiveSandboxLease(inspected)) return undefined;
   const file = await sandbox.readFile(projectId, GAME_SPEC_PATH, signal).catch((error: unknown) => {
     if (isNotFound(error)) return undefined;
     throw error;
@@ -1039,7 +1039,10 @@ async function ensureSandbox(
   const existingCall = state.events.find((event) => event.type === "agent.tool_completed" && stringPayload(event, "callId") === callId);
   if (existingCall) {
     const existing = await options.sandbox.inspect(projectId, state.signal).catch(() => undefined);
-    if (existing?.state !== "ready") throw new RunProcessingError("sandbox_not_ready", false, state.usage);
+    if (!hasActiveSandboxLease(existing)) {
+      const recovered = await options.sandbox.create(projectId, state.signal);
+      if (!hasActiveSandboxLease(recovered)) throw new RunProcessingError("sandbox_not_ready", false, state.usage);
+    }
     return "ready";
   }
   const started = state.events.some((event) => event.type === "agent.tool_started" && stringPayload(event, "callId") === callId);
@@ -1061,8 +1064,10 @@ async function ensureSandbox(
       payload: { callId, toolName: "prepare_sandbox", argsHash },
     });
   }
-  if (!inspected || inspected.state !== "ready") inspected = await options.sandbox.create(projectId, state.signal);
-  if (inspected.state !== "ready") throw new RunProcessingError("sandbox_not_ready", false, state.usage);
+  if (!hasActiveSandboxLease(inspected)) inspected = await options.sandbox.create(projectId, state.signal);
+  if (!inspected || inspected.state !== "ready" || !hasActiveSandboxLease(inspected)) {
+    throw new RunProcessingError("sandbox_not_ready", false, state.usage);
+  }
   const safeState = compactToolResult({ state: "ready", leaseExpiresAt: inspected.leaseExpiresAt }).json;
   await appendBatch(state, options.store, claim, [
     { type: "agent.tool_completed", payload: { callId, toolName: "prepare_sandbox", argsHash, result: safeState } },
@@ -1313,6 +1318,12 @@ function createSha256(value: string): string { return createHash("sha256").updat
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasActiveSandboxLease(value: { state: string; leaseExpiresAt: string | null } | undefined): boolean {
+  if (value?.state !== "ready" || !value.leaseExpiresAt) return false;
+  const expiresAt = Date.parse(value.leaseExpiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
 }
 
 function safeCauseCode(error: unknown): string | undefined {
