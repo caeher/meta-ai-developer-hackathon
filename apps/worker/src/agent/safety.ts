@@ -18,7 +18,9 @@ export function sensitiveInputReason(value: string): "sensitive_content" | undef
 
 export function sensitiveWorkspaceContentReason(path: string, value: string): "sensitive_content" | undefined {
   const normalizedPath = path.replaceAll("\\", "/").toLowerCase();
-  let phoneScanText = value;
+  // Los hashes hex largos (p. ej. SHA-256 de manifiestos) contienen rachas de
+  // digitos que no son telefonos ni tarjetas; se enmascaran solo para ese scan.
+  let phoneScanText = value.replace(/\b[0-9a-f]{32,}\b/gi, " ");
   if (normalizedPath === "package-lock.json") phoneScanText = maskNpmTarballFilenames(value);
   if (normalizedPath.endsWith(".svg")) phoneScanText = maskSvgGeometry(phoneScanText);
   return sensitiveContentReason(value, phoneScanText);

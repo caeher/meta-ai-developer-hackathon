@@ -980,9 +980,12 @@ async function createGameCheckpoint(
       type: "agent.checkpoint",
       payload: { operation: "saved", ...state.checkpoint },
     });
-  } catch {
+  } catch (error) {
     checkSignal(state.signal, state.userSignal, state.usage);
-    throw new RunProcessingError("game_checkpoint_failed", false, state.usage);
+    // Un bloqueo por contenido sensible es determinista; el resto (S3, lecturas
+    // del sandbox) es transitorio y la cola puede reanudar el mismo run.
+    const deterministic = error instanceof Error && error.message === "game_checkpoint_sensitive_content_blocked";
+    throw new RunProcessingError("game_checkpoint_failed", !deterministic, state.usage);
   }
 }
 
@@ -1183,7 +1186,11 @@ async function ensurePhaserTemplate(
         payload: { check: "Phaser template bootstrap", status: "failed", summary: "No se pudo materializar o verificar la plantilla Phaser." },
       }).catch(() => undefined);
     }
-    throw new RunProcessingError("phaser_template_bootstrap_failed", false, state.usage, safeCauseCode(error));
+    const causeCode = safeCauseCode(error);
+    // Un timeout de ejecucion (p. ej. la primera instalacion npm en frio) puede
+    // reanudarse en el mismo run: el marcador queda en "installing" y la cache
+    // del workspace persiste. Otros fallos de bootstrap son deterministas.
+    throw new RunProcessingError("phaser_template_bootstrap_failed", causeCode === "execution_timeout", state.usage, causeCode);
   }
 
   await appendBatch(state, options.store, claim, [

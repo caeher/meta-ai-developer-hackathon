@@ -17,6 +17,17 @@ describe("sensitive workspace scanning", () => {
     expect(sensitiveWorkspaceContentReason("src/game/dialogue.json", '{"hint":"Call me at 202-555-0147"}')).toBe("sensitive_content");
   });
 
+  it("ignores long hex hashes in workspace metadata but still blocks real phone numbers next to them", () => {
+    const marker = JSON.stringify({
+      schemaVersion: 1,
+      templateId: "phaser-3.90.0-v1",
+      manifestSha256: "0877bb057621d074039bfa0c026377bf2692249147240134f3188f187e070db1",
+      status: "ready",
+    });
+    expect(sensitiveWorkspaceContentReason(".meta-game-template.json", marker)).toBeUndefined();
+    expect(sensitiveWorkspaceContentReason(".meta-game-template.json", marker + " Call 202-555-0147")).toBe("sensitive_content");
+  });
+
   it("ignores only version digits in npm tarball filenames", () => {
     const lockfile = JSON.stringify({
       lockfileVersion: 3,

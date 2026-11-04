@@ -78,6 +78,7 @@ function makeOptions(args: {
   maxTokens?: number;
   imageGenerator?: AgentOrchestratorOptions["imageGenerator"];
   spriteEditor?: AgentOrchestratorOptions["spriteEditor"];
+  checkpoints?: AgentCheckpointStorage;
 } = {}) {
   const trace = args.trace ?? [];
   const store = new MemoryRunStore(trace, args.prompt);
@@ -173,7 +174,7 @@ function makeOptions(args: {
     store,
     meta,
     sandbox,
-    checkpoints,
+    checkpoints: args.checkpoints ?? checkpoints,
     skills,
     maxSteps: args.maxSteps ?? 20,
     maxTokens: args.maxTokens ?? 32_000,
@@ -189,6 +190,50 @@ function codeCall(callId: string, name: string, argumentsValue: unknown): Extrac
 }
 
 describe("orquestador de runs", () => {
+  it("marca el fallo de checkpoint como reintentable para reanudar el mismo run", async () => {
+    const failingCheckpoints: AgentCheckpointStorage = {
+      write: vi.fn(async () => { throw new Error("s3_unavailable"); }),
+      read: vi.fn(async () => new Uint8Array()),
+      delete: vi.fn(async () => undefined),
+    };
+    const { options } = makeOptions({ checkpoints: failingCheckpoints });
+
+    const failure = await createAgentRunHandler(options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(RunProcessingError);
+    expect(failure).toMatchObject({ code: "game_checkpoint_failed", retryable: true });
+  });
+
+  it("marca el timeout de bootstrap de plantilla como reintentable y el fallo determinista como no reintentable", async () => {
+    const timeoutError = new Error("execution_timeout") as Error & { code: string };
+    timeoutError.code = "execution_timeout";
+    const installTimeout = vi.fn(async () => { throw timeoutError; });
+    const timedOut = makeOptions({ sandboxOverrides: { installDependencies: installTimeout } });
+
+    const timeoutFailure = await createAgentRunHandler(timedOut.options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    }).catch((error: unknown) => error);
+
+    expect(timeoutFailure).toMatchObject({ code: "phaser_template_bootstrap_failed", retryable: true, causeCode: "execution_timeout" });
+
+    const installDeterministic = vi.fn(async () => ({ stdout: "", stderr: "boom", exitCode: 1, durationMs: 1, truncated: false }));
+    const deterministic = makeOptions({ sandboxOverrides: { installDependencies: installDeterministic } });
+
+    const deterministicFailure = await createAgentRunHandler(deterministic.options)(run, {
+      signal: new AbortController().signal,
+      claim,
+      markVerifying: vi.fn(),
+    }).catch((error: unknown) => error);
+
+    expect(deterministicFailure).toMatchObject({ code: "phaser_template_bootstrap_failed", retryable: false });
+  });
+
   it("trata path_not_found de un archivo opcional como un workspace vacío", async () => {
     const readFile = vi.fn(async (_projectId: string, path: string) => {
       if (path === "src/game/game-spec.json" || path === ".meta-game-template.json") {
