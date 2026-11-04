@@ -7,6 +7,10 @@ import { pathToFileURL } from "node:url";
 
 const maxMetadataBytes = 10 * 1024 * 1024;
 const maxTarballBytes = 64 * 1024 * 1024;
+const maxConcurrentUpstreamRequests = 4;
+const maxQueuedUpstreamRequests = 32;
+let activeUpstreamRequests = 0;
+const queuedUpstreamRequests = [];
 const allowedHosts = new Set((process.env.SANDBOX_EGRESS_ALLOWLIST ?? "registry.npmjs.org")
   .split(",").map((host) => host.trim().toLowerCase()).filter(Boolean));
 const sandboxId = process.env.SANDBOX_ID ?? "";
@@ -16,6 +20,21 @@ const previewUpstreamHost = `mg-sandbox-${sandboxId.toLowerCase()}`;
 const previewMethods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 const packageNamePattern = /^(?:@[a-z0-9][a-z0-9._-]{0,213}%2f)?[a-z0-9][a-z0-9._-]{0,213}$/i;
 const safeMetadataPathPattern = /^(?:@?[A-Za-z0-9%._~-]+(?:%2f[A-Za-z0-9._~-]+)?)(?:\/[A-Za-z0-9%._~-]+)?$/i;
+
+async function withUpstreamSlot(operation) {
+  if (activeUpstreamRequests >= maxConcurrentUpstreamRequests) {
+    if (queuedUpstreamRequests.length >= maxQueuedUpstreamRequests) throw new Error("egress_upstream_busy");
+    await new Promise((resolve) => queuedUpstreamRequests.push(resolve));
+  } else {
+    activeUpstreamRequests += 1;
+  }
+  try { return await operation(); }
+  finally {
+    const next = queuedUpstreamRequests.shift();
+    if (next) next();
+    else activeUpstreamRequests -= 1;
+  }
+}
 
 export function validPublicIpv4(address) {
   if (isIP(address) !== 4) return false;
@@ -64,7 +83,7 @@ export function registryAcceptHeader(pathname) {
   return pathname.endsWith(".tgz") ? "application/octet-stream" : "application/vnd.npm.install-v1+json";
 }
 
-function requestPinned(hostname, pathname, address, method) {
+function requestPinned(hostname, pathname, address, method, streamBody = false) {
   return new Promise((resolve, reject) => {
     const request = httpsRequest({
       hostname,
@@ -78,6 +97,10 @@ function requestPinned(hostname, pathname, address, method) {
         : callback(null, address, 4),
       agent: false,
     }, (response) => {
+      if (streamBody) {
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, stream: response });
+        return;
+      }
       const chunks = [];
       let total = 0;
       const limit = pathname.endsWith(".tgz") ? maxTarballBytes : maxMetadataBytes;
@@ -100,16 +123,67 @@ function requestPinned(hostname, pathname, address, method) {
   });
 }
 
-async function getUpstream(hostname, pathname, method, redirects = 0) {
+async function getUpstream(hostname, pathname, method, redirects = 0, streamBody = false) {
   const address = await resolvePublicIpv4(hostname);
-  const result = await requestPinned(hostname, pathname, address, method);
+  const result = await requestPinned(hostname, pathname, address, method, streamBody);
   if (result.status >= 300 && result.status < 400) {
+    await discardResponse(result.stream);
     if (redirects >= 3 || typeof result.headers.location !== "string") throw new Error("egress_redirect_rejected");
     const next = validateRedirectLocation(result.headers.location, hostname, allowedHosts);
     if (!next) throw new Error("egress_redirect_rejected");
-    return getUpstream(next.hostname, next.pathname, method, redirects + 1);
+    return getUpstream(next.hostname, next.pathname, method, redirects + 1, streamBody);
   }
   return result;
+}
+
+function discardResponse(stream) {
+  if (!stream) return Promise.resolve();
+  return new Promise((resolve) => {
+    stream.once("end", resolve);
+    stream.once("error", resolve);
+    stream.resume();
+  });
+}
+
+function pipeTarball(request, response, upstream) {
+  const declaredLength = Number(upstream.headers["content-length"]);
+  if (Number.isSafeInteger(declaredLength) && declaredLength > maxTarballBytes) {
+    upstream.destroy();
+    response.writeHead(502).end();
+    return Promise.resolve();
+  }
+  const headers = { "content-type": "application/octet-stream" };
+  if (Number.isSafeInteger(declaredLength) && declaredLength >= 0) headers["content-length"] = declaredLength;
+  response.writeHead(200, headers);
+  let total = 0;
+  let finished = false;
+  return new Promise((resolve) => {
+    const stop = () => {
+      if (finished) return;
+      finished = true;
+      upstream.destroy();
+      resolve();
+    };
+    request.once("aborted", stop);
+    response.once("close", stop);
+    upstream.on("data", (chunk) => {
+      total += chunk.length;
+      if (total > maxTarballBytes) upstream.destroy(new Error("egress_response_too_large"));
+    });
+    upstream.once("error", () => {
+      if (finished) return;
+      finished = true;
+      response.destroy();
+      resolve();
+    });
+    upstream.once("end", () => {
+      if (finished) return;
+      finished = true;
+      response.end();
+      resolve();
+    });
+    upstream.pipe(response, { end: false });
+  });
 }
 
 function getPackageNameFromMetadataPath(pathname) {
@@ -281,14 +355,26 @@ async function handle(request, response) {
   if (!route) { response.writeHead(403).end(); return; }
   const { hostname, upstreamPath, tarball } = route;
   try {
-    const result = await getUpstream(hostname, upstreamPath, request.method ?? "GET");
-    if (result.status < 200 || result.status >= 300) { response.writeHead(result.status === 404 ? 404 : 502).end(); return; }
-    const body = tarball || request.method === "HEAD" ? result.body : rewriteTarballs(JSON.parse(result.body.toString("utf8")), hostname);
-    response.writeHead(200, {
-      "content-type": tarball ? "application/octet-stream" : "application/vnd.npm.install-v1+json",
-      "content-length": body.byteLength,
+    await withUpstreamSlot(async () => {
+      const method = request.method ?? "GET";
+      const streamBody = tarball && method === "GET";
+      const result = await getUpstream(hostname, upstreamPath, method, 0, streamBody);
+      if (result.status < 200 || result.status >= 300) {
+        await discardResponse(result.stream);
+        response.writeHead(result.status === 404 ? 404 : 502).end();
+        return;
+      }
+      if (streamBody && result.stream) {
+        await pipeTarball(request, response, result.stream);
+        return;
+      }
+      const body = tarball || method === "HEAD" ? result.body : rewriteTarballs(JSON.parse(result.body.toString("utf8")), hostname);
+      response.writeHead(200, {
+        "content-type": tarball ? "application/octet-stream" : "application/vnd.npm.install-v1+json",
+        "content-length": body.byteLength,
+      });
+      response.end(body);
     });
-    response.end(body);
   } catch {
     response.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
     response.end("registry_request_failed\n");
