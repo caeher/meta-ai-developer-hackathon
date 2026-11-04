@@ -7,6 +7,7 @@ const files = await listFiles(dist);
 const htmlPath = join(dist, "index.html");
 const html = await readFile(htmlPath, "utf8");
 const assets = files.filter((path) => /\.(?:js|css|svg|json)$/.test(path));
+const applicationScripts = assets.filter((path) => relative(dist, path).replaceAll("\\", "/").startsWith("assets/") && path.endsWith(".js"));
 const fileCache = new Map(await Promise.all(assets.map(async (path) => [path, await readFile(path, "utf8")])));
 
 if (!html.includes("./assets/") || /(?:src|href)=["']https?:\/\//i.test(html)) {
@@ -21,8 +22,13 @@ if (assets.some((path) => readFileSync(path).includes("__GAME_TEST__"))) {
 if (!files.some((path) => relative(dist, path).replaceAll("\\", "/") === "assets/manifest.json")) {
   throw new Error("template_build_manifest_missing");
 }
+if (!files.some((path) => relative(dist, path).replaceAll("\\", "/") === "phaser.esm.min.js") ||
+  !html.includes('"phaser":"./phaser.esm.min.js"') ||
+  !applicationScripts.some((path) => readFileSync(path).includes("phaser"))) {
+  throw new Error("template_build_local_phaser_module_missing");
+}
 
-process.stdout.write("Static game build is self-contained; development hooks and source maps are absent.\n");
+process.stdout.write("Static game build includes the local Phaser module; development hooks and source maps are absent.\n");
 
 async function listFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
