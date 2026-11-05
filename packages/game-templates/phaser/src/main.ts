@@ -33,7 +33,9 @@ const genre: GameGenre = import.meta.env.DEV && isGameGenre(genreQuery) ? genreQ
 const gameTitle = typeof projectSpec.title === "string" ? projectSpec.title : GAME_LABELS[genre];
 const movement = projectSpec.controls?.movement === "wasd" ? "wasd" : "arrows";
 const actionKey = projectSpec.controls?.action === "e" ? "e" : "space";
-const actionName = typeof projectSpec.actionLabel === "string" ? projectSpec.actionLabel : undefined;
+// La etiqueta personalizada del spec solo aplica a su propio genero; con el
+// override de preset (?genre= en DEV) manda la etiqueta por defecto del genero.
+const actionName = genre === configuredGenre && typeof projectSpec.actionLabel === "string" ? projectSpec.actionLabel : undefined;
 const actionLabel: Readonly<Record<GameGenre, string>> = {
   platformer: "Saltar",
   puzzle: "Interactuar",
@@ -75,7 +77,7 @@ game.registry.set("genre", genre);
 game.registry.set("gameTitle", gameTitle);
 const movementLabel = movement === "wasd" ? "WASD" : "Flechas";
 const actionLabelText = actionKey === "e" ? "E" : "Espacio";
-const controlHelp = typeof projectSpec.controlHelp === "string"
+const controlHelp = genre === configuredGenre && typeof projectSpec.controlHelp === "string"
   ? projectSpec.controlHelp
   : GAME_HELP[genre].replaceAll("Flechas", movementLabel).replaceAll("espacio", actionLabelText).replaceAll("E para interactuar", `${actionLabelText} para interactuar`);
 game.registry.set("controlHelp", controlHelp);

@@ -17,10 +17,10 @@ import {
 } from "@meta-game/storage";
 import type { AgentSandbox } from "../agent/tools";
 import { isSensitiveWorkspacePath, sensitiveWorkspaceContentReason } from "../agent/safety";
-import { GAME_SPEC_PATH } from "../pipelines/game-spec-path";
+import { GAME_SPEC_PATH, PHASER_RUNTIME_SPEC_PATH } from "../pipelines/game-spec-path";
 
 const BINARY_PATH = /^public\/assets\/.+\.(?:png|jpe?g|webp|gif|ico|mp3|ogg|wav|mp4|webm|wasm|woff2?|ttf|otf)$/i;
-const PHASER_RUNTIME_SPEC_PATH = "src/game/project-spec.json";
+
 const SKIP_DIRECTORIES = new Set(["node_modules", "dist", ".next", ".git", ".vite", "coverage", "test-results", "playwright-report", "tmp", "temp"]);
 const MAX_FILE_COUNT = 512;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;

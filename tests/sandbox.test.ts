@@ -434,7 +434,7 @@ describe("sandbox rootless contract", () => {
     await f.service.startDevServer(PROJECT_ID);
     await expect(f.service.verifyGameInteraction(PROJECT_ID, input)).resolves.toMatchObject({ status: "passed", checks: [] });
     expect(f.driver.exec).toHaveBeenCalledWith(
-      SANDBOX_ID, PROJECT_ID, 23451, ["node", "/opt/meta-game/verify-game.mjs"], "", 30_000,
+      SANDBOX_ID, PROJECT_ID, 23451, ["node", "/opt/meta-game/verify-game.mjs"], "", 60_000,
       expect.objectContaining({ stdin: JSON.stringify(input) }),
     );
   });

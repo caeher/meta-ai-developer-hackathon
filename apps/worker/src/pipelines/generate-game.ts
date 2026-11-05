@@ -10,7 +10,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import type { AgentSandbox } from "../agent/tools";
 import { isSensitiveWorkspacePath, sensitiveWorkspaceContentReason } from "../agent/safety";
 
-export { GAME_SPEC_PATH } from "./game-spec-path";
+export { GAME_SPEC_PATH, PHASER_RUNTIME_SPEC_PATH } from "./game-spec-path";
 const CHECKPOINT_SCHEMA_VERSION = 1;
 const CHECKPOINT_MAX_FILES = 256;
 const CHECKPOINT_MAX_FILE_BYTES = 1_000_000;
@@ -71,6 +71,9 @@ export function gameSpecInstructions(spec: GameSpec): string {
     JSON.stringify(spec),
     "Conserva el mismo workspace en ediciones. Mantén un loop interactivo, objetivo visible, controles de teclado y touch, pausa, mute y reinicio.",
     "No elimines el hook de pruebas de solo lectura window.__GAME_TEST__ ni la página accesible de controles.",
+    "Contrato del snapshot de verificacion: window.__GAME_TEST__.getState() debe exponer genre, phase, score, target, lives, assetsReady y la posicion x/y del jugador junto a un contador moves que aumente al moverse. Actualiza el snapshot (registry publicSnapshot) en cada movimiento, tanto con teclado como con los botones tactiles; la verificacion automatica pulsa ArrowRight/tecla de direccion y el boton tactil derecho y exige que x/y o moves cambien. Si reescribes PlayScene, conserva la logica de publishSnapshot de la plantilla (moveTo con player.x/player.y) o su equivalente.",
+    "El hook window.__GAME_TEST__ solo puede existir en desarrollo: conserva en src/main.ts el gating de la plantilla (import.meta.env.DEV) y no lo muevas a PlayScene ni a codigo de produccion; scripts/check-build.mjs rechaza el build si el bundle dist contiene el hook y la verificacion fallara en npm run build.",
+    "Los botones tactiles deben mover al jugador de forma inmediata en el evento pointerdown (aplica un paso o velocidad y actualiza el snapshot en ese mismo instante), no solo mientras se mantienen pulsados: la verificacion hace una pulsacion breve (tap) y exige que x/y o moves cambien tras ella.",
     "Usa Phaser 3.90.0 y las dependencias ya aprobadas. No agregues paquetes; la plantilla incluye runtime, assets, pruebas de lógica y build.",
   ].join("\n");
 }

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
+import { applyTransparencyToPng } from "./transparency";
 import {
   GENERATED_ASSET_MAX_BYTES,
   GENERATED_ASSET_MAX_DIMENSION,
@@ -59,7 +60,7 @@ export type ProcessedGeneratedImage = Readonly<{
   frameHeight: number;
   sourceSha256: string;
   sha256: string;
-  edits: Array<"orientation-normalized" | "metadata-stripped" | "png-reencoded" | "bounded-resize" | "frames-cropped">;
+  edits: Array<"orientation-normalized" | "metadata-stripped" | "png-reencoded" | "bounded-resize" | "frames-cropped" | "background-removed">;
   contactSheet: Buffer;
   contactSheetSha256: string;
   tileSeams?: {
@@ -106,15 +107,29 @@ export async function processGeneratedImage(
     throw new ImagePipelineError("generated_image_metadata_mismatch");
   }
   const hasAlpha = metadata.hasAlpha === true;
-  const transparentPixels = hasAlpha && Boolean(alphaBytes?.some((alpha) => alpha < 255));
-  if (brief.transparentBackground && (!hasAlpha || !transparentPixels)) {
-    throw new ImagePipelineError("generated_image_alpha_missing");
+  let transparentPixels = hasAlpha && Boolean(alphaBytes?.some((alpha) => alpha < 255));
+  // El modelo de imagen devuelve opaco aunque se le pidan pixeles transparentes.
+  // Si el fondo es uniforme, se recorta localmente desde las esquinas (sin otra
+  // llamada facturable); solo se rechaza cuando no queda sujeto distinguible.
+  let effectiveSource = source;
+  let backgroundRemoved = false;
+  if (brief.transparentBackground && !transparentPixels) {
+    try {
+      const removed = await applyTransparencyToPng(source, { mode: "corner-flood" });
+      const totalPixels = removed.width * removed.height;
+      if (removed.removedPixels > 0 && removed.removedPixels < totalPixels * 0.98) {
+        effectiveSource = Buffer.from(removed.bytes);
+        backgroundRemoved = true;
+        transparentPixels = true;
+      }
+    } catch { /* Sin fondo recortable: se mantiene el rechazo de abajo. */ }
+    if (!backgroundRemoved) throw new ImagePipelineError("generated_image_alpha_missing");
   }
 
   const columns = brief.frameColumns;
   const rows = brief.frameRows;
   const frameCount = columns * rows;
-  let transform = sharp(source, { failOn: "error", limitInputPixels: GENERATED_ASSET_MAX_PIXELS, sequentialRead: true }).rotate();
+  let transform = sharp(effectiveSource, { failOn: "error", limitInputPixels: GENERATED_ASSET_MAX_PIXELS, sequentialRead: true }).rotate();
   if (brief.assetType === "tileset" && brief.tileSize) {
     transform = transform.resize({
       width: columns * brief.tileSize,
@@ -165,6 +180,7 @@ export async function processGeneratedImage(
   const displayHeight = swapsDimensions ? metadata.width : metadata.height;
   if (info.width !== displayWidth || info.height !== displayHeight) edits.push("bounded-resize");
   if (frameCount > 1) edits.push("frames-cropped");
+  if (backgroundRemoved) edits.push("background-removed");
 
   return {
     bytes,

@@ -9,6 +9,7 @@ import { createAgentRunHandler, snapshotFailureCauseCode } from "../../apps/work
 import type { AgentCheckpointStorage, AgentOrchestratorOptions } from "../../apps/worker/src/agent/orchestrator";
 import type { AgentSandbox } from "../../apps/worker/src/agent/tools";
 import { RunProcessingError } from "../../apps/worker/src/handler";
+import { ImagePipelineError } from "../../apps/worker/src/assets/image-pipeline";
 
 const claim = {
   runId: "00000000-0000-4000-8000-000000000101",
@@ -78,6 +79,7 @@ function makeOptions(args: {
   maxTokens?: number;
   imageGenerator?: AgentOrchestratorOptions["imageGenerator"];
   spriteEditor?: AgentOrchestratorOptions["spriteEditor"];
+  assetToolCallsEnabled?: boolean;
   checkpoints?: AgentCheckpointStorage;
 } = {}) {
   const trace = args.trace ?? [];
@@ -116,6 +118,7 @@ function makeOptions(args: {
         throw error;
       }
       trace.push(`sandbox:read:${path}`);
+      if (path === "src/game/project-spec.json") return { path, content: '{"genre":"platformer"}' };
       return { path, content: '{"scripts":{"test":"vitest run","lint":"tsc --noEmit","build":"vite build"}}' };
     }),
     writeFile: vi.fn(async (_projectId: string, path: string, content: string) => {
@@ -181,6 +184,7 @@ function makeOptions(args: {
     maxDurationMs: 30_000,
     ...(args.imageGenerator ? { imageGenerator: args.imageGenerator } : {}),
     ...(args.spriteEditor ? { spriteEditor: args.spriteEditor } : {}),
+    ...(args.assetToolCallsEnabled === undefined ? {} : { assetToolCallsEnabled: args.assetToolCallsEnabled }),
   };
   return { options, trace, store, planCall, streamCall, sandbox };
 }
@@ -242,6 +246,7 @@ describe("orquestador de runs", () => {
         error.code = code;
         throw error;
       }
+      if (path === "src/game/project-spec.json") return { path, content: '{"genre":"platformer"}' };
       return { path, content: '{"scripts":{"test":"vitest run","lint":"tsc --noEmit","build":"vite build"}}' };
     });
     const inspect = vi.fn(async () => ({
@@ -735,10 +740,125 @@ describe("orquestador de runs", () => {
     ]));
   });
 
+  it("un fallo de sandbox en run_command se devuelve al modelo y no mata el run", async () => {
+    const commandCall = codeCall("call-cmd-1", "run_command", { command: "npm", args: ["test"] });
+    const writeCall = codeCall("call-cmd-write", "write_file", { path: "src/game.ts", content: "export {};" });
+    const asReplay = (call: Extract<MetaCodeEvent, { type: "tool_call" }>) => [{ kind: "tool_call", callId: call.callId, name: call.name, arguments: call.arguments }] as MetaConversationItem[];
+    let commandCount = 0;
+    const { options, store } = makeOptions({
+      sandboxOverrides: { runCommand: vi.fn(async () => {
+        commandCount += 1;
+        if (commandCount === 3) throw new Error("exec_deadline");
+        return { stdout: "ok", stderr: "", exitCode: 0, durationMs: 1, truncated: false };
+      }) },
+      streams: [
+        [commandCall, completion(asReplay(commandCall), "response-cmd-1", 10)],
+        [writeCall, completion(asReplay(writeCall), "response-cmd-write", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "Listo." }], "response-cmd-final", 10)],
+      ],
+    });
+    await createAgentRunHandler(options)(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    expect(store.events.map((event) => event.type)).toContain("agent.completed");
+  });
+
+  it("limita generate_image a 6 llamadas por run y devuelve error recuperable al excederlo", async () => {
+    const imageGenerator = vi.fn(async (_args: Record<string, unknown>, context: GeneratedImageToolContext) => {
+      await context.beforeRequest();
+      await context.onResponse({
+        bytes: new Uint8Array([137, 80, 78, 71]), mimeType: "image/png", width: 1, height: 1,
+        model: "muse-image-1.0", responseId: "response-image-cap", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      });
+      return {
+        assetId: "10000000-0000-4000-8000-000000000111", contactSheetAssetId: "10000000-0000-4000-8000-000000000112",
+        assetType: "sprite", path: "assets/generated/10000000-0000-4000-8000-000000000111.png",
+        manifestPath: "public/assets/generated/manifest.json", bytesWritten: 512, sha256: "a".repeat(64),
+        mimeType: "image/png", width: 16, height: 16, phaserKey: "generated-10000000-0000-4000-8000-000000000111",
+        frameCount: 1, frameWidth: 16, frameHeight: 16, alphaVerified: true,
+        qa: { contactSheetAssetId: "10000000-0000-4000-8000-000000000112", visualReview: "pending-in-live-preview" },
+      };
+    });
+    const streams: Array<MetaCodeEvent[]> = [];
+    for (let index = 0; index < 7; index += 1) {
+      const call = codeCall(`call-cap-img-${index}`, "generate_image", { assetType: "sprite", description: `Sprite distinto ${index}`, style: "pixel art", view: "top-down", palette: [], transparentBackground: true, frameColumns: 1, frameRows: 1, tileable: false });
+      streams.push([call, completion([{ kind: "tool_call", callId: call.callId, name: call.name, arguments: call.arguments }], `response-cap-img-${index}`, 10)] as MetaCodeEvent[]);
+    }
+    const writeCall = codeCall("call-cap-write", "write_file", { path: "src/game.ts", content: "export {};" });
+    streams.push([writeCall, completion([{ kind: "tool_call", callId: writeCall.callId, name: writeCall.name, arguments: writeCall.arguments }], "response-cap-write", 10)] as MetaCodeEvent[]);
+    streams.push([completion([{ kind: "message", role: "assistant", text: "Listo." }], "response-cap-final", 10)] as MetaCodeEvent[]);
+    const { options, store } = makeOptions({ imageGenerator: imageGenerator as never, streams: streams as never });
+    await createAgentRunHandler(options)(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    expect(imageGenerator).toHaveBeenCalledTimes(6);
+    expect(store.events.map((event) => event.type)).toContain("agent.completed");
+  });
+
+  it("un fallo de generate_image se devuelve al modelo como error recuperable y el run puede terminar el juego sin ese sprite", async () => {
+    const imageCall = codeCall("call-img-1", "generate_image", { assetType: "sprite", description: "Nave espacial", style: "pixel art", view: "top-down", palette: [], transparentBackground: true, frameColumns: 1, frameRows: 1, tileable: false });
+    const writeCall = codeCall("call-img-write", "write_file", { path: "src/game.ts", content: "export {};" });
+    const asReplay = (call: Extract<MetaCodeEvent, { type: "tool_call" }>) => [{ kind: "tool_call", callId: call.callId, name: call.name, arguments: call.arguments }] as MetaConversationItem[];
+    const { options, store } = makeOptions({
+      imageGenerator: vi.fn(async () => { throw new ImagePipelineError("generated_image_alpha_missing"); }) as never,
+      streams: [
+        [imageCall, completion(asReplay(imageCall), "response-img-1", 10)],
+        [writeCall, completion(asReplay(writeCall), "response-img-write", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "Juego terminado con assets de plantilla." }], "response-img-final", 10)],
+      ],
+    });
+    const handler = createAgentRunHandler(options);
+    await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    expect(store.events.map((event) => event.type)).toContain("agent.tool_failed");
+    expect(store.events.map((event) => event.type)).toContain("agent.completed");
+  });
+
+  it("no re-ejecuta llamadas identicas repetidas: responde desde cache y no quema pasos", async () => {
+    const listCall = (id: string) => codeCall(id, "list_files", { path: "src" });
+    const writeCall = codeCall("call-dup-write", "write_file", { path: "src/game.ts", content: "export {};" });
+    const asReplay = (call: Extract<MetaCodeEvent, { type: "tool_call" }>) => [{ kind: "tool_call", callId: call.callId, name: call.name, arguments: call.arguments }] as MetaConversationItem[];
+    const { options, store } = makeOptions({
+      streams: [
+        [listCall("call-dup-1"), completion(asReplay(listCall("call-dup-1")), "response-dup-1", 10)],
+        [listCall("call-dup-2"), completion(asReplay(listCall("call-dup-2")), "response-dup-2", 10)],
+        [listCall("call-dup-3"), completion(asReplay(listCall("call-dup-3")), "response-dup-3", 10)],
+        [writeCall, completion(asReplay(writeCall), "response-dup-write", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "Listo." }], "response-dup-final", 10)],
+      ],
+    });
+    const handler = createAgentRunHandler(options);
+    await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    const listStarts = store.events.filter((event) => event.type === "agent.tool_started" && event.payload.toolName === "list_files");
+    expect(listStarts).toHaveLength(1);
+  });
+
+  it("aborta con agent_no_progress si el modelo solo explora y nunca escribe codigo ni assets", async () => {
+    const streams: Array<Array<Extract<MetaCodeEvent, { type: "tool_call" }> | Extract<MetaCodeEvent, { type: "completed" }>>> = [];
+    for (let index = 0; index < 40; index += 1) {
+      const call = codeCall(`call-explore-${index}`, "list_files", { path: `src/${index}` });
+      streams.push([call, completion([{ kind: "tool_call", callId: call.callId, name: call.name, arguments: call.arguments }], `response-explore-${index}`, 10)]);
+    }
+    const { options } = makeOptions({ streams: streams as never, maxSteps: 200 });
+    const handler = createAgentRunHandler(options);
+    await expect(handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
+      .rejects.toMatchObject({ code: "agent_no_progress" });
+  });
+
+  it("el prompt de codigo solo exige el flujo de sprites/subagentes cuando esas tools estan disponibles", async () => {
+    const disabled = makeOptions({ assetToolCallsEnabled: false, streams: [[completion([{ kind: "message", role: "assistant", text: "Listo." }], "response-noassets", 10)]] });
+    await createAgentRunHandler(disabled.options)(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    const disabledPrompt = String((disabled.streamCall.mock.calls[0]?.[0] as { prompt?: string })?.prompt ?? "");
+    expect(disabledPrompt).not.toContain("run_issue_agents");
+    expect(disabledPrompt).toContain("generate_image no esta disponible");
+
+    const enabled = makeOptions({ streams: [[completion([{ kind: "message", role: "assistant", text: "Listo." }], "response-assets", 10)]] });
+    await createAgentRunHandler(enabled.options)(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    const enabledPrompt = String((enabled.streamCall.mock.calls[0]?.[0] as { prompt?: string })?.prompt ?? "");
+    expect(enabledPrompt).toContain("generate_image");
+  });
+
   it("mantiene el contexto por debajo del limite de Meta en runs largos", async () => {
     const streams: Array<Array<Extract<MetaCodeEvent, { type: "tool_call" }> | Extract<MetaCodeEvent, { type: "completed" }>>> = [];
     for (let index = 0; index < 70; index += 1) {
-      const call = codeCall(`call-long-${index}`, "list_files", { path: "" });
+      const call = index % 10 === 9
+        ? codeCall(`call-long-${index}`, "write_file", { path: `src/long-${index}.ts`, content: "export {};" })
+        : codeCall(`call-long-${index}`, "list_files", { path: "" });
       streams.push([call, completion([{ kind: "tool_call", callId: call.callId, name: call.name, arguments: call.arguments }], `response-long-${index}`, 10)]);
     }
     streams.push([completion([{ kind: "message", role: "assistant", text: "Listo." }], "response-long-final", 10)]);
@@ -811,9 +931,26 @@ describe("orquestador de runs", () => {
     expect(sandbox.create).not.toHaveBeenCalled();
   });
 
+  it("reintenta una ronda de codigo sin completed y ejecuta solo la respuesta completa", async () => {
+    const partial = codeCall("call-partial", "write_file", { path: "src/game.ts", content: "unsafe" });
+    const good = codeCall("call-good", "write_file", { path: "src/game.ts", content: "export {};" });
+    const { options, sandbox, streamCall } = makeOptions({
+      streams: [
+        [partial],
+        [good, completion([{ kind: "tool_call", callId: good.callId, name: good.name, arguments: good.arguments }], "response-retry-good", 10)],
+        [completion([{ kind: "message", role: "assistant", text: "Listo." }], "response-retry-final", 10)],
+      ],
+    });
+    const handler = createAgentRunHandler(options);
+    await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    expect(streamCall.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(sandbox.writeFile).not.toHaveBeenCalledWith(claim.projectId, "src/game.ts", "unsafe", expect.any(AbortSignal));
+    expect(sandbox.writeFile).toHaveBeenCalledWith(claim.projectId, "src/game.ts", "export {};", expect.any(AbortSignal));
+  });
+
   it("no ejecuta un tool_call parcial sin evento completed", async () => {
     const partial = codeCall("call-partial", "write_file", { path: "src/game.ts", content: "unsafe" });
-    const { options, sandbox } = makeOptions({ streams: [[partial]] });
+    const { options, sandbox } = makeOptions({ streams: [[partial], [partial], [partial]] });
     const handler = createAgentRunHandler(options);
     await expect(handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() }))
       .rejects.toMatchObject({ code: "meta_incomplete_response" });
@@ -854,6 +991,40 @@ describe("orquestador de runs", () => {
       .rejects.toMatchObject({ code: "agent_unknown_tool" });
     expect(streamCall).toHaveBeenCalledTimes(2);
     expect(sandbox.runCommand).toHaveBeenCalledTimes(3);
+  });
+
+  it("si la reparacion se queda sin presupuesto, verifica el workspace existente en vez de fallar", async () => {
+    const writeCall = codeCall("call-repair-write", "write_file", { path: "src/game.ts", content: "export const gameReady = true;" });
+    let commandCount = 0;
+    const { options, store } = makeOptions({
+      maxTokens: 29_500,
+      sandboxOverrides: { runCommand: vi.fn(async () => {
+        commandCount += 1;
+        // bootstrap (1-2) ok; la primera verificacion (3 = npm test) falla; el resto ok.
+        if (commandCount === 3) return { stdout: "fail", stderr: "", exitCode: 1, durationMs: 1, truncated: false };
+        return { stdout: "ok", stderr: "", exitCode: 0, durationMs: 1, truncated: false };
+      }) },
+      streams: [
+        [writeCall, completion([{ kind: "tool_call", callId: writeCall.callId, name: writeCall.name, arguments: writeCall.arguments }], "response-repair-write", 29_000)],
+      ],
+    });
+    const handler = createAgentRunHandler(options);
+    await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    expect(store.events.map((event) => event.type)).toContain("agent.completed");
+  });
+
+  it("si el presupuesto se agota tras escribir codigo, pasa a verificacion en vez de fallar el run", async () => {
+    const writeCall = codeCall("call-budget-write", "write_file", { path: "src/game.ts", content: "export const gameReady = true;" });
+    const { options, store } = makeOptions({
+      maxTokens: 30_000,
+      streams: [
+        [writeCall, completion([{ kind: "tool_call", callId: writeCall.callId, name: writeCall.name, arguments: writeCall.arguments }], "response-budget-write", 29_000)],
+      ],
+    });
+    const handler = createAgentRunHandler(options);
+    await handler(run, { signal: new AbortController().signal, claim, markVerifying: vi.fn() });
+    expect(store.events.map((event) => event.type)).toContain("agent.completed");
+    expect(store.events.map((event) => event.type)).not.toContain("agent.failed");
   });
 
   it("no hace escrituras si no queda presupuesto estimado para otra respuesta", async () => {

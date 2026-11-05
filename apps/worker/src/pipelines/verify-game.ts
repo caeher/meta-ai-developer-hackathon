@@ -18,6 +18,8 @@ export type VerifyGameResult = Readonly<{ status: "passed" | "failed"; failures:
 export async function verifyGame(input: {
   spec: GameSpec;
   readManifest(): Promise<string>;
+  readRuntimeSpec(): Promise<string>;
+  listChangedGameplayFiles(): Promise<readonly string[]>;
   runCommand(args: readonly string[]): Promise<SandboxToolCommandResult>;
   startDevServer(): Promise<{ status: string; port: number | null }>;
   verifyInteraction(): Promise<GameBrowserVerificationResult>;
@@ -25,6 +27,39 @@ export async function verifyGame(input: {
   onCheck(check: GameVerificationCheck): Promise<void>;
 }): Promise<VerifyGameResult> {
   const failures: string[] = [];
+
+  // El juego entregado debe ser el pedido, no la plantilla intacta: el spec
+  // runtime que lee Phaser debe coincidir con el GameSpec validado y al menos
+  // un archivo de codigo de gameplay debe diferir de la plantilla sembrada.
+  try {
+    const parsed: unknown = JSON.parse(await input.readRuntimeSpec());
+    const runtimeGenre = isRecord(parsed) ? parsed.genre : undefined;
+    const passed = runtimeGenre === input.spec.genre;
+    const summary = passed
+      ? `src/game/project-spec.json declara el genero validado (${input.spec.genre}).`
+      : `src/game/project-spec.json declara genero ${typeof runtimeGenre === "string" ? runtimeGenre : "ausente"} pero el juego pedido es ${input.spec.genre}; actualiza el project-spec y la escena jugable a ese genero.`;
+    await record(input, { check: "runtime project-spec", status: passed ? "passed" : "failed", summary });
+    if (!passed) failures.push(`runtime project-spec: ${summary}`);
+  } catch {
+    const summary = "src/game/project-spec.json no contiene JSON valido; Phaser no puede seleccionar el juego pedido.";
+    await record(input, { check: "runtime project-spec", status: "failed", exitCode: 1, summary });
+    failures.push(`runtime project-spec: ${summary}`);
+  }
+
+  try {
+    const changed = await input.listChangedGameplayFiles();
+    const passed = changed.length > 0;
+    const summary = passed
+      ? `Codigo de gameplay personalizado respecto a la plantilla: ${changed.slice(0, 6).join(", ")}.`
+      : "El workspace conserva intacto el codigo de gameplay de la plantilla Phaser: solo cambiaron el project-spec o los assets, asi que el juego jugable es el preset de la plantilla y no el pedido. Implementa la peticion modificando o creando codigo en src/ (escenas, logica, niveles o mecanicas), no solo src/game/project-spec.json ni public/assets.";
+    await record(input, { check: "game customization", status: passed ? "passed" : "failed", summary });
+    if (!passed) failures.push(`game customization: ${summary}`);
+  } catch (error) {
+    const summary = `No se pudo comparar el workspace con la plantilla: ${safeErrorCode(error)}.`;
+    await record(input, { check: "game customization", status: "failed", exitCode: -1, summary });
+    failures.push(`game customization: ${summary}`);
+  }
+
   let scripts: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(await input.readManifest());
@@ -79,7 +114,16 @@ export async function verifyGame(input: {
 
   if (serverReady) {
     try {
-      const browser = GameBrowserVerificationResultSchema.parse(await input.verifyInteraction());
+      // Un timeout o una salida invalida del Chromium aislado es un fallo de
+      // infraestructura, no del juego: se reintenta una vez antes de fallar.
+      let browserResult: Awaited<ReturnType<typeof input.verifyInteraction>> | undefined;
+      let interactionError: unknown;
+      for (let attempt = 0; attempt < 2 && browserResult === undefined; attempt += 1) {
+        try { browserResult = await input.verifyInteraction(); }
+        catch (error) { interactionError = error; }
+      }
+      if (browserResult === undefined) throw interactionError;
+      const browser = GameBrowserVerificationResultSchema.parse(browserResult);
       for (const check of browser.checks) {
         await record(input, { check: `browser ${check.name}`, status: check.status, summary: check.summary });
         if (check.status === "failed") failures.push(`browser ${check.name}: ${redactSensitiveText(check.summary).slice(0, 400)}`);

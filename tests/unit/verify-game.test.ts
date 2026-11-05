@@ -12,6 +12,8 @@ function input(overrides: Partial<Parameters<typeof verifyGame>[0]> = {}): Param
     runCommand: vi.fn(async () => ({ stdout: "ok", stderr: "", exitCode: 0, durationMs: 5, truncated: false })),
     startDevServer: vi.fn(async () => ({ status: "ready", port: 4173 })),
     verifyInteraction: vi.fn(async () => passedBrowser),
+    readRuntimeSpec: async () => JSON.stringify({ genre: spec.genre }),
+    listChangedGameplayFiles: async () => ["src/game/PlayScene.ts"],
     readLogs: vi.fn(async () => ({ stdout: "", stderr: "" })),
     onCheck: vi.fn(async () => undefined),
     ...overrides,
@@ -28,6 +30,17 @@ describe("verificación completa del juego", () => {
     expect(options.runCommand).toHaveBeenNthCalledWith(3, ["run", "build"]);
     expect(options.verifyInteraction).toHaveBeenCalledOnce();
     expect(checks).toContain("browser keyboard interaction");
+  });
+
+  it("reintenta una vez la prueba de navegador si el Chromium aislado falla por infraestructura", async () => {
+    let attempts = 0;
+    const options = input({ verifyInteraction: vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("execution_timeout");
+      return passedBrowser;
+    }) });
+    await expect(verifyGame(options)).resolves.toMatchObject({ status: "passed", failures: [] });
+    expect(attempts).toBe(2);
   });
 
   it("no declara éxito por un health check 200 cuando el navegador no puede mover el juego", async () => {
@@ -49,6 +62,23 @@ describe("verificación completa del juego", () => {
     expect(result.status).toBe("failed");
     expect(result.failures.join(" ")).not.toContain("ghp_");
     expect(result.failures.join(" ")).toContain("[REDACTED]");
+  });
+
+  it("falla si solo cambiaron el spec y los assets: el codigo de gameplay sigue siendo la plantilla intacta", async () => {
+    const options = input({ listChangedGameplayFiles: async () => [] });
+    const result = await verifyGame(options);
+    expect(result.status).toBe("failed");
+    expect(result.failures.join(" ")).toContain("plantilla");
+  });
+
+  it("falla si el project-spec runtime no coincide con el genero pedido (RPG servido como plataformas)", async () => {
+    const options = input({
+      spec: createGameSpec("Crea un RPG top-down corto con un mapa y un PNJ"),
+      readRuntimeSpec: async () => JSON.stringify({ genre: "platformer" }),
+    });
+    const result = await verifyGame(options);
+    expect(result.status).toBe("failed");
+    expect(result.failures.join(" ")).toContain("project-spec");
   });
 
   it("rechaza manifiestos sin test, lint y build", async () => {

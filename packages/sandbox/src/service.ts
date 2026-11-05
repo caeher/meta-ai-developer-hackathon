@@ -249,7 +249,7 @@ export class SandboxService {
       projectId,
       ["node", "/opt/meta-game/verify-game.mjs"],
       "",
-      Math.min(30_000, this.environment.SANDBOX_COMMAND_TIMEOUT_MS),
+      Math.min(60_000, this.environment.SANDBOX_COMMAND_TIMEOUT_MS),
       SANDBOX_COMMAND_OUTPUT_MAX_BYTES,
       JSON.stringify(parsed.data),
     );

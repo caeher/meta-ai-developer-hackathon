@@ -58,7 +58,7 @@ import { updateIssueFileStatus, issueFilePath } from "./issue-plan";
 import { DefineAnimationToolError } from "../assets/define-animation";
 import { imageResponseTokenUsage } from "../assets/image-generator";
 import { ImagePipelineError } from "../assets/image-pipeline";
-import { captureGameCheckpoint, createGameSpec, decodeGameCheckpoint, gameSpecFile, gameSpecInstructions, restoreGameCheckpoint, type GameCheckpoint, GAME_SPEC_PATH } from "../pipelines/generate-game";
+import { captureGameCheckpoint, createGameSpec, decodeGameCheckpoint, gameSpecFile, gameSpecInstructions, restoreGameCheckpoint, sha256, type GameCheckpoint, GAME_SPEC_PATH, PHASER_RUNTIME_SPEC_PATH } from "../pipelines/generate-game";
 import { verifyGame } from "../pipelines/verify-game";
 
 type AgentMeta = Pick<MetaClient, "plan" | "streamCode" | "generateImage">;
@@ -308,7 +308,7 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
 
       checkSignal(signal, handlerContext.signal, usage);
       const initialReplay = initialConversation(selection, approvedPlan, true, state.gameSpec);
-      const initialPrompt = buildCodePrompt(loaded.prompt, approvedPlan, state.gameSpec);
+      const initialPrompt = buildCodePrompt(loaded.prompt, approvedPlan, state.gameSpec, undefined, options.assetToolCallsEnabled !== false);
       const initialEstimate = estimateTokens(JSON.stringify({ prompt: initialPrompt, replay: initialReplay, tools: toolDefinitionsFor(options) })) + 1_500;
       if (Math.min(MAX_CODE_OUTPUT_TOKENS, options.maxTokens - usage.tokens - initialEstimate) < 16) {
         throw new RunProcessingError("run_token_budget_exceeded", false, usage);
@@ -331,7 +331,9 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
       let repairInstruction: string | undefined;
       let finalSummary = "";
       while (true) {
-        const result = await runCodeUntilFinal({
+        let result: Awaited<ReturnType<typeof runCodeUntilFinal>>;
+        try {
+          result = await runCodeUntilFinal({
           options,
           state,
           claim: handlerContext.claim,
@@ -341,9 +343,16 @@ export function createAgentRunHandler(options: AgentOrchestratorOptions): RunHan
           gameSpec: state.gameSpec!,
           selection,
           replay,
-          repairInstruction,
-          round,
-        });
+            repairInstruction,
+            round,
+          });
+        } catch (error) {
+          // En reparacion, quedarse sin tokens no debe tirar un juego ya
+          // escrito: se verifica el workspace tal como quedo.
+          if (repairAttempts > 0 && error instanceof RunProcessingError && error.code === "run_token_budget_exceeded") {
+            result = { replay, round, summary: "" };
+          } else throw error;
+        }
         replay = result.replay;
         round = result.round;
         finalSummary = result.summary;
@@ -450,35 +459,50 @@ async function runCodeUntilFinal(input: {
 }): Promise<{ replay: MetaConversationItem[]; round: number; summary: string }> {
   let replay = input.replay;
   let round = input.round;
+  const callResultCache = new Map<string, unknown>();
+  let nonProductiveRounds = 0;
+  let productiveWrites = 0;
+  let imageCalls = 0;
   const toolDefinitions = toolDefinitionsFor(input.options);
   const availableToolNames = new Set(toolDefinitions.map((tool) => tool.name));
   while (true) {
     checkSignal(input.state.signal, input.state.userSignal, input.state.usage);
     round += 1;
-    const prompt = buildCodePrompt(input.requestText, input.plan, input.gameSpec, input.repairInstruction);
+    const prompt = buildCodePrompt(input.requestText, input.plan, input.gameSpec, input.repairInstruction, input.options.assetToolCallsEnabled !== false);
     const inputEstimate = estimateTokens(JSON.stringify({ prompt, replay, tools: toolDefinitions })) + 1_500;
     const outputBudget = Math.min(MAX_CODE_OUTPUT_TOKENS, input.options.maxTokens - input.state.usage.tokens - inputEstimate);
-    if (outputBudget < 16) throw new RunProcessingError("run_token_budget_exceeded", false, input.state.usage);
+    if (outputBudget < 16) {
+      // Con codigo ya escrito, agotar el presupuesto no debe tirar el juego:
+      // se sale a verificar el workspace tal como quedo.
+      if (productiveWrites > 0) return { replay, round, summary: "" };
+      throw new RunProcessingError("run_token_budget_exceeded", false, input.state.usage);
+    }
 
     const requestKey = `code-${round}`;
     await append(input.state, input.options.store, input.claim, {
       type: "agent.meta_request_started",
       payload: { kind: "code", requestKey, round },
     });
+    // Una ronda sin "completed" no ejecuto ninguna herramienta (las llamadas
+    // solo se ejecutan tras completar el stream), asi que reintentar la ronda
+    // no duplica efectos: solo repite la peticion al proveedor.
     const calls: Extract<MetaCodeEvent, { type: "tool_call" }>[] = [];
     let completion: Extract<MetaCodeEvent, { type: "completed" }> | undefined;
-    try {
-      for await (const event of input.options.meta.streamCode({
-        prompt,
-        context: replay,
-        tools: toolDefinitions,
-        parallelToolCalls: false,
-      }, { signal: input.state.signal, maxOutputTokens: outputBudget })) {
-        if (event.type === "tool_call") calls.push(event);
-        else if (event.type === "completed") completion = event;
+    for (let attempt = 0; attempt < 3 && !completion; attempt += 1) {
+      calls.length = 0;
+      try {
+        for await (const event of input.options.meta.streamCode({
+          prompt,
+          context: replay,
+          tools: toolDefinitions,
+          parallelToolCalls: false,
+        }, { signal: input.state.signal, maxOutputTokens: outputBudget })) {
+          if (event.type === "tool_call") calls.push(event);
+          else if (event.type === "completed") completion = event;
+        }
+      } catch (error) {
+        if (attempt >= 2 || input.state.signal.aborted) throw providerFailure(error, input.state.usage, input.state.signal);
       }
-    } catch (error) {
-      throw providerFailure(error, input.state.usage, input.state.signal);
     }
     if (!completion) throw new RunProcessingError("meta_incomplete_response", false, input.state.usage);
     const codeUsage = requiredUsage(completion.usage, input.state.usage);
@@ -495,6 +519,7 @@ async function runCodeUntilFinal(input: {
     await append(input.state, input.options.store, input.claim, completionEvent);
     replay = windowReplay(appendReplayItems(replay, completion.replay), 5);
     if (input.state.usage.tokens > input.options.maxTokens) {
+      if (productiveWrites > 0) return { replay, round, summary: "" };
       throw new RunProcessingError("run_token_budget_exceeded", false, input.state.usage);
     }
     let prepared: PreparedAgentToolCall[];
@@ -517,15 +542,74 @@ async function runCodeUntilFinal(input: {
     if (prepared.length > input.options.maxSteps - input.state.stepCount) {
       throw new RunProcessingError("run_step_limit_exceeded", false, input.state.usage);
     }
+    let roundProductive = false;
     for (const call of prepared) {
       checkSignal(input.state.signal, undefined, input.state.usage);
-      const output = await executeCachedTool(input.options, input.state, input.claim, input.projectId, call, true);
+      if (PRODUCTIVE_TOOL_NAMES.has(call.name)) roundProductive = true;
+      const signature = `${call.name}:${call.argsHash}`;
+      let output: unknown;
+      if ((call.name === "generate_image" || call.name === "edit_sprite") && imageCalls >= MAX_IMAGE_CALLS_PER_RUN) {
+        output = { error: "generated_image_run_limit", tool: call.name, hint: `Ya se generaron ${MAX_IMAGE_CALLS_PER_RUN} imagenes en este run; reutiliza los assetId del manifest y termina el codigo del juego.` };
+        if (!replay.some((item) => item.kind === "tool_result" && item.callId === call.callId)) {
+          replay = [...replay, makeToolResult(call.callId, output)];
+        }
+        continue;
+      }
+      if (call.name === "generate_image" || call.name === "edit_sprite") imageCalls += 1;
+      if (callResultCache.has(signature)) {
+        const previous = callResultCache.get(signature);
+        output = isRecord(previous)
+          ? { ...previous, duplicateCall: true, note: "Llamada identica ya ejecutada en este run; se devuelve el resultado anterior sin re-ejecutarla. Avanza: escribe codigo, genera assets o verifica." }
+          : { duplicateCall: true, previousResult: previous ?? null, note: "Llamada identica ya ejecutada en este run; se devuelve el resultado anterior sin re-ejecutarla. Avanza: escribe codigo, genera assets o verifica." };
+      } else {
+        try {
+          output = await executeCachedTool(input.options, input.state, input.claim, input.projectId, call, true);
+          if (call.name === "write_file") productiveWrites += 1;
+        } catch (error) {
+          // Un asset rechazado (alpha, grilla, tileset...) no debe matar el run:
+          // se devuelve al modelo como resultado de error para que reintente con
+          // otro brief o siga con los assets de la plantilla.
+          if (error instanceof RunProcessingError && SPRITE_TOOL_NAMES.has(call.name) && !FATAL_ASSET_ERROR_CODES.has(error.code)) {
+            output = { error: error.code, tool: call.name, hint: "La herramienta de asset fallo; ajusta el brief o continua el juego reutilizando los assets existentes de la plantilla. No repitas la misma llamada identica." };
+          } else if (error instanceof RunProcessingError && error.code.startsWith("sandbox_") && error.code !== "sandbox_not_ready") {
+            output = { error: error.code, tool: call.name, hint: "La herramienta de sandbox fallo (p. ej. timeout de comando); reintenta con un comando mas acotado o continua y deja que la verificacion final ejecute test/build." };
+          } else throw error;
+        }
+        callResultCache.set(signature, output);
+      }
       if (!replay.some((item) => item.kind === "tool_result" && item.callId === call.callId)) {
         replay = [...replay, makeToolResult(call.callId, output)];
       }
     }
+    if (roundProductive) {
+      nonProductiveRounds = 0;
+    } else {
+      nonProductiveRounds += 1;
+      if (nonProductiveRounds >= MAX_NON_PRODUCTIVE_ROUNDS) {
+        throw new RunProcessingError("agent_no_progress", false, input.state.usage);
+      }
+      if (nonProductiveRounds % 8 === 0) {
+        replay = [...replay, {
+          kind: "message",
+          role: "user",
+          text: `Llevas ${nonProductiveRounds} rondas sin escribir codigo ni generar assets. Deja de explorar: con lo que ya leiste, escribe ahora src/game/project-spec.json y el codigo de gameplay en src/, o llama generate_image si falta arte. Repetir lecturas/listados identicos no avanza el juego.`,
+        }];
+      }
+    }
   }
 }
+
+const PRODUCTIVE_TOOL_NAMES = new Set([
+  "write_file", "generate_image", "edit_sprite", "make_transparent", "pack_spritesheet",
+  "create_tileset", "create_tilemap", "define_animation", "create_issue_plan", "run_issue_agents",
+  "install_dependencies", "run_command", "start_dev_server",
+]);
+const MAX_NON_PRODUCTIVE_ROUNDS = 24;
+const MAX_IMAGE_CALLS_PER_RUN = 6;
+const FATAL_ASSET_ERROR_CODES = new Set([
+  "daily_image_limit_exceeded", "meta_request_ambiguous", "run_token_budget_exceeded",
+  "tool_cancelled", "image_generation_unavailable", "sprite_edit_unavailable", "usage_limit_images",
+]);
 
 
 export function snapshotFailureCauseCode(error: unknown): string {
@@ -938,6 +1022,12 @@ async function verifyProject(
       if (typeof result.content !== "string") throw new Error("game_manifest_missing");
       return result.content;
     },
+    async readRuntimeSpec() {
+      const result = await runTool("read_file", { path: PHASER_RUNTIME_SPEC_PATH }, "Leer el spec runtime que ejecuta Phaser") as { content?: unknown };
+      if (typeof result.content !== "string") throw new Error("game_runtime_spec_missing");
+      return result.content;
+    },
+    listChangedGameplayFiles: () => listChangedGameplayFiles(options.sandbox, projectId, state.signal),
     async runCommand(args) {
       return await runTool("run_command", { command: "npm", args: [...args], cwd: "" }, `Verificar npm ${args.join(" ")}`) as import("@meta-game/contracts").SandboxToolCommandResult;
     },
@@ -1023,6 +1113,42 @@ async function discardGameCheckpoint(
 
 function checkpointIdentity(claim: RunWorkerClaim) {
   return { ownerUserId: claim.ownerUserId, projectId: claim.projectId, runId: claim.runId };
+}
+
+const GAMEPLAY_CODE_EXTENSIONS = /\.(?:ts|tsx|js|css)$/;
+const NON_GAMEPLAY_FILES = new Set([GAME_SPEC_PATH, PHASER_RUNTIME_SPEC_PATH]);
+
+/**
+ * Archivos de codigo bajo src/ cuyo contenido difiere de la plantilla Phaser
+ * sembrada (o que no existen en ella). Si la lista es vacia, lo jugable es el
+ * preset intacto de la plantilla aunque cambien spec o assets.
+ */
+async function listChangedGameplayFiles(sandbox: AgentSandbox, projectId: string, signal: AbortSignal): Promise<string[]> {
+  const template = await loadPhaserTemplate();
+  const templateHashes = new Map(template.files.map((file) => [file.path, file.sha256]));
+  const workspaceFiles: string[] = [];
+  const queue = ["src"];
+  while (queue.length) {
+    const directory = queue.shift()!;
+    const listing = await sandbox.listFiles(projectId, directory, signal);
+    for (const entry of listing.files) {
+      const path = directory ? `${directory}/${entry.name}` : entry.name;
+      if (entry.type === "directory") { queue.push(path); continue; }
+      if (!GAMEPLAY_CODE_EXTENSIONS.test(path) || NON_GAMEPLAY_FILES.has(path) || /\.test\.ts$/.test(path)) continue;
+      workspaceFiles.push(path);
+    }
+  }
+  const changed: string[] = [];
+  for (const path of workspaceFiles) {
+    const templateHash = templateHashes.get(path);
+    if (!templateHash) { changed.push(path); continue; }
+    const file = await sandbox.readFile(projectId, path, signal);
+    if (sha256(file.content) !== templateHash) changed.push(path);
+  }
+  for (const path of templateHashes.keys()) {
+    if (path.startsWith("src/") && GAMEPLAY_CODE_EXTENSIONS.test(path) && !NON_GAMEPLAY_FILES.has(path) && !/\.test\.ts$/.test(path) && !workspaceFiles.includes(path)) changed.push(path);
+  }
+  return changed.sort();
 }
 
 async function inspectPriorGameSpec(sandbox: AgentSandbox, projectId: string, signal: AbortSignal): Promise<unknown | undefined> {
@@ -1218,20 +1344,32 @@ function initialConversation(selection: SkillSelection, plan: MetaPlan, template
   ];
 }
 
-function buildCodePrompt(requestText: string, plan: MetaPlan, gameSpec: GameSpec, repairInstruction?: string): string {
+function buildCodePrompt(requestText: string, plan: MetaPlan, gameSpec: GameSpec, repairInstruction?: string, assetToolsEnabled = true): string {
+  const flow = assetToolsEnabled
+    ? [
+        "FLUJO DIRECTO OBLIGATORIO (en este orden, sin saltar fases ni repetir llamadas):",
+        "1) INVENTARIO MINIMO: list_files en la raiz y en src, y lee solo src/game/project-spec.json, src/game/game-spec.json y public/assets/generated/manifest.json si necesitas IDs existentes. Maximo 4 lecturas de exploracion antes de producir algo; no releas escenas completas salvo el archivo que vayas a editar.",
+        "2) SPRITES: si el juego necesita arte nuevo, llama generate_image una vez por sprite/fondo necesario (maximo 4) con prompts exactos de estilo/vista/transparencia, despues make_transparent, inspect_asset, pack_spritesheet o define_animation segun el resultado. Usa literalmente los assetId/atlasId/frameNames devueltos; nunca inventes IDs. Si el arte de la plantilla basta, reutilizalo y dilo en el resumen.",
+        "3) CODIGO (obligatorio): actualiza src/game/project-spec.json (genero del GameSpec, titulo, controles) y modifica o crea el codigo de gameplay en src/ que implementa la peticion: mecanicas, enemigos, victoria/derrota, HUD y controles tactiles. Editar PlayScene/logic existentes vale; lo que no vale es entregar la plantilla sin tocar codigo.",
+        "4) VERIFICACION: ejecuta run_command con npm test y npm run build, corrige los errores que devuelvan y solo entonces termina con un resumen breve.",
+        "create_issue_plan y run_issue_agents son OPCIONALES para peticiones muy grandes; por defecto implementa directamente con las fases 1-4 sin crear issues ni subagentes.",
+      ]
+    : [
+        "FLUJO DIRECTO OBLIGATORIO (en este orden, sin saltar fases ni repetir llamadas):",
+        "1) INVENTARIO MINIMO: list_files en la raiz y en src, y lee solo src/game/project-spec.json y src/game/game-spec.json. Maximo 4 lecturas de exploracion antes de producir algo.",
+        "2) SPRITES: generate_image no esta disponible en este run; reutiliza los assets SVG de la plantilla (public/assets) y no intentes llamar herramientas de assets ni de subagentes, porque no estan entre tus herramientas.",
+        "3) CODIGO (obligatorio): actualiza src/game/project-spec.json (genero del GameSpec, titulo, controles) y modifica o crea el codigo de gameplay en src/ que implementa la peticion: mecanicas, enemigos, victoria/derrota, HUD y controles tactiles. Entregar la plantilla sin tocar codigo hara fallar la verificacion.",
+        "4) VERIFICACION: ejecuta run_command con npm test y npm run build, corrige los errores que devuelvan y solo entonces termina con un resumen breve.",
+      ];
   return [
     "Implement the user request according to the approved plan. Use only the supplied typed tools.",
     `User request:\n${requestText}`,
     `Approved plan:\n${JSON.stringify(plan)}`,
     `Validated game specification:\n${JSON.stringify(gameSpec)}`,
-    "FLUJO AGENTICO OBLIGATORIO (en este orden, sin saltar fases):",
-    "1) INVENTARIO: ya compare tu peticion con el GameSpec/workspace previo (fase inventory); si necesitas detalle usa list_files/read_file sobre GameSpec y public/assets/generated/manifest.json para saber que sprites ya existen y reutilizarlos.",
-    "2) PLAN DE SPRITES: actua como orquestador y llama create_issue_plan con kind='sprites' y un prompt/issue detallado por cada sprite, fondo, tileset o animacion necesaria: objetivo, prompt exacto de generate_image (estilo/vista/paleta/fondo), tamano/frames, transparencia, atlas y animaciones esperadas. Si no hace falta ningun sprite nuevo, crea una unica issue de sprites que lo diga y mande reutilizar los existentes.",
-    "3) SPRITES: llama run_issue_agents con kind='sprites' y las issues recien creadas (issueId/titulo/instrucciones con el detalle anterior). Esos sub-agentes especializados solo tienen tools de assets (generate_image, make_transparent, inspect_asset, pack_spritesheet, define_animation, create_tileset, create_tilemap) y deben devolver assetId/atlasId/frameNames. No escribas codigo del juego en esta fase.",
-    "4) RESUMEN DE SPRITES: lee el resultado de run_issue_agents kind='sprites' (assetIds, atlas, frames, animaciones) y usalo literalmente en la siguiente fase; nunca inventes IDs.",
-    "5) PLAN DE JUEGO: llama create_issue_plan con kind='game' detallando como implementar el juego consumiendo ese resumen de sprites (archivos, escenas Phaser 3.90, fisica, controles, HUD, verificaciones).",
-    "6) CODIGO: llama run_issue_agents con kind='game' y esas issues; los sub-agentes de codigo implementan cada issue con tools de codigo y verifican. Solo si el trabajo es trivial y de un unico archivo puedes escribirlo tu directamente despues de las fases 2-5, dejando constancia en el resumen.",
+    ...flow,
+    "Repetir una llamada identica (misma herramienta y mismos argumentos) esta prohibido: el sistema la responde desde cache sin ejecutarla y las rondas sin escribir codigo ni generar assets cuentan como rondas sin progreso; tras 24 el run se cancela con agent_no_progress.",
     "For asset work, use only the explicit assetId values returned by tools; never guess an ID or select a latest asset. Keep dependent calls sequential: generate/edit before inspection, inspect before packing or tileset creation, and use the returned atlas/tileset ID for animation or tilemap creation. Tool arguments cannot contain URLs, workspace paths outside their schema, shell commands, or external destinations.",
+    "La verificacion RECHAZA entregar la plantilla sin cambios: debes modificar o crear codigo de gameplay en src/ (escenas, logica, niveles o mecanicas) que implemente lo pedido; cambiar solo src/game/project-spec.json, el titulo o los assets NO es suficiente y el run fallara. El genero de src/game/project-spec.json debe coincidir con el del GameSpec validado.",
     "When code is ready, run applicable build or test checks. Never claim a check passed without its tool result.",
     repairInstruction ? `Repair request: ${repairInstruction}` : "",
   ].filter(Boolean).join("\n\n");

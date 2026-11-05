@@ -72,6 +72,27 @@ describe("generated image validation pipeline", () => {
     expect(result.contactSheetSha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it("recupera sprites opacos del modelo de imagen quitando el fondo uniforme desde las esquinas", async () => {
+    // Fondo magenta uniforme con un sujeto azul centrado: el modelo devuelve
+    // opaco aunque se le pida transparencia; la tuberia debe recortarlo local.
+    const { data, info } = await sharp({
+      create: { width: 32, height: 32, channels: 4, background: { r: 255, g: 0, b: 255, alpha: 1 } },
+    }).raw().toBuffer({ resolveWithObject: true });
+    for (let y = 12; y < 20; y++) for (let x = 12; x < 20; x++) {
+      const offset = (y * info.width + x) * 4;
+      data[offset] = 20; data[offset + 1] = 80; data[offset + 2] = 220; data[offset + 3] = 255;
+    }
+    const bytes = await sharp(data, { raw: info }).png().toBuffer();
+    const result = await processGeneratedImage(
+      { bytes, mimeType: "image/png", width: 32, height: 32, model, responseId: "resp_opaque_sprite" },
+      brief({ transparentBackground: true }),
+    );
+    expect(result.transparentPixels).toBe(true);
+    expect(result.edits).toContain("background-removed");
+    const raw = await sharp(result.bytes).raw().toBuffer();
+    expect(raw[3]).toBe(0);
+  });
+
   it("rejects missing real transparency even when the request asked for alpha", async () => {
     const opaquePng = await image({ width: 16, height: 16 });
     await expect(processGeneratedImage(opaquePng, brief({ transparentBackground: true })))

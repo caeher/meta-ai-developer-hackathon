@@ -99,7 +99,7 @@ function createAcceptanceEnvironment(sandboxImage, runsEnabled, simulatorEnabled
     PUBLISH_BASE_DOMAIN: "games.localhost",
     RUNS_ENABLED: runsEnabled ? "true" : "false",
     RUNS_SIMULATOR_ENABLED: simulatorEnabled ? "true" : "false",
-    AGENT_ASSET_TOOL_CALLS_ENABLED: "false",
+    AGENT_ASSET_TOOL_CALLS_ENABLED: simulatorEnabled ? "false" : "true",
     RESOURCE_LIFECYCLE_ENABLED: "false",
     SANDBOX_DRIVER: "rootless",
     SANDBOX_HOST_RUNTIME_MODE: "docker-desktop-security",
@@ -287,7 +287,7 @@ try {
   if (options.publishing) console.log("El worker y el origen local de publicación están activos detrás de *.games.localhost.");
   if (options.localDomains) console.log("El router local conserva HTTPS con la CA interna de Caddy para app.localhost, *.preview.localhost y *.games.localhost.");
   if (options.acceptance) console.log("BrowserOS puede usar http://127.0.0.1:3000 y la ruta HTTP de preview ligada a loopback; la ruta HTTPS sigue intacta.");
-  if (options.acceptance) console.log(`Aceptación local activa: app, gateway, origen y controlador listos; runs de generación ${options.runs ? "habilitados" : "apagados"}; herramientas de assets externos bloqueadas; credenciales de prueba efímeras no persistidas.`);
+  if (options.acceptance) console.log(`Aceptación local activa: app, gateway, origen y controlador listos; runs de generación ${options.runs ? "habilitados" : "apagados"}; herramientas de assets ${options.simulator ? "bloqueadas (simulador)" : "habilitadas"}; credenciales de prueba efímeras no persistidas.`);
 } catch (error) {
   reportInfrastructureError(error);
 }

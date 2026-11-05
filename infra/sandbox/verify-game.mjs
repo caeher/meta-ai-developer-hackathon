@@ -100,7 +100,15 @@ async function main() {
     let touchError = "";
     if (touchBox) {
       try {
-        await page.touchscreen.tap(touchBox.x + touchBox.width / 2, touchBox.y + touchBox.height / 2);
+        // Mantener el toque como se mantiene la tecla (350 ms): un tap
+        // instantaneo puede no abarcar ningun frame del juego.
+        const cdp = await page.context().newCDPSession(page);
+        const touchX = touchBox.x + touchBox.width / 2;
+        const touchY = touchBox.y + touchBox.height / 2;
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: touchX, y: touchY, id: 1 }] });
+        await page.waitForTimeout(350);
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await cdp.detach().catch(() => undefined);
       } catch (error) {
         touchDispatched = false;
         touchError = error instanceof Error ? error.message.slice(0, 240) : "touch_input_failed";

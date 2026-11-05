@@ -60,7 +60,7 @@ export const GeneratedAssetMetadataSchema = z.object({
     frameWidth: z.number().int().min(1).max(2_048),
     frameHeight: z.number().int().min(1).max(2_048),
   }).strict(),
-  edits: z.array(z.enum(["orientation-normalized", "metadata-stripped", "png-reencoded", "bounded-resize", "frames-cropped"])).max(8),
+  edits: z.array(z.enum(["orientation-normalized", "metadata-stripped", "png-reencoded", "bounded-resize", "frames-cropped", "background-removed"])).max(8),
   qa: z.object({
     contactSheetAssetId: z.string().uuid(),
     contactSheetSha256: z.string().regex(/^[a-f0-9]{64}$/),
